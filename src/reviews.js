@@ -91,9 +91,23 @@ function card(review) {
 
   const head = el('div', 'card-head');
 
+  // Initials sit underneath as the resting state; a photo, if we have one,
+  // covers them. So a missing or dead image degrades to something deliberate
+  // rather than a broken-image glyph.
   const av = el('div', 'avatar', initials(review.name));
   av.style.background = avatarColour(review.name);
   av.setAttribute('aria-hidden', 'true');
+  if (review.photo) {
+    const img = el('img', 'avatar-img');
+    img.src = review.photo;
+    img.alt = '';
+    img.loading = 'lazy';
+    img.decoding = 'async';
+    // Google rotates profile photo URLs when someone changes their picture,
+    // so these will rot. Drop the img and let the initials show through.
+    img.addEventListener('error', () => img.remove());
+    av.appendChild(img);
+  }
   head.appendChild(av);
 
   const who = el('div', 'who');

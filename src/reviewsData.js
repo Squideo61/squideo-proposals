@@ -15,6 +15,17 @@
 //            so trim by hand to a natural sentence end rather than letting CSS
 //            cut mid-word.
 //   source — 'google' | 'trustpilot' | null
+//   photo  — optional. A same-origin path like '/reviews/kate-hughes.jpg'
+//            (drop the file in public/reviews/). Omit it and the card falls
+//            back to coloured initials, which is a fine resting state — don't
+//            add a photo just to have one.
+//
+//            Keep these same-origin. The CSP for this page is img-src 'self'
+//            data:, deliberately: hotlinking lh3.googleusercontent.com would
+//            mean widening it for URLs that rot the moment a reviewer changes
+//            their picture. When the Business Profile sync lands it'll copy
+//            reviewer.profilePhotoUrl through our own origin and fill this
+//            same field.
 
 export const SUMMARY = {
   rating: '5.0',
