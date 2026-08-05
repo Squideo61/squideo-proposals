@@ -1,4 +1,4 @@
-// The Explainer Video Crash Course, inside the portal.
+// The Explainer Video Planning Crash Course, inside the portal.
 //
 // Every signed-in portal user sees all eight videos — real clients and course
 // signups alike. There's nothing org-scoped here, so no company switcher
@@ -55,11 +55,11 @@ export default function Course({ slug }) {
       <SectionHeading>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
           <GraduationCap size={18} color={BRAND.blue} />
-          The Explainer Video Crash Course
+          The Explainer Video Planning Crash Course
         </span>
       </SectionHeading>
       <p style={{ margin: '-6px 0 16px', fontSize: 13, color: BRAND.muted, lineHeight: 1.55 }}>
-        Brief to Broadcast — everything we know about making a video that works.
+        Brief to Broadcast — everything we know about planning a video that works.
       </p>
 
       <ProgressBar

@@ -1,4 +1,4 @@
-// Public, unauthenticated API for The Explainer Video Crash Course.
+// Public, unauthenticated API for The Explainer Video Planning Crash Course.
 //
 // Serves the /course landing page: the module list, the free module's bytes,
 // poster images, and the anonymous funnel events that measure landing → play →

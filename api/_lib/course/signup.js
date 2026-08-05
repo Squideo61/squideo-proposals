@@ -1,4 +1,4 @@
-// Self-serve signup for The Explainer Video Crash Course.
+// Self-serve signup for The Explainer Video Planning Crash Course.
 //
 // This is the FIRST and ONLY place in the product where an account is created
 // without an invite. Everything else — clients, colleagues, staff — comes in

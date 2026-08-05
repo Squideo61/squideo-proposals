@@ -1,4 +1,4 @@
-// The public landing page for The Explainer Video Crash Course.
+// The public landing page for The Explainer Video Planning Crash Course.
 //
 // The whole conversion strategy is the order of this page: module 1 plays
 // immediately, with no form anywhere above it. The signup only appears once
@@ -128,7 +128,11 @@ export function CoursePage({ track }) {
             margin: '0 0 14px', fontSize: 'clamp(28px, 5vw, 44px)', lineHeight: 1.12,
             fontWeight: 800, color: '#fff', letterSpacing: '-0.02em',
           }}>
-            The Explainer Video<br />Crash Course
+            {/* Breaks after "Planning" because that's how the name parses: the
+                [Explainer Video Planning] [Crash Course]. Splitting it anywhere
+                else reads as a course about explainer videos generally, which
+                is the ambiguity the word "Planning" was added to remove. */}
+            The Explainer Video Planning<br />Crash Course
           </h1>
           <p style={{ margin: '0 auto', maxWidth: 560, fontSize: 16, lineHeight: 1.6, color: PALE }}>
             This is the same thinking we walk every client through before we start.

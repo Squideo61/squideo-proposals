@@ -1039,7 +1039,7 @@ async function authRoutes(req, res) {
       try {
         await sendMail({
           to: result.user.email,
-          subject: 'Your Explainer Video Crash Course is unlocked',
+          subject: 'Your Explainer Video Planning Crash Course is unlocked',
           html: courseCrashCourseHtml({ name: result.user.name }),
           text: `All eight videos are unlocked here: ${PORTAL_URL}#/course`,
         });
@@ -1061,7 +1061,7 @@ async function authRoutes(req, res) {
         try {
           await sendMail({
             to: result.user.email,
-            subject: 'Your Explainer Video Crash Course is unlocked',
+            subject: 'Your Explainer Video Planning Crash Course is unlocked',
             html: courseCrashCourseHtml({ name: result.user.name, loginUrl, returning: true }),
             text: `You already have a Squideo account — sign in here to watch the course: ${loginUrl}`,
           });

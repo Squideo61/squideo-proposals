@@ -66,7 +66,7 @@ export function portalWelcomeHtml({ clientName, projectTitle, inviteUrl, logoUrl
   return shell(inner, logoUrl);
 }
 
-// The Explainer Video Crash Course welcome.
+// The Explainer Video Planning Crash Course welcome.
 //
 // Two shapes from one template. A brand-new signup is ALREADY signed in by the
 // time this lands — the email is a bookmark, not a step, so it must not read
@@ -82,7 +82,7 @@ export function courseCrashCourseHtml({ name, loginUrl = null, returning = false
     <p style="margin:0 0 6px;font-size:12px;color:#6B7785;">This link works once and expires in 15 minutes.</p>
   ` : `
     <h2 style="margin:0 0 12px;font-size:19px;font-weight:700;">You're in${name ? ', ' + escapeHtml(name) : ''} 🎬</h2>
-    <p style="margin:0 0 14px;">All eight videos of <strong>The Explainer Video Crash Course</strong> are unlocked — about six minutes end to end, so you could be done before your coffee is.</p>
+    <p style="margin:0 0 14px;">All eight videos of <strong>The Explainer Video Planning Crash Course</strong> are unlocked — about six minutes end to end, so you could be done before your coffee is.</p>
     <p style="margin:0 0 14px;">You're already signed in on the device you signed up on. This email is just so you can find your way back.</p>
     <p style="margin:0 0 18px;">${ctaButton(url, 'Watch the course')}</p>
     <p style="margin:0 0 14px;">While you're in there, have a proper look round — it's the same portal our clients use to review storyboards, leave timestamped feedback on drafts and download finished videos.</p>
