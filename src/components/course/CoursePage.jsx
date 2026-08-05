@@ -53,7 +53,9 @@ const fmtTotal = (s) => {
 export function CoursePage({ track }) {
   const [data, setData] = useState(null);
   const [failed, setFailed] = useState(false);
-  const [signedIn, setSignedIn] = useState(false);
+  // null until the session check answers — see anonTrack below, which must not
+  // fire before we know.
+  const [signedIn, setSignedIn] = useState(null);
   // Which free video the hero player is showing. null = the first one, not yet
   // touched; `auto` means the visitor chose it, so it should start playing
   // rather than sitting behind a play button.
@@ -74,15 +76,32 @@ export function CoursePage({ track }) {
   useEffect(() => {
     fetch('/api/portal/me', { credentials: 'include' })
       .then((r) => setSignedIn(r.ok))
-      .catch(() => {});
+      .catch(() => setSignedIn(false));
   }, []);
 
-  useEffect(() => { track('page_view'); }, [track]);
+  // The anonymous funnel measures people who are NOT signed in — that's the
+  // whole reason it exists, since everyone else is already counted by
+  // course_progress. So a signed-in visitor records nothing here.
+  //
+  // This is also how our own testing stays out of the numbers. The alternative
+  // — stamping the visitor key onto the signup so it can be matched to a person
+  // later — would work, but it turns a per-tab random id that is deliberately
+  // never joined to anyone (see src/course.jsx) into tracking that would need a
+  // consent banner on a public page. Not worth it to tidy a report.
+  //
+  // Held until the session check resolves, or a signed-in visitor still fires
+  // one page_view before we know who they are.
+  const anonTrack = useCallback((key, detail) => {
+    if (signedIn !== false) return;
+    track(key, detail);
+  }, [signedIn, track]);
+
+  useEffect(() => { if (signedIn === false) anonTrack('page_view'); }, [signedIn, anonTrack]);
 
   const scrollToSignup = useCallback(() => {
-    track('signup_open');
+    anonTrack('signup_open');
     signupRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, [track]);
+  }, [anonTrack]);
 
   const modules = data?.modules || [];
   const freeModules = modules.filter((m) => m.free);
@@ -159,7 +178,7 @@ export function CoursePage({ track }) {
                 module={active}
                 autoStart={!!chosen?.auto}
                 freeCount={freeModules.length}
-                track={track}
+                track={anonTrack}
                 onEnded={() => onFreeEnded(active.slug)}
               />
             )

@@ -17,6 +17,7 @@ import sql from '../db.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 import { ensurePortalTables } from '../portal/db.js';
+import { internalPortalUserIds } from '../internalAccounts.js';
 
 // A day series with no gaps. Postgres only returns days that have rows, and a
 // chart drawn straight off that silently closes up quiet days — which makes a
@@ -40,22 +41,6 @@ const isoDay = (v, fallback) => {
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : fallback;
 };
 
-// Our own accounts. Testing the portal means signing up to it, and without this
-// every test lands in the figures as a course lead.
-//
-// Resolved to a list of ids rather than repeated as a join condition, because
-// most of what's counted below (course progress, briefs, sign-ins) hangs off
-// portal_user_id and never touches portal_users. One list, applied identically
-// everywhere, is the only way the tiles and the chart can agree.
-async function internalAccountIds() {
-  const rows = await sql`
-    SELECT id FROM portal_users
-     WHERE COALESCE(internal, FALSE)
-        OR email LIKE '%@squideo.co.uk'
-        OR email LIKE '%@squideo.com'
-  `.catch(() => []);
-  return rows.map((r) => r.id);
-}
 
 export async function portalAnalyticsRoute(req, res, id, action, user) {
   const role = await getRole(user.role);
@@ -78,7 +63,7 @@ export async function portalAnalyticsRoute(req, res, id, action, user) {
   const start = from + 'T00:00:00Z';
   const endEx = new Date(new Date(to + 'T00:00:00Z').getTime() + 86400000).toISOString();
 
-  const skip = await internalAccountIds();
+  const skip = await internalPortalUserIds();
 
   const [
     signupRows, signupsByDay, loginRows, loginsByDay,

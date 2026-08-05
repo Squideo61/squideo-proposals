@@ -196,6 +196,8 @@ export function CourseReach({ reach, isMobile }) {
         Anonymous figures count browsers, not people — two devices are two visitors, and
         clearing site data starts a new one. Good for comparing videos against each other;
         not a headcount. Signed-in figures come from the portal player and are exact.
+        Our own accounts are excluded from both, and a signed-in visitor records nothing
+        on the anonymous side — that half only measures people we haven't met yet.
       </div>
     </section>
   );

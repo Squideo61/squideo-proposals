@@ -30,6 +30,7 @@ import { makeId, trimOrNull, numberOrNull } from './shared.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 import { ensureCourseTables } from '../course/db.js';
+import { internalPortalUserIds, internalEmails } from '../internalAccounts.js';
 import { adminModule } from '../course/serialisers.js';
 // Generic "base64 image data URL → bytes"; it lives in logo.js because that's
 // where the first caller was, but there's nothing logo-specific about it.
@@ -294,7 +295,7 @@ function hotScore(row) {
 // A visitor key is a browser, not a person. Two devices are two visitors, and
 // clearing site data starts a new one — so these are directional numbers for
 // comparing videos against each other, not a headcount.
-async function courseReach(from, to) {
+async function courseReach(from, to, skip, ourEmails) {
   const start = from ? from + 'T00:00:00Z' : null;
   const endEx = to ? new Date(new Date(to + 'T00:00:00Z').getTime() + 86400000).toISOString() : null;
 
@@ -335,18 +336,19 @@ async function courseReach(from, to) {
                  AND (${start}::timestamptz IS NULL OR e.created_at >= ${start})
                  AND (${endEx}::timestamptz IS NULL OR e.created_at < ${endEx})) AS anon_done,
              (SELECT COUNT(*)::int FROM course_progress p
-               WHERE p.module_id = m.id
+               WHERE p.module_id = m.id AND p.portal_user_id <> ALL(${skip})
                  AND (${start}::timestamptz IS NULL OR p.last_viewed_at >= ${start})
                  AND (${endEx}::timestamptz IS NULL OR p.last_viewed_at < ${endEx})) AS member_starts,
              (SELECT COUNT(*)::int FROM course_progress p
-               WHERE p.module_id = m.id AND p.completed_at IS NOT NULL
+               WHERE p.module_id = m.id AND p.completed_at IS NOT NULL AND p.portal_user_id <> ALL(${skip})
                  AND (${start}::timestamptz IS NULL OR p.completed_at >= ${start})
                  AND (${endEx}::timestamptz IS NULL OR p.completed_at < ${endEx})) AS member_done,
              -- Capped at 100: furthest_seconds can exceed a stale duration after
              -- a video is re-uploaded, and a 140% watch rate reads as a bug.
              (SELECT ROUND(AVG(LEAST(100, 100.0 * p.furthest_seconds / NULLIF(p.duration_seconds, 0))))::int
                 FROM course_progress p
-               WHERE p.module_id = m.id AND COALESCE(p.duration_seconds, 0) > 0) AS member_avg_pct
+               WHERE p.module_id = m.id AND COALESCE(p.duration_seconds, 0) > 0
+                 AND p.portal_user_id <> ALL(${skip})) AS member_avg_pct
         FROM course_modules m
        WHERE m.published
        ORDER BY COALESCE(m.sort_order, m.module_number)
@@ -365,10 +367,15 @@ async function courseReach(from, to) {
   const people = (k) => funnelRows.find((e) => e.event_key === k)?.people || 0;
   const raw = (k) => funnelRows.find((e) => e.event_key === k)?.n || 0;
 
+  // Filtered by EMAIL rather than by portal user id: a signup row can exist
+  // before an account does, so the id list alone would miss one.
   const [signupCount] = await sql`
     SELECT COUNT(*)::int AS n FROM course_signups
      WHERE (${start}::timestamptz IS NULL OR created_at >= ${start})
        AND (${endEx}::timestamptz IS NULL OR created_at < ${endEx})
+       AND LOWER(email) <> ALL(${ourEmails})
+       AND email NOT ILIKE '%@squideo.co.uk'
+       AND email NOT ILIKE '%@squideo.com'
   `.catch(() => [{ n: 0 }]);
 
   return {
@@ -398,6 +405,10 @@ async function courseReach(from, to) {
 }
 
 async function courseAnalytics(res, from = null, to = null) {
+  // Our own accounts, resolved once and applied to every count below — see
+  // api/_lib/internalAccounts.js. Testing the course means signing up to it and
+  // watching it, and without this every test reads as a lead.
+  const [skip, ourEmails] = await Promise.all([internalPortalUserIds(), internalEmails()]);
   const [signups, videos, events] = await Promise.all([
     sql`
       SELECT s.id, s.email, s.name, s.company_id, s.contact_id, s.completed_at,
@@ -418,14 +429,19 @@ async function courseAnalytics(res, from = null, to = null) {
                           AND p.completed_at IS NOT NULL), '{}') AS done_module_ids
         FROM course_signups s
         LEFT JOIN companies c ON c.id = s.company_id
+       WHERE LOWER(s.email) <> ALL(${ourEmails})
+         AND s.email NOT ILIKE '%@squideo.co.uk'
+         AND s.email NOT ILIKE '%@squideo.com'
        ORDER BY s.created_at DESC
        LIMIT 500
     `.catch(() => []),
     sql`
       SELECT m.id, m.slug, m.module_number, m.title, m.free,
-             (SELECT COUNT(*)::int FROM course_progress p WHERE p.module_id = m.id) AS starts,
              (SELECT COUNT(*)::int FROM course_progress p
-               WHERE p.module_id = m.id AND p.completed_at IS NOT NULL) AS completions
+               WHERE p.module_id = m.id AND p.portal_user_id <> ALL(${skip})) AS starts,
+             (SELECT COUNT(*)::int FROM course_progress p
+               WHERE p.module_id = m.id AND p.completed_at IS NOT NULL
+                 AND p.portal_user_id <> ALL(${skip})) AS completions
         FROM course_modules m
        WHERE m.published
        ORDER BY COALESCE(m.sort_order, m.module_number)
@@ -485,7 +501,7 @@ async function courseAnalytics(res, from = null, to = null) {
     })),
     // The public side: everyone who landed, including the ones who never gave
     // us an email — invisible everywhere else in the CRM.
-    reach: await courseReach(from, to),
+    reach: await courseReach(from, to, skip, ourEmails),
   });
 }
 
