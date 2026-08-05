@@ -41,7 +41,10 @@ const MAX_WIDTH = 1080;
 // this much so the content column keeps the width every page was designed
 // against — otherwise adding the rail would have quietly narrowed every table
 // and player in the portal.
-const SIDEBAR_W = 208;
+// Wide enough for the longest label — "Planning crash course" at 14px — to sit
+// on one line. The shell max below grows by the same amount, so widening the
+// rail costs the content column nothing.
+const SIDEBAR_W = 224;
 const SIDEBAR_GAP = 26;
 const SHELL_MAX = MAX_WIDTH + SIDEBAR_W + SIDEBAR_GAP;
 
@@ -69,7 +72,10 @@ const NAV = [
   // empty, and an empty first screen is a bad first impression. A client with
   // live work reaches their projects in one more glance; a prospect who lands
   // on nothing may not come back at all.
-  { view: 'course', label: 'Crash course', shortLabel: 'Course', hash: '#/course', Icon: GraduationCap },
+  // "Planning" is load-bearing, not decoration: without it the course reads as
+  // one about animating videos yourself, which is the opposite of who it's for.
+  // The rail is sized to fit it on one line — see SIDEBAR_W.
+  { view: 'course', label: 'Planning crash course', shortLabel: 'Course', hash: '#/course', Icon: GraduationCap },
   { view: 'brief', label: 'Brief Builder', shortLabel: 'Brief', hash: '#/brief', Icon: FileText, mobile: false },
   { view: 'home', label: 'Current projects', shortLabel: 'Projects', hash: '#/', Icon: Home },
   { view: 'library', label: 'Your Video Library', shortLabel: 'Library', hash: '#/library', Icon: Film },
@@ -231,6 +237,9 @@ function SideNav({ view, company }) {
             style={{
               display: 'flex', alignItems: 'center', gap: 10,
               padding: '10px 13px', borderRadius: 9, textDecoration: 'none',
+              // A label that outgrows the rail on some font stack wraps to a
+              // second line rather than spilling out of its own background.
+              lineHeight: 1.3,
               fontSize: 14, fontWeight: active ? 700 : 500,
               color: active ? BRAND.ink : '#61798A',
               background: active ? '#fff' : 'transparent',
@@ -240,7 +249,10 @@ function SideNav({ view, company }) {
               boxShadow: active ? `inset 3px 0 0 ${BRAND.blue}` : 'none',
             }}
           >
-            <Icon size={17} strokeWidth={active ? 2.3 : 2} /> {label}
+            {/* flexShrink:0 — a two-line label must squash the text box, never
+                the icon, or the row's icons stop lining up with each other. */}
+            <Icon size={17} strokeWidth={active ? 2.3 : 2} style={{ flexShrink: 0 }} />
+            <span>{label}</span>
           </a>
         );
       })}
