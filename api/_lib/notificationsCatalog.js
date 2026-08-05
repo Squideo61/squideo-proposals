@@ -155,6 +155,14 @@ export const NOTIFICATIONS = [
     channel: 'finance',
   },
   {
+    key: 'course.signup',
+    label: 'Crash course signup',
+    description: 'Someone gives us their email address for the crash course. Defaults to the bell only (which is what raises a desktop/phone push) rather than email — a lead magnet is meant to be high volume, and an inbox copy of each one stops being read.',
+    audience: 'broadcast',
+    group: 'Leads',
+    channel: 'finance',
+  },
+  {
     key: 'quote_request.qualified',
     label: 'Quote request qualified',
     description: 'A teammate qualifies a quote request into a deal.',

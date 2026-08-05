@@ -23,6 +23,8 @@ import sql from '../db.js';
 import { makeId, trimOrNull, lowerOrNull } from '../crm/shared.js';
 import { isDisposableEmail } from '../disposableEmail.js';
 import { pickAttribution } from '../leadAttribution.js';
+import { sendNotification, ensureCourseSignupNotificationDefault } from '../notifications.js';
+import { internalEmails, isInternalEmail } from '../internalAccounts.js';
 import { companyNameFromEmail, resolveContactForSigner } from '../portal/onboarding.js';
 import { applyTag } from '../crm/tags.js';
 import { ensureCourseTables } from './db.js';
@@ -218,5 +220,48 @@ async function upsertSignupRow({
       consent_ip     = COALESCE(course_signups.consent_ip,   EXCLUDED.consent_ip)
     RETURNING id
   `;
-  return row?.id || null;
+  const signupId = row?.id || null;
+
+  // Tell the team — but only the first time, and only for a real stranger.
+  //
+  // `id = ${id}` is the test for "new": ON CONFLICT returns the EXISTING row's
+  // id when the address is already on the list, so a second signup from the
+  // same person comes back with a different id to the one we just generated.
+  // Without that check, anyone re-signing-up would ping the team again.
+  if (signupId === id) {
+    notifyNewSignup({ signupId, email, name, companyName, attr }).catch(() => {});
+  }
+  return signupId;
+}
+
+// Best-effort and never awaited by the caller: a signup must complete whether
+// or not anyone can be told about it.
+async function notifyNewSignup({ signupId, email, name, companyName, attr }) {
+  try {
+    // Our own testing shouldn't buzz anyone's phone.
+    const ourEmails = await internalEmails().catch(() => []);
+    if (isInternalEmail(email, ourEmails)) return;
+
+    await ensureCourseSignupNotificationDefault();
+    const who = trimOrNull(name) || email;
+    const where = attr?.attr_campaign || attr?.attr_source || null;
+    await sendNotification('course.signup', {
+      subject: `🎓 Crash course signup — ${who}${companyName ? ` (${companyName})` : ''}`,
+      text: [
+        `${who} signed up for the crash course.`,
+        '',
+        `Email: ${email}`,
+        companyName ? `Company: ${companyName}` : null,
+        where ? `Came from: ${where}` : null,
+      ].filter(Boolean).join('\n'),
+      inApp: {
+        title: `Crash course signup — ${who}`,
+        // Kept short: this is the line a phone shows on the lock screen.
+        body: [companyName, where].filter(Boolean).join(' · ') || email,
+        link: '#/marketing/course',
+      },
+    });
+  } catch (err) {
+    console.warn('[course] signup notify failed', err.message, signupId);
+  }
 }

@@ -339,6 +339,30 @@ export async function ensurePoReceivedNotificationDefault() {
 // po_provided + partner_interest ← quote_request.new; voiceover_selected ←
 // project.good_to_go (bell-only). Guarded to run at most once per warm instance.
 let portalDefaultsReady = false;
+// Crash-course signups. On for whoever already receives new quote requests —
+// it's the same job (a stranger just raised their hand), so the same people
+// should hear about it without anyone configuring a second list.
+//
+// Bell-only by default, which is what raises a desktop/phone push. A lead
+// magnet is meant to be high volume, and an inbox copy of each one is read for
+// a week and filtered forever after.
+let courseSignupDefaultReady = false;
+export async function ensureCourseSignupNotificationDefault() {
+  if (courseSignupDefaultReady) return;
+  try {
+    await sql`UPDATE roles SET notification_defaults = jsonb_set(
+      notification_defaults, '{course.signup}',
+      COALESCE(notification_defaults->'quote_request.new', 'false'::jsonb), true)
+      WHERE NOT (notification_defaults ? 'course.signup')`;
+    await sql`UPDATE roles SET notification_channel_defaults = jsonb_set(
+      notification_channel_defaults, '{course.signup}', '"in_app"'::jsonb, true)
+      WHERE NOT (notification_channel_defaults ? 'course.signup')`;
+    courseSignupDefaultReady = true;
+  } catch (err) {
+    console.warn('[notifications] ensureCourseSignupNotificationDefault failed', err.message);
+  }
+}
+
 export async function ensurePortalNotificationDefaults() {
   if (portalDefaultsReady) return;
   try {
