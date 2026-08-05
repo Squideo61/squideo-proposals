@@ -167,10 +167,37 @@ const ACTIVITY_LABELS = {
   login: 'Signed in',
   download: 'Downloaded a file',
   'course.signup': 'Signed up for the crash course',
-  'course.completed_video': 'Finished a course video',
+  'course.completed_video': 'Watched a course video',
   'course.completed': 'Finished the whole crash course',
   'brief.submitted': 'Sent us a completed brief',
 };
+
+// The crash course reports itself once per video, when the video is finished.
+//
+// Opening the course page and fetching the video file are both plumbing: a
+// client who presses play, scrubs back and reloads has done one thing, not
+// twenty, and logging each of those buried everything else they did. The
+// finished-video event is the only one that means anything, so the rest is
+// filtered on the way out — including the rows already written by the older,
+// noisier logging, which is why this is a read-time filter and not just a
+// change to what gets written.
+//
+// The two conditions are repeated inline in each query below rather than shared
+// as a string: the driver is a tagged template, and anything interpolated into
+// one becomes a bound parameter, not SQL.
+
+// course.completed_video records the module slug; the title is what a human
+// wants to read. Resolved in one query per feed rather than per row.
+async function courseTitles(rows) {
+  const slugs = [...new Set(rows
+    .map((r) => (r.detail && typeof r.detail === 'object' ? r.detail.slug : null))
+    .filter(Boolean))];
+  if (!slugs.length) return new Map();
+  const found = await sql`
+    SELECT slug, title, module_number FROM course_modules WHERE slug = ANY(${slugs})
+  `.catch(() => []);
+  return new Map(found.map((r) => [r.slug, r.title || `Video ${r.module_number}`]));
+}
 
 const VIEW_LABELS = {
   home: 'Opened their dashboard',
@@ -198,9 +225,10 @@ const DOWNLOAD_KIND = {
   cut: 'final video', archive: 'video', course: 'course video',
 };
 
-export function describeActivity(eventKey, detail) {
+export function describeActivity(eventKey, detail, { courseTitle = null } = {}) {
   const d = detail && typeof detail === 'object' ? detail : {};
   if (eventKey === 'view') return VIEW_LABELS[d.view] || 'Opened the portal';
+  if (eventKey === 'course.completed_video' && courseTitle) return `Watched ${courseTitle}`;
   if (eventKey === 'download') {
     // Rows written before downloads recorded a name say "a file" and mean it —
     // better than inventing one from the scope and looking specific.
@@ -224,16 +252,20 @@ export async function portalPresence(portalUserId, { limit = 40, scan = 300 } = 
   if (!portalUserId) return [];
   await ensurePortalTables();
   const rows = await sql`
-    SELECT event_key, detail, created_at, deal_id
-      FROM portal_activity
-     WHERE portal_user_id = ${portalUserId}
-     ORDER BY created_at DESC
+    SELECT a.event_key, a.detail, a.created_at, a.deal_id
+      FROM portal_activity a
+     WHERE a.portal_user_id = ${portalUserId}
+       AND NOT (a.event_key = 'view' AND a.detail->>'view' = 'course')
+       AND NOT (a.event_key = 'download' AND a.detail->>'scope' = 'course')
+     ORDER BY a.created_at DESC
      LIMIT ${Math.min(Number(scan) || 300, 500)}
   `.catch(() => []);
+  const titles = await courseTitles(rows);
 
   const out = [];
   for (const r of rows) {
-    const text = describeActivity(r.event_key, r.detail);
+    const slug = r.detail && typeof r.detail === 'object' ? r.detail.slug : null;
+    const text = describeActivity(r.event_key, r.detail, { courseTitle: titles.get(slug) || null });
     const last = out[out.length - 1];
     const sameSitting = last
       && last.text === text
@@ -317,6 +349,10 @@ export async function portalActiveUsers({ days = 30, companyId = null, limit = 5
       JOIN portal_users pu ON pu.id = a.portal_user_id
      WHERE (${window}::int IS NULL OR a.created_at > NOW() - make_interval(days => ${window}::int))
        AND (${companyId}::text IS NULL OR a.company_id = ${companyId})
+       -- Otherwise a client who watched one video eight times outranks one who
+       -- read every document: the plumbing rows would be doing the counting.
+       AND NOT (a.event_key = 'view' AND a.detail->>'view' = 'course')
+       AND NOT (a.event_key = 'download' AND a.detail->>'scope' = 'course')
      GROUP BY pu.id
      ORDER BY events DESC, last_at DESC
      LIMIT ${Math.min(Number(limit) || 50, 200)}
@@ -368,12 +404,16 @@ export async function portalActivityFeed({ limit = 100, companyId = null, before
       LEFT JOIN deals d ON d.id = a.deal_id
      WHERE (${companyId}::text IS NULL OR a.company_id = ${companyId})
        AND (${before}::timestamptz IS NULL OR a.created_at < ${before})
+       AND NOT (a.event_key = 'view' AND a.detail->>'view' = 'course')
+       AND NOT (a.event_key = 'download' AND a.detail->>'scope' = 'course')
      ORDER BY a.created_at DESC
      LIMIT ${Math.min(Number(limit) || 100, 300)}
   `.catch(() => []);
+  const titles = await courseTitles(rows);
 
   return rows.map((r) => {
-    const text = describeActivity(r.event_key, r.detail);
+    const slug = r.detail && typeof r.detail === 'object' ? r.detail.slug : null;
+    const text = describeActivity(r.event_key, r.detail, { courseTitle: titles.get(slug) || null });
     return {
       id: r.id,
       type: r.event_key,

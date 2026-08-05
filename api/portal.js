@@ -583,10 +583,14 @@ export default async function handler(req, res) {
 //
 // logPortalActivity no-ops without a portal_user_id, so a staff preview or
 // manage session silently records nothing: the client's activity stays theirs.
+// 'course' is deliberately absent. The crash course reports itself when a video
+// is FINISHED (course.completed_video), which is the only part of it worth
+// knowing; logging every visit to the page on top of that told us a client had
+// been busy when all they'd done was reload.
 const TRACKED_VIEWS = new Set([
   'home', 'project', 'library', 'documents', 'extras', 'voiceover', 'kickoff',
   'script', 'request', 'video-credit', 'team', 'settings', 'review', 'storyboard',
-  'course', 'brief',
+  'brief',
 ]);
 
 async function trackRoute(req, res, user) {
@@ -1848,8 +1852,8 @@ async function downloadRoute(req, res, user) {
        WHERE id = ${id} AND published AND blob_url IS NOT NULL
     `.catch(() => []);
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
-    // Watching is tracked by course_progress, in far more detail than this.
-    if (wantDownload) noteDownload(rows[0].title);
+    // Nothing logged either way: the course is reported by course_progress, one
+    // row per video finished, and the player fetching bytes is not an event.
     return blobRedirect(res, rows[0].blob_url, wantDownload);
   }
 
