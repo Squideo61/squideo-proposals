@@ -34,6 +34,7 @@ import { introCallsRoute } from '../_lib/crm/introCalls.js';
 import { scheduleRoute } from '../_lib/crm/schedule.js';
 import { voiceoversRoute } from '../_lib/crm/voiceovers.js';
 import { courseRoute } from '../_lib/crm/course.js';
+import { portalAnalyticsRoute } from '../_lib/crm/portalAnalytics.js';
 import { tagsRoute } from '../_lib/crm/tags.js';
 import { staffActivityRoute, beginWrite, finishWrite } from '../_lib/crm/staffActivity.js';
 import { getRole } from '../_lib/userRoles.js';
@@ -152,6 +153,7 @@ export default async function handler(req, res) {
       case 'schedule':  return await scheduleRoute(req, res, id, action, user);
       case 'voiceovers': return await voiceoversRoute(req, res, id, action, user);
       case 'course':    return await courseRoute(req, res, id, action, user);
+      case 'portal-analytics': return await portalAnalyticsRoute(req, res, id, action, user);
       case 'tags':      return await tagsRoute(req, res, id, action, user);
       default:           return res.status(404).json({ error: 'Unknown resource: ' + resource });
     }

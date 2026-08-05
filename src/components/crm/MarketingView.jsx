@@ -1,12 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell } from 'recharts';
-import { ArrowLeft, BarChart3, MailQuestion, LayoutDashboard, Megaphone, Check, Copy, TrendingUp, RefreshCw, Search, Globe, Users, UserCheck, FileText, Trophy, PoundSterling, Wallet, Target, Coins, Clock, Gauge, XCircle, ChevronLeft, ChevronRight, Plus, Mail, Phone, Link2, Inbox, GraduationCap } from 'lucide-react';
+import { ArrowLeft, BarChart3, MailQuestion, LayoutDashboard, Megaphone, Check, Copy, TrendingUp, RefreshCw, Search, Globe, Users, UserCheck, FileText, Trophy, PoundSterling, Wallet, Target, Coins, Clock, Gauge, XCircle, ChevronLeft, ChevronRight, Plus, Mail, Phone, Link2, Inbox, GraduationCap, KeyRound } from 'lucide-react';
 import { BRAND, APP_MAX_WIDTH } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, useIsMobile } from '../../utils.js';
 import { CallLink, Modal } from './../ui.jsx';
 import { computeRange, rangeHeading, fmtRangeDates, segBtn, RangeControl, thisMonthStr } from './dateRange.jsx';
 import { CourseLeadsTab } from './CourseLeadsTab.jsx';
+import { PortalStatsTab } from './PortalStatsTab.jsx';
 
 // Remembers the Marketing page's view state across navigation (mirrors
 // financeViewMemory): the active tab, report grouping, date range and scroll.
@@ -61,6 +62,7 @@ const TABS = [
   { key: 'reports', label: 'Reports', icon: BarChart3 },
   { key: 'leads', label: 'Leads', icon: MailQuestion },
   { key: 'course', label: 'Course', icon: GraduationCap },
+  { key: 'portal', label: 'Portal', icon: KeyRound },
   { key: 'search', label: 'Search', icon: Search },
   { key: 'traffic', label: 'Traffic', icon: Globe },
   { key: 'settings', label: 'Settings', icon: Megaphone },
@@ -225,6 +227,7 @@ export function MarketingView({ section: sectionProp, onBack, onOpenCompany, onO
       )}
       {section === 'leads' && <LeadsTab data={leads} loading={loading} onOpenCompany={onOpenCompany} onRetry={() => setReload((n) => n + 1)} />}
       {section === 'course' && <CourseLeadsTab onOpenContact={onOpenContact} />}
+      {section === 'portal' && <PortalStatsTab from={from} to={to} />}
       {section === 'search' && <SearchTab data={search} loading={loading} onOpenSettings={() => setSection('settings')} onRetry={() => setReload((n) => n + 1)} />}
       {section === 'traffic' && <TrafficTab data={traffic} loading={loading} onOpenSettings={() => setSection('settings')} onRetry={() => setReload((n) => n + 1)} />}
       {section === 'settings' && <SettingsTab snippet={snippet} onSync={() => actions.syncAdSpend()} onReloadStatus={() => actions.loadMarketingSnippet().then((d) => d && setSnippet(d))} cutoff={cutoff} onCutoffChange={onCutoffChange} />}
