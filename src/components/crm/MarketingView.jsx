@@ -226,7 +226,7 @@ export function MarketingView({ section: sectionProp, onBack, onOpenCompany, onO
         />
       )}
       {section === 'leads' && <LeadsTab data={leads} loading={loading} onOpenCompany={onOpenCompany} onRetry={() => setReload((n) => n + 1)} />}
-      {section === 'course' && <CourseLeadsTab onOpenContact={onOpenContact} />}
+      {section === 'course' && <CourseLeadsTab onOpenContact={onOpenContact} from={from} to={to} />}
       {section === 'portal' && <PortalStatsTab from={from} to={to} />}
       {section === 'search' && <SearchTab data={search} loading={loading} onOpenSettings={() => setSection('settings')} onRetry={() => setReload((n) => n + 1)} />}
       {section === 'traffic' && <TrafficTab data={traffic} loading={loading} onOpenSettings={() => setSection('settings')} onRetry={() => setReload((n) => n + 1)} />}

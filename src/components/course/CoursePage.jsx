@@ -251,6 +251,26 @@ function FreePlayer({ module: m, track, onEnded, autoStart = false, freeCount = 
   const [playing, setPlaying] = useState(autoStart);
   const played = useRef(false);
 
+  // Quarter marks, so the reporting has a drop-off curve rather than just
+  // "started" and "finished". Without these you can see that half the visitors
+  // who press play never finish, but not whether they leave at ten seconds
+  // (wrong video, wrong page) or at forty (fine, but too long) — and those two
+  // call for opposite fixes.
+  const milestones = useRef(new Set());
+
+  const onProgress = (e) => {
+    const v = e.currentTarget;
+    const dur = Number(v.duration) || 0;
+    if (!dur) return;
+    const pct = (v.currentTime / dur) * 100;
+    for (const mark of [25, 50, 75]) {
+      if (pct >= mark && !milestones.current.has(mark)) {
+        milestones.current.add(mark);
+        track('progress', { slug: m.slug, pct: mark });
+      }
+    }
+  };
+
   const start = () => {
     setPlaying(true);
     if (!played.current) { played.current = true; track('play', { slug: m.slug }); }
@@ -274,7 +294,8 @@ function FreePlayer({ module: m, track, onEnded, autoStart = false, freeCount = 
             controlsList="nodownload"
             poster={m.posterUrl || undefined}
             src={`/api/course?action=stream&slug=${encodeURIComponent(m.slug)}`}
-            onEnded={() => { track('progress', { slug: m.slug, ended: true }); onEnded?.(); }}
+            onTimeUpdate={onProgress}
+            onEnded={() => { track('progress', { slug: m.slug, pct: 100, ended: true }); onEnded?.(); }}
             style={{ width: '100%', height: '100%', display: 'block', objectFit: 'contain' }}
           />
         ) : (

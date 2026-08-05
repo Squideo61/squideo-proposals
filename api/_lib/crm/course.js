@@ -65,7 +65,8 @@ export async function courseRoute(req, res, id, action, user) {
 
   if (id === 'analytics') {
     if (req.method !== 'GET') return res.status(405).end();
-    return courseAnalytics(res);
+    const day = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : null);
+    return courseAnalytics(res, day(req.query.from), day(req.query.to));
   }
 
   if (!id) {
@@ -279,7 +280,124 @@ function hotScore(row) {
   };
 }
 
-async function courseAnalytics(res) {
+// The public funnel, and how far people actually get through each video.
+//
+// Two populations, deliberately kept apart rather than added together:
+//
+//   ANONYMOUS — course_events, keyed by a browser-local visitor key. This is
+//     the only view of the people who matter most commercially: the ones who
+//     landed, watched the free video and never gave us an email. They are
+//     invisible everywhere else in the CRM.
+//   SIGNED IN — course_progress, keyed by portal user. Exact to the second,
+//     because the portal player reports position rather than milestones.
+//
+// A visitor key is a browser, not a person. Two devices are two visitors, and
+// clearing site data starts a new one — so these are directional numbers for
+// comparing videos against each other, not a headcount.
+async function courseReach(from, to) {
+  const start = from ? from + 'T00:00:00Z' : null;
+  const endEx = to ? new Date(new Date(to + 'T00:00:00Z').getTime() + 86400000).toISOString() : null;
+
+  const [funnelRows, videoRows, dayRows] = await Promise.all([
+    sql`
+      SELECT event_key,
+             COUNT(*)::int AS n,
+             COUNT(DISTINCT visitor_key)::int AS people
+        FROM course_events
+       WHERE (${start}::timestamptz IS NULL OR created_at >= ${start})
+         AND (${endEx}::timestamptz IS NULL OR created_at < ${endEx})
+       GROUP BY event_key
+    `.catch(() => []),
+    sql`
+      SELECT m.id, m.slug, m.module_number, m.title, m.free, m.duration_seconds,
+             (SELECT COUNT(DISTINCT e.visitor_key)::int FROM course_events e
+               WHERE e.module_id = m.id AND e.event_key = 'play'
+                 AND (${start}::timestamptz IS NULL OR e.created_at >= ${start})
+                 AND (${endEx}::timestamptz IS NULL OR e.created_at < ${endEx})) AS anon_plays,
+             (SELECT COUNT(DISTINCT e.visitor_key)::int FROM course_events e
+               WHERE e.module_id = m.id AND e.event_key = 'progress'
+                 AND (e.detail->>'pct')::int >= 25
+                 AND (${start}::timestamptz IS NULL OR e.created_at >= ${start})
+                 AND (${endEx}::timestamptz IS NULL OR e.created_at < ${endEx})) AS anon_25,
+             (SELECT COUNT(DISTINCT e.visitor_key)::int FROM course_events e
+               WHERE e.module_id = m.id AND e.event_key = 'progress'
+                 AND (e.detail->>'pct')::int >= 50
+                 AND (${start}::timestamptz IS NULL OR e.created_at >= ${start})
+                 AND (${endEx}::timestamptz IS NULL OR e.created_at < ${endEx})) AS anon_50,
+             (SELECT COUNT(DISTINCT e.visitor_key)::int FROM course_events e
+               WHERE e.module_id = m.id AND e.event_key = 'progress'
+                 AND (e.detail->>'pct')::int >= 75
+                 AND (${start}::timestamptz IS NULL OR e.created_at >= ${start})
+                 AND (${endEx}::timestamptz IS NULL OR e.created_at < ${endEx})) AS anon_75,
+             (SELECT COUNT(DISTINCT e.visitor_key)::int FROM course_events e
+               WHERE e.module_id = m.id AND e.event_key = 'progress'
+                 AND (e.detail->>'ended') = 'true'
+                 AND (${start}::timestamptz IS NULL OR e.created_at >= ${start})
+                 AND (${endEx}::timestamptz IS NULL OR e.created_at < ${endEx})) AS anon_done,
+             (SELECT COUNT(*)::int FROM course_progress p
+               WHERE p.module_id = m.id
+                 AND (${start}::timestamptz IS NULL OR p.last_viewed_at >= ${start})
+                 AND (${endEx}::timestamptz IS NULL OR p.last_viewed_at < ${endEx})) AS member_starts,
+             (SELECT COUNT(*)::int FROM course_progress p
+               WHERE p.module_id = m.id AND p.completed_at IS NOT NULL
+                 AND (${start}::timestamptz IS NULL OR p.completed_at >= ${start})
+                 AND (${endEx}::timestamptz IS NULL OR p.completed_at < ${endEx})) AS member_done,
+             -- Capped at 100: furthest_seconds can exceed a stale duration after
+             -- a video is re-uploaded, and a 140% watch rate reads as a bug.
+             (SELECT ROUND(AVG(LEAST(100, 100.0 * p.furthest_seconds / NULLIF(p.duration_seconds, 0))))::int
+                FROM course_progress p
+               WHERE p.module_id = m.id AND COALESCE(p.duration_seconds, 0) > 0) AS member_avg_pct
+        FROM course_modules m
+       WHERE m.published
+       ORDER BY COALESCE(m.sort_order, m.module_number)
+    `.catch(() => []),
+    sql`
+      SELECT TO_CHAR(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
+             COUNT(DISTINCT visitor_key)::int AS n
+        FROM course_events
+       WHERE event_key = 'page_view'
+         AND (${start}::timestamptz IS NULL OR created_at >= ${start})
+         AND (${endEx}::timestamptz IS NULL OR created_at < ${endEx})
+       GROUP BY 1 ORDER BY 1
+    `.catch(() => []),
+  ]);
+
+  const people = (k) => funnelRows.find((e) => e.event_key === k)?.people || 0;
+  const raw = (k) => funnelRows.find((e) => e.event_key === k)?.n || 0;
+
+  const [signupCount] = await sql`
+    SELECT COUNT(*)::int AS n FROM course_signups
+     WHERE (${start}::timestamptz IS NULL OR created_at >= ${start})
+       AND (${endEx}::timestamptz IS NULL OR created_at < ${endEx})
+  `.catch(() => [{ n: 0 }]);
+
+  return {
+    funnel: {
+      visitors: people('page_view'),
+      pageViews: raw('page_view'),
+      played: people('play'),
+      reachedSignup: people('signup_open'),
+      signedUp: signupCount?.n || 0,
+    },
+    videos: videoRows.map((v) => ({
+      id: v.id,
+      slug: v.slug,
+      number: v.module_number,
+      title: v.title,
+      free: v.free === true,
+      durationSeconds: v.duration_seconds ?? null,
+      anon: {
+        plays: v.anon_plays, q1: v.anon_25, q2: v.anon_50, q3: v.anon_75, done: v.anon_done,
+      },
+      member: {
+        starts: v.member_starts, done: v.member_done, avgPct: v.member_avg_pct ?? null,
+      },
+    })),
+    byDay: dayRows.map((r) => ({ day: String(r.day).slice(0, 10), n: r.n })),
+  };
+}
+
+async function courseAnalytics(res, from = null, to = null) {
   const [signups, videos, events] = await Promise.all([
     sql`
       SELECT s.id, s.email, s.name, s.company_id, s.contact_id, s.completed_at,
@@ -365,6 +483,9 @@ async function courseAnalytics(res) {
       starts: Number(v.starts || 0),
       completions: Number(v.completions || 0),
     })),
+    // The public side: everyone who landed, including the ones who never gave
+    // us an email — invisible everywhere else in the CRM.
+    reach: await courseReach(from, to),
   });
 }
 

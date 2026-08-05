@@ -12,6 +12,7 @@ import { BRAND } from '../../theme.js';
 import { api } from '../../api.js';
 import { useIsMobile } from '../../utils.js';
 import { ResponsiveTable } from '../ui.jsx';
+import { CourseReach } from './CourseReach.jsx';
 
 const BANDS = {
   hot:  { label: 'Hot',  bg: '#FEF2F2', border: '#FECACA', ink: '#B91C1C' },
@@ -29,7 +30,7 @@ const ago = (d) => {
   return fmtDate(d);
 };
 
-export function CourseLeadsTab({ onOpenContact }) {
+export function CourseLeadsTab({ onOpenContact, from, to }) {
   const isMobile = useIsMobile();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
@@ -38,8 +39,11 @@ export function CourseLeadsTab({ onOpenContact }) {
 
   useEffect(() => {
     setError(null);
-    api.get('/api/crm/course/analytics').then(setData).catch((e) => setError(e.message));
-  }, [reload]);
+    const q = new URLSearchParams();
+    if (from) q.set('from', from);
+    if (to) q.set('to', to);
+    api.get('/api/crm/course/analytics?' + q.toString()).then(setData).catch((e) => setError(e.message));
+  }, [reload, from, to]);
 
   const rows = useMemo(() => {
     const all = data?.signups || [];
@@ -66,6 +70,8 @@ export function CourseLeadsTab({ onOpenContact }) {
 
   return (
     <div>
+      <CourseReach reach={data.reach} isMobile={isMobile} />
+
       <Funnel f={f} isMobile={isMobile} />
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '22px 0 12px', flexWrap: 'wrap' }}>
