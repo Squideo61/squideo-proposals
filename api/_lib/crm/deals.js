@@ -105,6 +105,20 @@ export function ensureDealVat() {
   return dealVatEnsured;
 }
 
+// Self-heal for db/migrations/20260807_deal_lead_origin.sql — where the deal
+// came from, and whether the client was promised the portal's 10%. Carried on
+// the deal so honouring it doesn't depend on anyone remembering the inbox row.
+// Cached so it runs at most once per warm instance.
+let dealOriginEnsured = null;
+export function ensureDealOrigin() {
+  if (dealOriginEnsured) return dealOriginEnsured;
+  dealOriginEnsured = (async () => {
+    await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS lead_source TEXT`;
+    await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS portal_discount BOOLEAN NOT NULL DEFAULT FALSE`;
+  })().catch((err) => { dealOriginEnsured = null; throw err; });
+  return dealOriginEnsured;
+}
+
 // Turn a Drive API error into an actionable message for the user.
 export function driveErrorHint(err) {
   const msg = err?.message || '';
@@ -2051,6 +2065,10 @@ export function serialiseDeal(r) {
   // annotateDeals); omitted on partial selects so the optimistic merge never
   // blanks it on a stage move / edit.
   if ('hot' in r) out.hot = !!r.hot;
+  // Where the lead came from, and whether the client was already promised the
+  // portal's 10%. Guarded like the rest: a partial select must not blank them.
+  if ('lead_source' in r) out.leadSource = r.lead_source || null;
+  if ('portal_discount' in r) out.portalDiscount = !!r.portal_discount;
   // Per-deal VAT rate (fraction; 0.2 = 20%). Carried on SELECT * + the create/
   // PATCH returns; guarded so a partial select never blanks it in the cache.
   if ('vat_rate' in r) out.vatRate = r.vat_rate == null ? null : Number(r.vat_rate);

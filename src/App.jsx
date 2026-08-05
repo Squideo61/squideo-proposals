@@ -315,6 +315,17 @@ function AppShell() {
       createdAt: Date.now()
     };
     if (dealId) data._dealId = dealId;
+
+    // A portal request was quoted "with 10% off" before the client sent it, so
+    // the proposal starts there rather than relying on whoever builds it having
+    // read the deal notes. It's an ordinary discount in the builder — visible,
+    // editable, removable — not a hidden adjustment. An explicit discount
+    // already on the template wins: that's a deliberate decision, not a default.
+    const dealForDiscount = dealId ? state.deals[dealId] : null;
+    if (dealForDiscount?.portalDiscount && !(Number(data.discount?.value) > 0)) {
+      data.discount = { type: 'percent', value: 10, label: 'Portal exclusive' };
+    }
+
     // Default the Partner Programme monthly rate to 20% off the project base price.
     if (data.partnerProgramme && typeof data.basePrice === 'number') {
       data.partnerProgramme = {

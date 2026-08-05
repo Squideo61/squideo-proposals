@@ -6,6 +6,8 @@
 import { del } from '@vercel/blob';
 import sql from './db.js';
 import { makeId, trimOrNull, lowerOrNull } from './crm/shared.js';
+import { ensureDealOrigin } from './crm/deals.js';
+import { ensurePortalTables } from './portal/db.js';
 import { sendNotification, ensureQuoteQualifiedNotificationDefault } from './notifications.js';
 import { APP_URL } from './email.js';
 
@@ -49,10 +51,14 @@ function parseBudgetLower(budget) {
 }
 
 export async function loadQuoteRequestForAction(id) {
+  // source / portal_discount are added by the portal's own self-heal, and this
+  // is reachable from the one-click email link, which never touches it.
+  await ensurePortalTables().catch(() => {});
   const rows = await sql`
     SELECT id, form_session_id, name, email, phone, country_code, country_name,
            company, project_details, timeline, budget, opt_in, source_url,
-           status, contact_id, deal_id, reviewed_at, created_at
+           status, contact_id, deal_id, reviewed_at, created_at,
+           source, portal_discount
     FROM quote_requests WHERE id = ${id}
   `;
   if (!rows[0]) return null;
@@ -158,10 +164,23 @@ export async function qualifyQuoteRequest(id, { actorEmail } = {}) {
   if (loaded.row.timeline) notesParts.push(`Timeline: ${loaded.row.timeline}`);
   if (loaded.row.budget) notesParts.push(`Budget: ${loaded.row.budget}`);
   if (loaded.row.company) notesParts.push(`Company: ${loaded.row.company}`);
+  // The origin travels onto the deal. Without it, everything that told you this
+  // was a portal lead — the alert subject, the bell, the pill on the inbox row —
+  // stops at the moment of qualifying, and the 10% the client was already
+  // promised in the portal survives only as something to remember.
+  const leadSource = trimOrNull(loaded.row.source);
+  const portalDiscount = loaded.row.portal_discount === true;
+  if (portalDiscount) {
+    notesParts.push('Requested through the client portal — quoted with the 10% portal discount.');
+  } else if (leadSource === 'portal') {
+    notesParts.push('Requested through the client portal.');
+  }
   const dealNotes = notesParts.join('\n\n') || null;
 
+  await ensureDealOrigin();
   await sql`
-    INSERT INTO deals (id, title, company_id, primary_contact_id, owner_email, stage, value, notes)
+    INSERT INTO deals (id, title, company_id, primary_contact_id, owner_email, stage, value, notes,
+                       lead_source, portal_discount)
     VALUES (
       ${dealId},
       ${dealTitle},
@@ -170,7 +189,9 @@ export async function qualifyQuoteRequest(id, { actorEmail } = {}) {
       ${actorEmail || null},
       'lead',
       ${dealValue},
-      ${dealNotes}
+      ${dealNotes},
+      ${leadSource},
+      ${portalDiscount}
     )
   `;
   await sql`

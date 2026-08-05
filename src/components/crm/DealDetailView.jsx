@@ -440,6 +440,19 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
           {/* The deal's reference — also its project number once in production.
               Sits with the title so it's quotable from the first glance. */}
           <RefBadge reference={deal.reference} size={12} title={referenceMonth(deal.reference) ? `Deal ${deal.reference} — formed ${referenceMonth(deal.reference)}. Click to copy.` : undefined} />
+          {/* Where it came from. The 10% matters most: the client was shown it
+              in the portal before they sent the request, so a proposal that
+              quietly omits it is a promise quietly broken. */}
+          {deal.leadSource === 'portal' && (
+            <span
+              title={deal.portalDiscount
+                ? 'Requested through the client portal — they were promised 10% off, and a new proposal starts with that discount applied.'
+                : 'Requested through the client portal.'}
+              style={{ background: '#2BB8E622', color: '#0B6E93', fontSize: 10, fontWeight: 700, padding: '3px 7px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.4 }}
+            >
+              Portal{deal.portalDiscount ? ' · 10% off' : ''}
+            </span>
+          )}
           {/* "Hot" is a sales/lead warmth marker — irrelevant once the deal
               is a won project in production, so hide it there. */}
           {!productionOnly && !isProject && (
