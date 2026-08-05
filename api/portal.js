@@ -1797,28 +1797,37 @@ async function downloadRoute(req, res, user) {
   const wantDownload = req.query.download === '1';
   if (!scope || !id) return res.status(400).json({ error: 'scope and id required' });
 
-  // Worth knowing who actually took delivery. Only a real download counts —
-  // scope=poster is a thumbnail and stream=1 is the thumbnail picker, both of
-  // which fire constantly and would drown the log. Best-effort and not awaited
-  // beyond the helper's own catch.
-  if (user.puid && scope !== 'poster' && req.query.stream !== '1' && req.query.inline !== '1') {
+  // Worth knowing who actually took delivery, and of what.
+  //
+  // Only a real download counts. Serving bytes is not the same as someone
+  // saving a file: a poster is a thumbnail, stream=1 is the thumbnail picker,
+  // inline=1 is a preview — and a 302 to a video the player is simply PLAYING
+  // is not a download either. That last one is why every crash-course video
+  // used to appear in the log as "Downloaded a file".
+  //
+  // So each branch below notes its own download once it knows what the file
+  // actually is, which is also the only way the log can name it. Best-effort:
+  // nothing here is awaited beyond the helper's own catch.
+  const noteDownload = (name) => {
+    if (!user.puid) return;
     logPortalActivity({
       req, portalUserId: user.puid,
       dealId: trimOrNull(req.query.dealId),
-      eventKey: 'download', detail: { scope },
+      eventKey: 'download', detail: { scope, name: trimOrNull(name) },
     }).catch(() => {});
-  }
+  };
 
   // Past-work item added by staff — org-checked, then streamed from the public
   // revision blob store (same place delivered cuts live).
   if (scope === 'archive') {
     const rows = await sql`
-      SELECT blob_url, mime_type, company_id FROM portal_library_items WHERE id = ${id}
+      SELECT blob_url, mime_type, company_id, title, filename FROM portal_library_items WHERE id = ${id}
     `.catch(() => []);
     const item = rows[0];
     if (!item || !item.blob_url || !user.companyIds.includes(item.company_id)) {
       return res.status(404).json({ error: 'File not found' });
     }
+    if (wantDownload) noteDownload(item.title || item.filename);
     // stream=1 relays the bytes through us instead of redirecting. Only the
     // thumbnail picker asks for this: drawing a frame onto a canvas taints it
     // unless the video is same-origin, and a redirect to the blob host isn't.
@@ -1835,10 +1844,12 @@ async function downloadRoute(req, res, user) {
   // /api/course endpoint, which serves only the free ones.
   if (scope === 'course') {
     const rows = await sql`
-      SELECT blob_url, mime_type FROM course_modules
+      SELECT blob_url, mime_type, title FROM course_modules
        WHERE id = ${id} AND published AND blob_url IS NOT NULL
     `.catch(() => []);
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    // Watching is tracked by course_progress, in far more detail than this.
+    if (wantDownload) noteDownload(rows[0].title);
     return blobRedirect(res, rows[0].blob_url, wantDownload);
   }
 
@@ -1871,6 +1882,7 @@ async function downloadRoute(req, res, user) {
     `;
     const f = rows[0];
     if (!f || !user.companyIds.includes(f.company_id)) return res.status(404).json({ error: 'File not found' });
+    noteDownload(f.filename);
     const url = await getDownloadUrl(f.blob_url);
     res.setHeader('Location', url);
     return res.status(302).end();
@@ -1885,6 +1897,7 @@ async function downloadRoute(req, res, user) {
     `;
     const f = rows[0];
     if (!f || !f.blob_url || !user.companyIds.includes(f.company_id)) return res.status(404).json({ error: 'File not found' });
+    noteDownload(f.filename);
     const url = await getDownloadUrl(f.blob_url);
     res.setHeader('Location', url);
     return res.status(302).end();
@@ -1899,7 +1912,7 @@ async function downloadRoute(req, res, user) {
     if (!deal) return;
     const videoId = req.query.videoId ? String(req.query.videoId) : id;
     const rows = await sql`
-      SELECT rver.blob_url
+      SELECT rver.blob_url, pv.title
         FROM project_videos pv
         JOIN revision_versions rver ON rver.video_id = pv.revision_video_id
        WHERE pv.id = ${videoId} AND pv.deal_id = ${deal.id}
@@ -1909,6 +1922,9 @@ async function downloadRoute(req, res, user) {
     `.catch(() => []);
     const cut = rows[0];
     if (!cut || !cut.blob_url) return res.status(404).json({ error: 'File not found' });
+    // Taking delivery of the final cut is the one download that really matters,
+    // so it's worth separating from the client merely watching it in the portal.
+    if (wantDownload) noteDownload(cut.title || deal.title);
     // Revision cuts live in the public revision blob store — a 302 to the
     // unguessable URL is sufficient once the delivery gate above has passed.
     return blobRedirect(res, cut.blob_url, wantDownload);
@@ -1927,6 +1943,7 @@ async function downloadRoute(req, res, user) {
     const file = files.find((f) => f.driveFileId === id);
     if (!file) return res.status(404).json({ error: 'File not found' });
     const inline = req.query.inline === '1';
+    if (!inline) noteDownload(file.name);
     return streamDriveFile(res, token, file.driveFileId, {
       filename: file.name,
       mimeType: file.mimeType,

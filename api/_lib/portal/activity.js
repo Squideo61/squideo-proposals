@@ -193,9 +193,20 @@ const VIEW_LABELS = {
 
 // One row of portal_activity in words. Shared by every reader so the wording of
 // an event lives in exactly one place.
+const DOWNLOAD_KIND = {
+  company: 'document', deal: 'project file', library: 'file',
+  cut: 'final video', archive: 'video', course: 'course video',
+};
+
 export function describeActivity(eventKey, detail) {
-  const view = detail && typeof detail === 'object' ? detail.view : null;
-  if (eventKey === 'view') return VIEW_LABELS[view] || 'Opened the portal';
+  const d = detail && typeof detail === 'object' ? detail : {};
+  if (eventKey === 'view') return VIEW_LABELS[d.view] || 'Opened the portal';
+  if (eventKey === 'download') {
+    // Rows written before downloads recorded a name say "a file" and mean it —
+    // better than inventing one from the scope and looking specific.
+    const kind = DOWNLOAD_KIND[d.scope] || 'file';
+    return d.name ? `Downloaded ${d.name}` : `Downloaded a ${kind}`;
+  }
   return ACTIVITY_LABELS[eventKey] || eventKey;
 }
 
