@@ -15,7 +15,7 @@ import { portalApi } from '../api.js';
 import { usePortal } from '../PortalContext.jsx';
 import { Card, EmptyState, SectionHeading } from '../components.jsx';
 import {
-  CalendarClock, Check, Clock, Video, PiggyBank, Shuffle, Zap, TrendingDown, Handshake,
+  CalendarClock, Check, Clock, Video, PiggyBank, PlayCircle, Shuffle, Zap, TrendingDown, Handshake,
 } from 'lucide-react';
 
 const browserTz = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return 'Europe/London'; } };
@@ -23,6 +23,77 @@ const browserTz = () => { try { return Intl.DateTimeFormat().resolvedOptions().t
 function fmt(dateISO, tz, opts) {
   try { return new Date(dateISO).toLocaleString('en-GB', { timeZone: tz, ...opts }); }
   catch { return new Date(dateISO).toLocaleString('en-GB', opts); }
+}
+
+// Vimeo / YouTube / Loom go in an iframe; a file we host plays natively.
+//
+// The third case matters. The portal's CSP allows exactly those three frame
+// hosts, and media-src only 'self' and our own blob store — so an MP4 on
+// somebody else's CDN is blocked, and a <video> pointed at it renders a black
+// rectangle with the failure only visible in the console. `unsupported` exists
+// so the page can say what happened instead of looking broken.
+const PLAYABLE_MEDIA = /^(?:\/|https:\/\/[a-z0-9-]+\.public\.blob\.vercel-storage\.com\/)/i;
+
+export function videoEmbed(url) {
+  if (!url) return null;
+  const yt = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([A-Za-z0-9_-]{11})/);
+  if (yt) return { kind: 'frame', src: 'https://www.youtube.com/embed/' + yt[1] };
+  const vimeo = url.match(/vimeo\.com\/(?:video\/)?(\d+)/);
+  if (vimeo) return { kind: 'frame', src: 'https://player.vimeo.com/video/' + vimeo[1] };
+  const loom = url.match(/loom\.com\/(?:share|embed)\/([A-Za-z0-9]+)/);
+  if (loom) return { kind: 'frame', src: 'https://www.loom.com/embed/' + loom[1] };
+  if (PLAYABLE_MEDIA.test(url)) return { kind: 'file', src: url };
+  return { kind: 'unsupported', src: url };
+}
+
+function VideoBlock({ video }) {
+  const embed = videoEmbed(video?.url);
+  if (!embed) return null;
+  // A link we can't play in the page. Offer it rather than pretend — and say
+  // enough that whoever set it knows to move it to Vimeo or upload it.
+  if (embed.kind === 'unsupported') {
+    return (
+      <Card>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <PlayCircle size={20} color={BRAND.blue} style={{ flexShrink: 0 }} />
+          <div style={{ flex: 1, minWidth: 200, fontSize: 13.5, color: BRAND.ink }}>
+            {video.title || 'Watch the Partner Programme explainer'}
+          </div>
+          <a href={embed.src} target="_blank" rel="noreferrer" className="btn" style={{ textDecoration: 'none' }}>
+            Watch the video
+          </a>
+        </div>
+      </Card>
+    );
+  }
+  return (
+    <Card style={{ padding: 0, overflow: 'hidden' }}>
+      <div style={{ position: 'relative', width: '100%', paddingTop: '56.25%', background: '#000' }}>
+        {embed.kind === 'frame' ? (
+          <iframe
+            src={embed.src}
+            title={video.title || 'Partner Programme'}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+            allowFullScreen
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0 }}
+          />
+        ) : (
+          <video
+            src={embed.src}
+            controls
+            playsInline
+            preload="metadata"
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', background: '#000' }}
+          />
+        )}
+      </div>
+      {video.title && (
+        <div style={{ padding: '11px 16px', fontSize: 13.5, fontWeight: 700, color: BRAND.ink }}>
+          {video.title}
+        </div>
+      )}
+    </Card>
+  );
 }
 
 function groupByDay(slots, tz) {
@@ -125,6 +196,11 @@ export default function Partner() {
           1 video credit = 60 seconds of finished video
         </div>
       </div>
+
+      {/* Ben explaining it, straight after the promise and before the detail —
+          the same order the public page uses, because most people would rather
+          be told than read. Omitted entirely until a video is set. */}
+      <VideoBlock video={data.video} />
 
       {/* ── Why ── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 12 }}>

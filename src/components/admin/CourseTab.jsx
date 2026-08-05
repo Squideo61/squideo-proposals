@@ -179,6 +179,7 @@ export function CourseTab() {
       )}
 
       <SampleProject />
+      <PartnerVideo />
       <NudgeEmails />
     </div>
   );
@@ -309,6 +310,133 @@ function SampleProject() {
           style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 12, fontSize: 12.5, color: BRAND.blue, textDecoration: 'none', fontWeight: 600 }}
         >
           <ExternalLink size={13} /> Take the tour yourself
+        </a>
+      )}
+    </section>
+  );
+}
+
+// The video on the portal's Partner Programme page (/portal#/partner).
+//
+// A URL rather than an upload-only panel, because the film already exists on
+// Vimeo for squideo.com — re-uploading it here would leave two copies to keep
+// in step. Uploading is still offered for anything that isn't hosted yet.
+function PartnerVideo() {
+  const { state, actions, showMsg } = useStore();
+  const cfg = state.partnerVideo || {};
+  const fileRef = useRef(null);
+  const [pct, setPct] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const save = async (next, msg) => {
+    try {
+      await actions.savePartnerVideo(next);
+      if (msg) showMsg(msg);
+    } catch (err) { showMsg(err.message, 'error'); }
+  };
+
+  const pick = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setBusy(true);
+    setPct(0);
+    try {
+      const { upload } = await import('@vercel/blob/client');
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const blob = await upload(`course/partner/${Date.now()}-${safeName}`, file, {
+        access: 'public',
+        handleUploadUrl: `${BASE}/upload-token`,
+        contentType: file.type || 'video/mp4',
+        multipart: true,
+        onUploadProgress: (ev) => setPct(Math.round(ev.percentage)),
+      });
+      await save({ ...cfg, url: blob.url }, 'Partner Programme video updated');
+    } catch (err) {
+      showMsg(err.message || 'Upload failed', 'error');
+    } finally {
+      setBusy(false);
+      setPct(null);
+    }
+  };
+
+  const live = !!cfg.url;
+  return (
+    <section style={{ marginTop: 34, borderTop: '1px solid ' + BRAND.border, paddingTop: 22 }}>
+      <h3 style={{ margin: '0 0 4px', fontSize: 15.5, fontWeight: 700, color: BRAND.ink, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <PlayCircle size={16} color={BRAND.blue} /> Partner Programme video
+      </h3>
+      <p style={{ margin: '0 0 14px', fontSize: 12.5, color: BRAND.muted, lineHeight: 1.55 }}>
+        Plays at the top of <code>/portal#/partner</code>, where clients read about the
+        programme and book a call. Paste the Vimeo, YouTube or Loom link you already use on
+        squideo.com — or upload a file if it isn't hosted anywhere yet.
+      </p>
+
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', marginBottom: 14,
+        borderRadius: 10,
+        background: live ? '#EDFBF2' : '#FFF8EB',
+        border: '1px solid ' + (live ? '#9BE0B7' : '#F5C26B'),
+      }}>
+        <div style={{ flex: 1, fontSize: 13, lineHeight: 1.5, color: live ? '#15803D' : '#B45309' }}>
+          <strong>{live ? 'Live' : 'Not set'}</strong>
+          {' — '}
+          {live
+            ? 'clients see this video above the programme details.'
+            : 'the page reads fine without it, but nobody hears Ben explain it.'}
+        </div>
+        {busy ? (
+          <span style={{ fontSize: 12.5, color: BRAND.muted, flexShrink: 0 }}>
+            <Loader2 size={13} className="spin" /> {pct != null ? `${pct}%` : 'Uploading…'}
+          </span>
+        ) : (
+          <>
+            {live && (
+              <button className="btn-ghost" onClick={() => save({ ...cfg, url: null }, 'Video removed from the Partner Programme page')} style={{ fontSize: 12.5, flexShrink: 0 }}>
+                <Trash2 size={13} /> Remove
+              </button>
+            )}
+            <button className="btn-ghost" onClick={() => fileRef.current?.click()} style={{ fontSize: 12.5, flexShrink: 0 }}>
+              <Upload size={13} /> Upload a file
+            </button>
+          </>
+        )}
+        <input ref={fileRef} type="file" accept="video/*" hidden onChange={pick} />
+      </div>
+
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+        <label style={{ flex: '2 1 300px', fontSize: 12.5, color: BRAND.muted }}>
+          Video link (Vimeo, YouTube or Loom)
+          <input
+            className="input" defaultValue={cfg.url || ''}
+            placeholder="https://vimeo.com/625502459"
+            onBlur={(e) => {
+              const url = e.target.value.trim() || null;
+              if (url !== (cfg.url || null)) save({ ...cfg, url }, url ? 'Partner Programme video updated' : 'Video removed');
+            }}
+            style={{ width: '100%', marginTop: 4 }}
+          />
+        </label>
+        <label style={{ flex: '1 1 200px', fontSize: 12.5, color: BRAND.muted }}>
+          Caption (optional)
+          <input
+            className="input" defaultValue={cfg.title || ''}
+            placeholder="Ben explains the Partner Programme"
+            onBlur={(e) => {
+              const title = e.target.value.trim() || null;
+              if (title !== (cfg.title || null)) save({ ...cfg, title });
+            }}
+            style={{ width: '100%', marginTop: 4 }}
+          />
+        </label>
+      </div>
+
+      {live && (
+        <a
+          href="/portal#/partner" target="_blank" rel="noreferrer"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 12, fontSize: 12.5, color: BRAND.blue, textDecoration: 'none', fontWeight: 600 }}
+        >
+          <ExternalLink size={13} /> See the page
         </a>
       )}
     </section>

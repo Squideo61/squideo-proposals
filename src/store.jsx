@@ -479,6 +479,7 @@ export function StoreProvider({ children }) {
         courseEmails: settings?.courseEmails || null,
         // Where the sample project's video lives; null until one is uploaded.
         demoProject: settings?.demoProject || null,
+        partnerVideo: settings?.partnerVideo || null,
         loading: false,
       }));
     });
@@ -2896,6 +2897,12 @@ export function StoreProvider({ children }) {
     saveDemoProject(data) {
       setState(s => ({ ...s, demoProject: data }));
       return api.put('/api/settings', { demoProject: data });
+    },
+    // The video on the portal's Partner Programme page. Same reasoning as
+    // above: not debounced, because the caller reports the result to the user.
+    savePartnerVideo(data) {
+      setState(s => ({ ...s, partnerVideo: data }));
+      return api.put('/api/settings', { partnerVideo: data });
     },
     getGmailSignature() {
       // Returns { signatureHtml, fetchedAt, diagnostics? } from the cached

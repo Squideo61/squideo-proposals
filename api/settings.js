@@ -52,6 +52,8 @@ function ensureFinanceTargetsColumn() {
     // this is only where the video lives, so it can be re-recorded and swapped
     // without a deploy.
     await sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS demo_project JSONB`;
+    // { url, title } — the video on the portal's Partner Programme page.
+    await sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS partner_video JSONB`;
   })().catch((err) => { financeTargetsColumnEnsured = null; throw err; });
   return financeTargetsColumnEnsured;
 }
@@ -66,7 +68,7 @@ export default async function handler(req, res) {
   await ensureFinanceTargetsColumn();
 
   if (req.method === 'GET') {
-    const rows = await sql`SELECT extras_bank, inclusions_bank, notification_recipients, revision_call_url, finance_targets, sales_targets, cost_items, default_proposal, project_tasks_email, voiceover_pricing, task_reminders, course_emails, demo_project FROM settings WHERE id = 1`;
+    const rows = await sql`SELECT extras_bank, inclusions_bank, notification_recipients, revision_call_url, finance_targets, sales_targets, cost_items, default_proposal, project_tasks_email, voiceover_pricing, task_reminders, course_emails, demo_project, partner_video FROM settings WHERE id = 1`;
     const row = rows[0];
     return res.status(200).json({
       extrasBank: row.extras_bank,
@@ -88,6 +90,7 @@ export default async function handler(req, res) {
       courseEmails: row.course_emails || null,
       // Where the sample project's video lives. null until one is uploaded.
       demoProject: row.demo_project || null,
+      partnerVideo: row.partner_video || null,
       financeTargets: Array.isArray(row.finance_targets) && row.finance_targets.length
         ? row.finance_targets
         : DEFAULT_FINANCE_TARGETS,
@@ -107,7 +110,7 @@ export default async function handler(req, res) {
     if (!hasPermission(await getRole(user.role), 'settings.manage')) {
       return res.status(403).json({ error: 'You do not have permission to edit workspace settings' });
     }
-    const { extrasBank, inclusionsBank, notificationRecipients, revisionCallUrl, financeTargets, salesTargets, costItems, defaultProposal, projectTasksEmail, voiceoverPricing, taskReminders, courseEmails, demoProject } = req.body || {};
+    const { extrasBank, inclusionsBank, notificationRecipients, revisionCallUrl, financeTargets, salesTargets, costItems, defaultProposal, projectTasksEmail, voiceoverPricing, taskReminders, courseEmails, demoProject, partnerVideo } = req.body || {};
     await sql`
       UPDATE settings SET
         extras_bank             = COALESCE(${extrasBank ? JSON.stringify(extrasBank) : null}::jsonb, extras_bank),
@@ -122,7 +125,8 @@ export default async function handler(req, res) {
         voiceover_pricing       = COALESCE(${voiceoverPricing ? JSON.stringify(voiceoverPricing) : null}::jsonb, voiceover_pricing),
         task_reminders          = COALESCE(${taskReminders ? JSON.stringify(taskReminders) : null}::jsonb, task_reminders),
         course_emails           = COALESCE(${courseEmails ? JSON.stringify(courseEmails) : null}::jsonb, course_emails),
-        demo_project            = COALESCE(${demoProject ? JSON.stringify(demoProject) : null}::jsonb, demo_project)
+        demo_project            = COALESCE(${demoProject ? JSON.stringify(demoProject) : null}::jsonb, demo_project),
+        partner_video           = COALESCE(${partnerVideo ? JSON.stringify(partnerVideo) : null}::jsonb, partner_video)
       WHERE id = 1
     `;
     return res.status(200).json({ ok: true });

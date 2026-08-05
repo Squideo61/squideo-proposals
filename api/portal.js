@@ -3254,16 +3254,25 @@ async function partnerRoute(req, res, user) {
   if (!companyId) return;
   await ensureIntroCallTables();
 
-  const [booking] = await sql`
-    SELECT starts_at, ends_at, meet_url FROM intro_call_bookings
-     WHERE client_key = ${'company:' + companyId} AND kind = 'partner' AND status = 'confirmed'
-     ORDER BY starts_at DESC LIMIT 1
-  `.catch(() => []);
+  const [[booking], [cfg]] = await Promise.all([
+    sql`
+      SELECT starts_at, ends_at, meet_url FROM intro_call_bookings
+       WHERE client_key = ${'company:' + companyId} AND kind = 'partner' AND status = 'confirmed'
+       ORDER BY starts_at DESC LIMIT 1
+    `.catch(() => []),
+    sql`SELECT partner_video FROM settings WHERE id = 1`.catch(() => []),
+  ]);
+  // Set in Admin → Crash course. Null until then, and the page simply omits the
+  // player rather than showing a broken frame.
+  const video = cfg?.partner_video?.url
+    ? { url: cfg.partner_video.url, title: cfg.partner_video.title || null }
+    : null;
 
   // Already booked? Don't spend a round-trip on Google's free/busy — the page
   // shows the confirmation, not the picker.
   if (booking) {
     return res.status(200).json({
+      video,
       booking: { startsAt: booking.starts_at, endsAt: booking.ends_at, meetUrl: booking.meet_url },
       ready: true, slots: [], timezone: 'Europe/London', durationMinutes: 30,
     });
@@ -3272,6 +3281,7 @@ async function partnerRoute(req, res, user) {
   const host = await partnerCallHost(companyId);
   const { rules, result } = await computeBookingSlots({ hostEmails: host ? [host] : [] });
   return res.status(200).json({
+    video,
     booking: null,
     durationMinutes: rules.durationMinutes,
     timezone: rules.timezone,
