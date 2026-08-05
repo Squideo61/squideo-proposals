@@ -29,7 +29,10 @@ import { portalTeamInviteHtml, portalResetHtml, portalProjectTasksHtml, PORTAL_U
 import { emailLogoUrl } from '../_lib/portal/logo.js';
 import { notifyPortalUser } from '../_lib/portal/notifications.js';
 import { computeDealTasks } from '../_lib/portal/taskContext.js';
-import { portalTimeline, dealSteps, companyStepsSummary, portalActivityFeed } from '../_lib/portal/activity.js';
+import {
+  portalTimeline, dealSteps, companyStepsSummary, portalActivityFeed,
+  portalPresence, portalEngagement, portalActiveUsers,
+} from '../_lib/portal/activity.js';
 import { isFinalReleaseUnlocked } from '../_lib/crm/delivery.js';
 import { computePortalOffers } from '../_lib/portal/extrasOffers.js';
 import { ensureProductionSchema } from '../_lib/production.js';
@@ -133,7 +136,7 @@ async function portalProfileForEmail(email) {
     };
   }
 
-  const [memberships, brandFiles, dealFiles, extras, quotes] = await Promise.all([
+  const [memberships, brandFiles, dealFiles, extras, quotes, presence, engagement] = await Promise.all([
     sql`
       SELECT m.company_id, m.disabled_at, m.created_at, c.name AS company_name
         FROM portal_memberships m JOIN companies c ON c.id = m.company_id
@@ -158,9 +161,20 @@ async function portalProfileForEmail(email) {
       SELECT id, created_at, status FROM quote_requests
        WHERE portal_user_id = ${pu.id} ORDER BY created_at DESC LIMIT 20
     `,
+    // Sign-ins and page views. Without these the card only ever showed the four
+    // things a client can *transact*, so someone who watched the course and
+    // half-filled a brief looked like they'd never logged in.
+    portalPresence(pu.id, { limit: 25 }).catch(() => []),
+    portalEngagement(pu.id).catch(() => null),
   ]);
 
   const activity = [
+    ...presence.map((p) => ({
+      type: p.type === 'view' ? 'view' : p.type,
+      at: p.at,
+      text: p.count > 1 ? `${p.text} (×${p.count})` : p.text,
+      link: p.dealId ? `#/deal/${p.dealId}` : null,
+    })),
     ...brandFiles.map((f) => ({
       type: 'file', at: f.created_at,
       text: `Uploaded ${f.filename} to brand & documents`, link: null,
@@ -180,7 +194,7 @@ async function portalProfileForEmail(email) {
       text: `Requested a new video (10% portal discount)${q.status === 'qualified' ? ' — qualified' : ''}`,
       link: '#/quote-requests',
     })),
-  ].sort((a, b) => new Date(b.at) - new Date(a.at)).slice(0, 15);
+  ].sort((a, b) => new Date(b.at) - new Date(a.at)).slice(0, 25);
 
   return {
     account: {
@@ -203,6 +217,7 @@ async function portalProfileForEmail(email) {
       expiresAt: i.expires_at, createdAt: i.created_at, invitedBy: i.invited_by || null,
     })),
     activity,
+    engagement,
   };
 }
 
@@ -284,6 +299,21 @@ export default async function handler(req, res) {
       before: trimOrNull(req.query.before),
     });
     return res.status(200).json({ items });
+  }
+
+  // The same feed asked the other way round: not "what happened", but "who's
+  // using it". Same permission — it's the same information, grouped.
+  if (req.method === 'GET' && trimOrNull(req.query.op) === 'active-users') {
+    const user = await requirePermission(req, res, portalPreviewPerms(false));
+    if (!user) return;
+    await ensurePortalTables();
+    const raw = trimOrNull(req.query.days);
+    const users = await portalActiveUsers({
+      days: raw === 'all' ? null : Number(raw) || 30,
+      companyId: trimOrNull(req.query.companyId),
+      limit: Number(req.query.limit) || 50,
+    });
+    return res.status(200).json({ users });
   }
 
   const user = await requirePermission(req, res, PORTAL_ADMIN_PERMS);

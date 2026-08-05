@@ -32,6 +32,7 @@ export function ContactDetailView({ contactId, onBack, onOpenDeal, onOpenCompany
   }
 
   const fullName = detail.name || detail.email || 'Contact';
+  const creditCompany = detail.company || detail.portalCompanies?.[0] || null;
 
   return (
     <div style={{ padding: isMobile ? '16px 12px' : '32px 24px' }}>
@@ -56,6 +57,15 @@ export function ContactDetailView({ contactId, onBack, onOpenDeal, onOpenCompany
               >
                 {detail.company.name}
               </button>
+            ) : detail.portalCompanies?.length ? (
+              <button
+                onClick={() => onOpenCompany?.(detail.portalCompanies[0].id)}
+                style={{ background: 'none', border: 'none', padding: 0, color: BRAND.blue, cursor: 'pointer', font: 'inherit', textAlign: 'left' }}
+                title="They can see this organisation in their portal, but the CRM contact isn't linked to it"
+              >
+                {detail.portalCompanies[0].name}
+                <span style={{ color: BRAND.muted, fontWeight: 400 }}> · portal only</span>
+              </button>
             ) : <span style={{ color: BRAND.muted }}>—</span>}
           </Field>
         </div>
@@ -71,12 +81,20 @@ export function ContactDetailView({ contactId, onBack, onOpenDeal, onOpenCompany
         <PortalContactCard contactId={contactId} />
       </div>
 
-      {/* Video-credit access for this person's organisation. Only shown when
-          they belong to one — credit is company-scoped, so an unattached
-          contact has nothing to switch. */}
-      {detail.company?.id && (
+      {/* Video-credit access for this person's organisation. Credit is
+          company-scoped, so an unattached contact has nothing to switch — but
+          "unattached" has to mean unattached in the portal too. A course signup
+          gets a portal org without a CRM company link, and that org is exactly
+          the one you'd want to switch credit on for. */}
+      {creditCompany && (
         <div style={{ marginBottom: 16 }}>
-          <CreditAccessCard companyId={detail.company.id} />
+          {!detail.company?.id && (
+            <p style={{ margin: '0 0 6px', fontSize: 12, color: BRAND.muted }}>
+              Not linked to an organisation in the CRM — this is <strong>{creditCompany.name}</strong>,
+              the organisation they see in their portal.
+            </p>
+          )}
+          <CreditAccessCard companyId={creditCompany.id} />
         </div>
       )}
 

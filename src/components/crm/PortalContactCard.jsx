@@ -3,7 +3,7 @@
 // and the account controls (invite, password-reset link, sign out everywhere,
 // disable/enable). Backed by /api/crm/portal-admin?contactId=.
 import React, { useCallback, useEffect, useState } from 'react';
-import { Building2, Clock, KeyRound, LogOut, Mail, RefreshCw, Send, Sparkles, Upload, UserCheck, UserX, FileText } from 'lucide-react';
+import { Building2, ClipboardList, Clock, Download, Eye, KeyRound, LogIn, LogOut, Mail, PlayCircle, RefreshCw, Send, Sparkles, Upload, UserCheck, UserX, FileText } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { api } from '../../api.js';
 import { formatRelativeTime } from '../../utils.js';
@@ -11,7 +11,54 @@ import { Card, Empty } from './Card.jsx';
 import { PortalOpenButtons } from './PortalOpenButtons.jsx';
 import InviteComposer from '../InviteComposer.jsx';
 
-const ACTIVITY_ICONS = { file: Upload, extra: Sparkles, quote: FileText };
+const ACTIVITY_ICONS = {
+  file: Upload, extra: Sparkles, quote: FileText, login: LogIn, view: Eye,
+  'course.completed_video': PlayCircle, 'course.completed': PlayCircle,
+  'course.signup': PlayCircle, 'brief.submitted': ClipboardList, download: Download,
+};
+
+// The two things a client does in the portal that never reach a deal: watch the
+// crash course, and work on a brief. Both happen before there's anything to
+// transact, so they only show up if we go and look for them.
+function EngagementStrip({ engagement }) {
+  const course = engagement?.course;
+  const brief = engagement?.brief;
+  if (!course && !brief) return null;
+
+  const pill = (icon, label, detail, at) => (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 7, fontSize: 12.5, flex: '1 1 210px', minWidth: 0 }}>
+      {icon}
+      <div style={{ minWidth: 0 }}>
+        <div style={{ color: BRAND.ink, fontWeight: 600 }}>{label}</div>
+        <div style={{ color: BRAND.muted, fontSize: 11.5 }}>
+          {detail}{at ? ` · ${formatRelativeTime(at)}` : ''}
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <>
+      <div style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, margin: '4px 0 6px' }}>
+        Where they've got to
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+        {course && pill(
+          <PlayCircle size={15} color={BRAND.blue} style={{ flexShrink: 0 }} />,
+          course.done >= course.total && course.total ? 'Finished the crash course' : 'Crash course',
+          `${course.done} of ${course.total} video${course.total === 1 ? '' : 's'} watched`,
+          course.lastAt,
+        )}
+        {brief && pill(
+          <ClipboardList size={15} color={brief.submitted ? '#15803D' : BRAND.blue} style={{ flexShrink: 0 }} />,
+          brief.submitted ? 'Sent us a brief' : 'Brief in progress',
+          brief.submitted ? 'Complete' : `${brief.done} of ${brief.total} answered (${brief.pct}%)`,
+          brief.at,
+        )}
+      </div>
+    </>
+  );
+}
 
 export function PortalContactCard({ contactId }) {
   const [data, setData] = useState(null);
@@ -66,7 +113,7 @@ export function PortalContactCard({ contactId }) {
     );
   }
 
-  const { account, memberships = [], invites = [], activity = [], companies = [] } = data;
+  const { account, memberships = [], invites = [], activity = [], companies = [], engagement = null } = data;
   const puid = account?.id;
 
   const statusPill = account
@@ -215,12 +262,14 @@ export function PortalContactCard({ contactId }) {
             ))}
           </div>
 
+          <EngagementStrip engagement={engagement} />
+
           <div style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, margin: '4px 0 6px' }}>
             Portal activity
           </div>
           {activity.length === 0 ? (
             <div style={{ fontSize: 12.5, color: BRAND.muted, fontStyle: 'italic', marginBottom: 12 }}>
-              Nothing yet — uploads, extras and video requests they make in the portal show here.
+              Nothing yet — sign-ins, the pages they open and anything they send us show here.
             </div>
           ) : (
             <div style={{ marginBottom: 12 }}>

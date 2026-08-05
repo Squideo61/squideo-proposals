@@ -89,7 +89,7 @@ export async function contactsRoute(req, res, id, action, user, subaction = null
     `;
     if (!contactRow) return res.status(404).json({ error: 'Not found' });
 
-    const [companyRows, dealRows] = await Promise.all([
+    const [companyRows, dealRows, portalCompanyRows] = await Promise.all([
       // Every organisation the contact belongs to (primary first), not just one.
       sql`SELECT co.id, co.name, co.domain, co.notes, co.created_at, co.updated_at,
                  (co.id = ${contactRow.company_id}) AS is_primary
@@ -106,6 +106,20 @@ export async function contactsRoute(req, res, id, action, user, subaction = null
           WHERE d.primary_contact_id = ${id}
           ORDER BY d.stage_changed_at DESC
       `,
+      // Organisations they can see in the CLIENT PORTAL, which is not the same
+      // set as the CRM links above: a course signup or a self-serve portal
+      // account creates an org and a membership without ever touching
+      // contacts.company_id. Without this, such a contact looks unattached and
+      // anything company-scoped (video credit, portal buttons) has nothing to
+      // aim at. Best-effort — the portal tables are optional to this page.
+      contactRow.email ? sql`
+        SELECT c.id, c.name, m.disabled_at
+          FROM portal_memberships m
+          JOIN portal_users pu ON pu.id = m.portal_user_id
+          JOIN companies c ON c.id = m.company_id
+         WHERE LOWER(pu.email) = ${String(contactRow.email).toLowerCase()}
+         ORDER BY m.created_at ASC
+      `.catch(() => []) : [],
     ]);
 
     const companies = companyRows.map(co => ({
@@ -122,6 +136,9 @@ export async function contactsRoute(req, res, id, action, user, subaction = null
       companies,
       // Primary org kept for back-compat with anything still reading `company`.
       company: companies.find(co => co.isPrimary) || companies[0] || null,
+      portalCompanies: portalCompanyRows
+        .filter(c => !c.disabled_at && !companies.some(co => co.id === c.id))
+        .map(c => ({ id: c.id, name: c.name })),
       deals: dealRows.map(d => ({
         id: d.id,
         title: d.title,

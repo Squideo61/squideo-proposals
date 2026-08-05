@@ -13,6 +13,7 @@ import sql from '../db.js';
 import { makeId } from '../crm/shared.js';
 import { ensurePortalTables } from './db.js';
 import { computeDealTasks } from './taskContext.js';
+import { briefProgress } from '../brief/questions.js';
 
 // Geo + IP from Vercel's edge headers (same approach as email/view tracking).
 function viewerFrom(req) {
@@ -166,6 +167,8 @@ const ACTIVITY_LABELS = {
   login: 'Signed in',
   download: 'Downloaded a file',
   'course.signup': 'Signed up for the crash course',
+  'course.completed_video': 'Finished a course video',
+  'course.completed': 'Finished the whole crash course',
   'brief.submitted': 'Sent us a completed brief',
 };
 
@@ -188,6 +191,158 @@ const VIEW_LABELS = {
   storyboard: 'Opened a storyboard review',
 };
 
+// One row of portal_activity in words. Shared by every reader so the wording of
+// an event lives in exactly one place.
+export function describeActivity(eventKey, detail) {
+  const view = detail && typeof detail === 'object' ? detail.view : null;
+  if (eventKey === 'view') return VIEW_LABELS[view] || 'Opened the portal';
+  return ACTIVITY_LABELS[eventKey] || eventKey;
+}
+
+// One person's presence in the portal — the sign-ins and page views that
+// portalTimeline (org/deal-scoped, action-only) deliberately leaves out.
+//
+// Runs of the same event are collapsed *within a sitting*. Someone clicking
+// round their portal generates a dozen "Opened their dashboard" rows, and a feed
+// of those tells you nothing that one row with a count doesn't — but two
+// sign-ins three days apart are two visits, and folding them into one would hide
+// the very thing you're looking at the card to find out.
+const SITTING_MS = 45 * 60 * 1000;
+
+export async function portalPresence(portalUserId, { limit = 40, scan = 300 } = {}) {
+  if (!portalUserId) return [];
+  await ensurePortalTables();
+  const rows = await sql`
+    SELECT event_key, detail, created_at, deal_id
+      FROM portal_activity
+     WHERE portal_user_id = ${portalUserId}
+     ORDER BY created_at DESC
+     LIMIT ${Math.min(Number(scan) || 300, 500)}
+  `.catch(() => []);
+
+  const out = [];
+  for (const r of rows) {
+    const text = describeActivity(r.event_key, r.detail);
+    const last = out[out.length - 1];
+    const sameSitting = last
+      && last.text === text
+      && new Date(last.firstAt) - new Date(r.created_at) < SITTING_MS;
+    if (sameSitting) { last.count += 1; last.firstAt = r.created_at; continue; }
+    if (out.length >= limit) break;
+    out.push({
+      type: r.event_key === 'view' ? 'view' : r.event_key,
+      at: r.created_at,
+      firstAt: r.created_at,
+      text,
+      count: 1,
+      dealId: r.deal_id || null,
+    });
+  }
+  return out;
+}
+
+// The two things a client does in the portal that leave no trace on a deal:
+// watch the crash course, and fill in a brief. Both are early signals — they
+// happen before there's anything to transact — so they need reporting on their
+// own rather than waiting to show up as a quote request.
+export async function portalEngagement(portalUserId) {
+  if (!portalUserId) return null;
+
+  const [course, [brief]] = await Promise.all([
+    sql`
+      SELECT
+        (SELECT COUNT(*)::int FROM course_modules WHERE published) AS total,
+        (SELECT COUNT(*)::int FROM course_progress
+          WHERE portal_user_id = ${portalUserId}) AS started,
+        (SELECT COUNT(*)::int FROM course_progress
+          WHERE portal_user_id = ${portalUserId} AND completed_at IS NOT NULL) AS done,
+        (SELECT MAX(last_viewed_at) FROM course_progress
+          WHERE portal_user_id = ${portalUserId}) AS last_at
+    `.catch(() => []),
+    sql`
+      SELECT id, answers, submitted_at, updated_at FROM client_briefs
+       WHERE portal_user_id = ${portalUserId}
+       ORDER BY COALESCE(submitted_at, updated_at) DESC LIMIT 1
+    `.catch(() => []),
+  ]);
+
+  const c = course[0] || null;
+  return {
+    course: c && c.started
+      ? { total: c.total || 0, started: c.started, done: c.done, lastAt: c.last_at || null }
+      : null,
+    brief: brief
+      ? {
+        submitted: !!brief.submitted_at,
+        at: brief.submitted_at || brief.updated_at,
+        ...briefProgress(brief.answers || {}),
+      }
+      : null,
+  };
+}
+
+// Who is actually using the portal, busiest first. Counts presence events
+// (sign-ins, page views, downloads) rather than actions, because the question
+// this answers is "who's engaged", not "who's transacted".
+export async function portalActiveUsers({ days = 30, companyId = null, limit = 50 } = {}) {
+  await ensurePortalTables();
+  const window = days == null ? null : Math.max(1, Math.min(Number(days) || 30, 3650));
+
+  const rows = await sql`
+    SELECT pu.id, pu.name, pu.email, pu.last_login_at, pu.created_at, pu.disabled_at,
+           COUNT(*)::int AS events,
+           COUNT(*) FILTER (WHERE a.event_key = 'login')::int AS logins,
+           COUNT(*) FILTER (WHERE a.event_key = 'view')::int AS views,
+           COUNT(DISTINCT a.created_at::date)::int AS active_days,
+           MAX(a.created_at) AS last_at,
+           (SELECT string_agg(DISTINCT c.name, ', ')
+              FROM portal_memberships m JOIN companies c ON c.id = m.company_id
+             WHERE m.portal_user_id = pu.id) AS companies,
+           (SELECT m.company_id FROM portal_memberships m
+             WHERE m.portal_user_id = pu.id ORDER BY m.created_at ASC LIMIT 1) AS company_id,
+           (SELECT ct.id FROM contacts ct
+             WHERE LOWER(ct.email) = pu.email ORDER BY ct.created_at ASC LIMIT 1) AS contact_id
+      FROM portal_activity a
+      JOIN portal_users pu ON pu.id = a.portal_user_id
+     WHERE (${window}::int IS NULL OR a.created_at > NOW() - make_interval(days => ${window}::int))
+       AND (${companyId}::text IS NULL OR a.company_id = ${companyId})
+     GROUP BY pu.id
+     ORDER BY events DESC, last_at DESC
+     LIMIT ${Math.min(Number(limit) || 50, 200)}
+  `.catch(() => []);
+  if (!rows.length) return [];
+
+  // Course progress is the crash-course funnel's engagement signal, and it lives
+  // on its own table. Best-effort: a missing table must not empty the list.
+  const ids = rows.map((r) => r.id);
+  const course = await sql`
+    SELECT portal_user_id,
+           COUNT(*) FILTER (WHERE completed_at IS NOT NULL)::int AS done,
+           COUNT(*)::int AS started
+      FROM course_progress WHERE portal_user_id = ANY(${ids})
+     GROUP BY portal_user_id
+  `.catch(() => []);
+  const byUser = new Map(course.map((c) => [c.portal_user_id, c]));
+
+  return rows.map((r) => ({
+    portalUserId: r.id,
+    name: r.name || null,
+    email: r.email,
+    contactId: r.contact_id || null,
+    companyId: r.company_id || null,
+    companies: r.companies || null,
+    events: r.events,
+    logins: r.logins,
+    views: r.views,
+    activeDays: r.active_days,
+    lastAt: r.last_at,
+    lastLoginAt: r.last_login_at || null,
+    disabled: !!r.disabled_at,
+    courseDone: byUser.get(r.id)?.done || 0,
+    courseStarted: byUser.get(r.id)?.started || 0,
+  }));
+}
+
 export async function portalActivityFeed({ limit = 100, companyId = null, before = null } = {}) {
   await ensurePortalTables();
   const rows = await sql`
@@ -207,10 +362,7 @@ export async function portalActivityFeed({ limit = 100, companyId = null, before
   `.catch(() => []);
 
   return rows.map((r) => {
-    const view = r.detail && typeof r.detail === 'object' ? r.detail.view : null;
-    const text = r.event_key === 'view'
-      ? (VIEW_LABELS[view] || 'Opened the portal')
-      : (ACTIVITY_LABELS[r.event_key] || r.event_key);
+    const text = describeActivity(r.event_key, r.detail);
     return {
       id: r.id,
       type: r.event_key,

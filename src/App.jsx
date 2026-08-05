@@ -764,6 +764,7 @@ function AppShell() {
         <PortalActivityView
           onOpenCompany={(id) => navigate('company', id)}
           onOpenDeal={(id) => navigate('deal', id)}
+          onOpenContact={(id) => navigate('contact', id)}
         />
       )}
       {view === 'partner-credit-detail' && activeId && (

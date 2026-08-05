@@ -7,7 +7,7 @@
 // and everything else is here to be looked at when someone wants to know how a
 // client is getting on.
 import React, { useCallback, useEffect, useState } from 'react';
-import { Activity, Building2, Download, Eye, LogIn, RefreshCw } from 'lucide-react';
+import { Activity, Building2, Download, Eye, LogIn, RefreshCw, Users } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { api } from '../../api.js';
 import { formatRelativeTime, useIsMobile } from '../../utils.js';
@@ -16,13 +16,41 @@ import { Card, Empty } from './Card.jsx';
 const ICONS = { login: LogIn, download: Download, view: Eye };
 const TONES = { login: '#16A34A', download: '#7C3AED', view: '#64748B' };
 
-export function PortalActivityView({ onOpenCompany, onOpenDeal }) {
+const WINDOWS = [
+  { value: '7', label: 'Last 7 days' },
+  { value: '30', label: 'Last 30 days' },
+  { value: '90', label: 'Last 90 days' },
+  { value: 'all', label: 'All time' },
+];
+
+export function PortalActivityView({ onOpenCompany, onOpenDeal, onOpenContact }) {
   const isMobile = useIsMobile();
+  const [mode, setMode] = useState('timeline'); // 'timeline' | 'people'
   const [items, setItems] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [companyId, setCompanyId] = useState('');
   const [done, setDone] = useState(false);
+  const [days, setDays] = useState('30');
+  const [people, setPeople] = useState(null);
+  const [peopleBusy, setPeopleBusy] = useState(false);
+
+  const loadPeople = useCallback(async () => {
+    setPeopleBusy(true);
+    try {
+      const q = new URLSearchParams({ op: 'active-users', days });
+      if (companyId) q.set('companyId', companyId);
+      const r = await api.get(`/api/crm/portal-admin?${q.toString()}`);
+      setPeople(r.users || []);
+      setError(null);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setPeopleBusy(false);
+    }
+  }, [companyId, days]);
+
+  useEffect(() => { if (mode === 'people') loadPeople(); }, [mode, loadPeople]);
 
   const load = useCallback(async ({ append = false } = {}) => {
     setBusy(true);
@@ -59,20 +87,85 @@ export function PortalActivityView({ onOpenCompany, onOpenDeal }) {
           Client portal activity
         </h1>
         <div style={{ flex: 1 }} />
+        {mode === 'people' && (
+          <select className="input" value={days} onChange={(e) => setDays(e.target.value)} style={{ fontSize: 13, maxWidth: 150 }}>
+            {WINDOWS.map((w) => <option key={w.value} value={w.value}>{w.label}</option>)}
+          </select>
+        )}
         {companies.length > 1 && (
           <select className="input" value={companyId} onChange={(e) => setCompanyId(e.target.value)} style={{ fontSize: 13, maxWidth: 260 }}>
             <option value="">All clients</option>
             {companies.map(([id, nm]) => <option key={id} value={id}>{nm}</option>)}
           </select>
         )}
-        <button className="btn-ghost" onClick={() => load()} disabled={busy} style={{ fontSize: 12 }}>
+        <button
+          className="btn-ghost"
+          onClick={() => (mode === 'people' ? loadPeople() : load())}
+          disabled={busy || peopleBusy}
+          style={{ fontSize: 12 }}
+        >
           <RefreshCw size={13} style={{ verticalAlign: -2, marginRight: 4 }} />Refresh
         </button>
       </div>
-      <p style={{ margin: '0 0 16px', fontSize: 13, color: BRAND.muted }}>
+      <p style={{ margin: '0 0 12px', fontSize: 13, color: BRAND.muted }}>
         Sign-ins, the pages clients open and the files they download. Staff previews aren't recorded.
       </p>
 
+      {/* Same events, two questions: "what happened" and "who's engaged". */}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 14 }}>
+        {[['timeline', 'Timeline', Activity], ['people', 'Most active', Users]].map(([key, label, Icon]) => (
+          <button
+            key={key}
+            onClick={() => setMode(key)}
+            className={mode === key ? 'btn' : 'btn-ghost'}
+            style={{ fontSize: 12.5 }}
+          >
+            <Icon size={13} style={{ verticalAlign: -2, marginRight: 5 }} />{label}
+          </button>
+        ))}
+      </div>
+
+      {mode === 'people' && (
+        <Card>
+          {error && <Empty text={error} />}
+          {!error && !people && <Empty text="Loading…" />}
+          {people && people.length === 0 && (
+            <Empty text="Nobody has been in the portal in this window." />
+          )}
+          {(people || []).map((p, i) => (
+            <div key={p.portalUserId} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 2px', borderBottom: '1px solid ' + BRAND.border, fontSize: 13 }}>
+              <span style={{ width: 20, textAlign: 'right', color: BRAND.muted, fontSize: 12, flexShrink: 0 }}>{i + 1}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ color: BRAND.ink, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  {p.contactId && onOpenContact ? (
+                    <button className="btn-ghost" onClick={() => onOpenContact(p.contactId)} style={{ padding: 0, fontSize: 13, fontWeight: 600, color: BRAND.ink }}>
+                      {p.name || p.email}
+                    </button>
+                  ) : (p.name || p.email)}
+                  {p.disabled && <span style={{ fontSize: 10.5, fontWeight: 700, color: '#B91C1C', background: '#DC262618', padding: '1px 6px', borderRadius: 4 }}>DISABLED</span>}
+                </div>
+                <div style={{ fontSize: 11.5, color: BRAND.muted, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {p.companies && (
+                    <button className="btn-ghost" onClick={() => p.companyId && onOpenCompany?.(p.companyId)}
+                      style={{ padding: 0, fontSize: 11.5, color: BRAND.muted, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      <Building2 size={11} /> {p.companies}
+                    </button>
+                  )}
+                  <span>{p.logins} sign-in{p.logins === 1 ? '' : 's'}</span>
+                  <span>{p.activeDays} active day{p.activeDays === 1 ? '' : 's'}</span>
+                  {p.courseStarted > 0 && <span>{p.courseDone} course video{p.courseDone === 1 ? '' : 's'} watched</span>}
+                </div>
+              </div>
+              <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                <div style={{ fontWeight: 700, color: BRAND.ink, fontSize: 14 }}>{p.events}</div>
+                <div style={{ fontSize: 11, color: BRAND.muted }}>{formatRelativeTime(p.lastAt)}</div>
+              </div>
+            </div>
+          ))}
+        </Card>
+      )}
+
+      {mode === 'timeline' && (
       <Card>
         {error && <Empty text={error} />}
         {!error && !items && <Empty text="Loading…" />}
@@ -116,6 +209,7 @@ export function PortalActivityView({ onOpenCompany, onOpenDeal }) {
           </div>
         )}
       </Card>
+      )}
     </div>
   );
 }
