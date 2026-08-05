@@ -51,7 +51,7 @@ export const REVIEWS = [
     name: 'Jeff Doyle',
     stars: 5,
     source: null,
-    text: 'I cannot recommend Squideo enough. The video they produced for my new venture is out of this world.'
+    text: 'I cannot recommend Squideo enough. The video they produced for my new venture is out of this world. I am really happy with the end result and will definitely be working with these guys again.'
   },
   {
     name: 'Kate Hughes',
@@ -63,36 +63,36 @@ export const REVIEWS = [
     name: 'Justin Clarke',
     stars: 5,
     source: null,
-    text: 'The team at Squideo took the time to understand what we were looking for and really did turn our ideas into reality.'
+    text: 'I’m still in awe at just how fabulous Squideo have been from the first conversation through to the handing over of the animations. The process was clear and their attitude was spot on.'
   },
   {
     name: 'Jessica Stones',
     stars: 5,
     source: null,
-    text: 'Squideo provided us with an extremely high quality, professional service, with a quick turnaround.'
+    text: 'Squideo provided us with an extremely high quality, professional service, with a quick turnaround. They were attentive to our business needs and the final product was something that we felt really represented our brand!'
   },
   {
     name: 'Gary Brett',
     stars: 5,
     source: null,
-    text: 'Great service, this is our 2nd video project with Squideo and they are very friendly and patient.'
+    text: 'Great service, this is our 2nd video project with Squideo and they are very friendly and patient. Listened to our needs, made changes where required and delivered the perfect product for us once more.'
   },
   {
     name: 'Amy Soffe',
     stars: 5,
     source: null,
-    text: 'The final product we received is better than what we had thought it would be and all for such an affordable price!'
+    text: 'The team at Squideo took the time to understand what we were looking for and really did turn our ideas into reality. They were so patient with us every time we wanted something altered, no matter how big.'
   },
   {
     name: 'Let Alliance',
     stars: 5,
     source: null,
-    text: 'Great experience with the Squideo team. Their creative input was much appreciated despite the amount of amendments.'
+    text: 'Great experience with the Squideo team. Their creative input was much appreciated despite the amount of amendments and changes we made to the video.'
   },
   {
     name: 'Five Minute Box',
     stars: 5,
     source: null,
-    text: 'They took time to understand our product and I’m really pleased with the result.'
+    text: 'I particularly liked Callum’s positive ‘can do’ approach when communicating, and his enthusiasm helped me a lot. Thank you to all the team!'
   }
 ];
