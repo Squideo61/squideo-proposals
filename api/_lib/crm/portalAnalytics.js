@@ -17,6 +17,11 @@ import sql from '../db.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 import { ensurePortalTables } from '../portal/db.js';
+// The route split reads course_signups.signup_source, which is added by the
+// course self-heal. Memoised, so this costs one no-op promise after the first
+// call — cheaper than the query silently catching to [] on a workspace where
+// no course route has run yet and reporting the split as empty.
+import { ensureCourseTables } from '../course/db.js';
 import { internalPortalUserIds } from '../internalAccounts.js';
 
 // A day series with no gaps. Postgres only returns days that have rows, and a
@@ -48,7 +53,7 @@ export async function portalAnalyticsRoute(req, res, id, action, user) {
     return res.status(403).json({ error: 'You do not have permission to view Marketing' });
   }
   if (req.method !== 'GET') return res.status(405).end();
-  await ensurePortalTables();
+  await Promise.all([ensurePortalTables(), ensureCourseTables()]);
 
   const today = new Date().toISOString().slice(0, 10);
   const monthAgo = new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
@@ -75,14 +80,18 @@ export async function portalAnalyticsRoute(req, res, id, action, user) {
     sql`
       SELECT
         CASE
-          WHEN cs.id IS NOT NULL THEN 'course'
+          -- Self-serve signups all live in course_signups, so the row's own
+          -- source is what separates them. Without this every lead magnet would
+          -- report as 'course' and the split would stop meaning anything the
+          -- moment a second one existed.
+          WHEN cs.signup_source IS NOT NULL THEN cs.signup_source
           WHEN inv.id IS NOT NULL THEN 'invite'
           ELSE 'other'
         END AS route,
         COUNT(*)::int AS n
         FROM portal_users pu
         LEFT JOIN LATERAL (
-          SELECT id FROM course_signups WHERE portal_user_id = pu.id LIMIT 1
+          SELECT signup_source FROM course_signups WHERE portal_user_id = pu.id LIMIT 1
         ) cs ON TRUE
         LEFT JOIN LATERAL (
           SELECT id FROM portal_invites
@@ -159,7 +168,10 @@ export async function portalAnalyticsRoute(req, res, id, action, user) {
   ]);
 
   const byRoute = Object.fromEntries(signupRows.map((r) => [r.route, r.n]));
-  const signups = (byRoute.course || 0) + (byRoute.invite || 0) + (byRoute.other || 0);
+  // Summed over whatever routes came back, not over a hardcoded three. Each new
+  // lead magnet adds a route, and a total that has to be edited to keep up is a
+  // total that will quietly under-report the day someone forgets.
+  const signups = signupRows.reduce((n, r) => n + (Number(r.n) || 0), 0);
   const visits = loginRows[0]?.visits || 0;
   const people = loginRows[0]?.people || 0;
 
@@ -169,6 +181,7 @@ export async function portalAnalyticsRoute(req, res, id, action, user) {
     signups: {
       total: signups,
       course: byRoute.course || 0,
+      brief: byRoute.brief || 0,
       invite: byRoute.invite || 0,
       other: byRoute.other || 0,
       byDay: fillDays(signupsByDay, from, to),

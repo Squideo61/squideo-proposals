@@ -14,7 +14,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts';
-import { RefreshCw, GraduationCap, UserPlus, LogIn, Repeat } from 'lucide-react';
+import { RefreshCw, GraduationCap, UserPlus, LogIn, Repeat, FileText } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { api } from '../../api.js';
 import { useIsMobile } from '../../utils.js';
@@ -114,6 +114,15 @@ export function PortalStatsTab({ from, to }) {
           Icon={GraduationCap} label="From the course" value={s.course}
           sub="Signed themselves up off a marketing page"
         />
+        {/* Only once the brief builder has actually brought someone in. A tile
+            reading zero on every load is noise on a page whose job is to make
+            the routes distinguishable. */}
+        {s.brief > 0 && (
+          <Tile
+            Icon={FileText} label="From the brief" value={s.brief} tone="#7C5CD1"
+            sub="Started a video brief off a marketing page"
+          />
+        )}
         <Tile
           Icon={UserPlus} label="Invited by us" value={s.invite} tone="#7C3AED"
           sub="Handed an account after a deal — sales, not marketing"
@@ -132,7 +141,7 @@ export function PortalStatsTab({ from, to }) {
         <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 14 }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: BRAND.ink, marginBottom: 2 }}>New accounts</div>
           <div style={{ fontSize: 11.5, color: BRAND.muted, marginBottom: 10 }}>
-            {s.total} in this period{s.other > 0 && ` · ${s.other} from neither route`}
+            {s.total} in this period{s.other > 0 && ` · ${s.other} we couldn't attribute to a route`}
           </div>
           <Chart data={s.byDay} colour={BRAND.blue} isMobile={isMobile} />
         </div>

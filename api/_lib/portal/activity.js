@@ -195,6 +195,7 @@ const ACTIVITY_LABELS = {
   'course.signup': 'Signed up for the crash course',
   'course.completed_video': 'Watched a course video',
   'course.completed': 'Finished the whole crash course',
+  'brief.signup': 'Came in through the brief builder',
   'brief.submitted': 'Sent us a completed brief',
 };
 

@@ -91,6 +91,28 @@ export function courseCrashCourseHtml({ name, loginUrl = null, returning = false
   return shell(inner, logoUrl);
 }
 
+// Someone came in through the brief builder rather than the crash course. The
+// email has one job: get them back to a half-finished brief. That is the whole
+// reason the builder exists instead of a downloadable template — an abandoned
+// document is invisible, an abandoned brief is a warm lead we can nudge.
+export function briefBuilderHtml({ name, loginUrl = null, returning = false, logoUrl = null }) {
+  const url = loginUrl || `${PORTAL_URL}#/brief`;
+  const inner = returning ? `
+    <h2 style="margin:0 0 12px;font-size:19px;font-weight:700;">You already have an account${name ? ', ' + escapeHtml(name) : ''}</h2>
+    <p style="margin:0 0 14px;">Which means the brief builder is already there waiting for you — along with anything you'd started before.</p>
+    <p style="margin:0 0 18px;">${ctaButton(url, 'Sign in and pick up where you left off')}</p>
+    <p style="margin:0 0 6px;font-size:12px;color:#6B7785;">This link works once and expires in 15 minutes.</p>
+  ` : `
+    <h2 style="margin:0 0 12px;font-size:19px;font-weight:700;">Your brief is ready when you are${name ? ', ' + escapeHtml(name) : ''}</h2>
+    <p style="margin:0 0 14px;">Answer what you can — we can work from as little as a list of key points, and it saves as you type, so you can stop halfway and come back.</p>
+    <p style="margin:0 0 14px;">You're already signed in on the device you started on. This email is just so you can find your way back.</p>
+    <p style="margin:0 0 18px;">${ctaButton(url, 'Open my brief')}</p>
+    <p style="margin:0 0 14px;">There's also a short planning crash course in there if you'd rather think it through first — about six minutes end to end.</p>
+    <p style="margin:0;font-size:12px;color:#6B7785;">No password needed. If you ever get signed out, ask for a sign-in link on the portal page.</p>
+  `;
+  return shell(inner, logoUrl);
+}
+
 // An existing portal user just had another project/org added to their account.
 export function portalProjectAddedHtml({ clientName, projectTitle, companyName, logoUrl = null }) {
   const inner = `

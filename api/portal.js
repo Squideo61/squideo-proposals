@@ -114,9 +114,10 @@ import {
   portalExtraConfirmHtml,
   portalVoiceoverConfirmHtml,
   courseCrashCourseHtml,
+  briefBuilderHtml,
 } from './_lib/portal/emails.js';
 import { ensureCourseTables } from './_lib/course/db.js';
-import { createCourseSignup, SignupError } from './_lib/course/signup.js';
+import { createPortalSignup, SignupError } from './_lib/course/signup.js';
 import { applyTag } from './_lib/crm/tags.js';
 import { scheduleCourseEmails, cancelCourseEmails } from './_lib/course/emails.js';
 import { ensureClientBriefs } from './_lib/brief/db.js';
@@ -817,6 +818,121 @@ async function notificationsRoute(req, res, user) {
   return res.status(405).json({ error: 'Method not allowed' });
 }
 
+// ═════════════════════════ self-serve signup ═════════════════════════
+// The only account creation in the product without an invite, and therefore the
+// one public door — written defensively in api/_lib/course/signup.js.
+//
+// Two lead magnets arrive here: the crash course and the brief builder. They
+// differ only in where they land someone and what the email says, so they share
+// a handler; everything genuinely per-source lives in SIGNUP_SOURCES.
+//
+// Two outcomes the caller can tell apart:
+//   next:'portal' — brand new account, signed in, go straight to `to`.
+//   next:'email'  — that address already has a portal account, so a magic link
+//                   is sent instead. It must NOT be signed in here: a public
+//                   form that hands out a session for any address typed into it
+//                   is an account takeover, not a signup.
+//
+// That difference is an enumeration oracle — it reveals whether an address has
+// a Squideo portal account. Accepted deliberately: the alternative is a "check
+// your email" wall for everyone, which is the single biggest drop-off on the
+// page. The throttle (5/IP/hour, 20/day) makes bulk enumeration impractical,
+// which is the part that actually matters.
+//
+// `to` is returned rather than left to the front end so a page embedded on the
+// marketing site doesn't have to know portal routes to send someone to the
+// right place.
+const SIGNUP_LANDINGS = {
+  course: {
+    to: '#/course',
+    subject: 'Your Explainer Video Planning Crash Course is unlocked',
+    html: (args) => courseCrashCourseHtml(args),
+    textNew: `All eight videos are unlocked here: ${PORTAL_URL}#/course`,
+    textReturning: (loginUrl) => `You already have a Squideo account — sign in here to watch the course: ${loginUrl}`,
+    activityKey: 'course.signup',
+    // The nudge series only exists for the course. A brief-specific drip
+    // ("you're 8 questions in — finish it off") is worth having and doesn't
+    // exist yet; until it does, scheduling the course one here would send
+    // someone who never asked for it eight videos.
+    drip: true,
+  },
+  brief: {
+    to: '#/brief',
+    subject: 'Your video brief is ready when you are',
+    html: (args) => briefBuilderHtml(args),
+    textNew: `Pick up your brief here: ${PORTAL_URL}#/brief`,
+    textReturning: (loginUrl) => `You already have a Squideo account — sign in here to carry on with your brief: ${loginUrl}`,
+    activityKey: 'brief.signup',
+    drip: false,
+  },
+};
+
+async function selfServeSignup(req, res, body, source) {
+  const landing = SIGNUP_LANDINGS[source] || SIGNUP_LANDINGS.course;
+  let result;
+  try {
+    result = await createPortalSignup({
+      source,
+      email: body.email,
+      name: body.name,
+      companyName: body.companyName,
+      marketingConsent: body.marketingConsent === true,
+      consentText: body.consentText,
+      attribution: body.attribution,
+      honeypot: body.website,          // off-screen field; bots fill it in
+      ip: clientIp(req),
+    });
+  } catch (err) {
+    if (err instanceof SignupError) return res.status(err.status).json({ error: err.message });
+    throw err;
+  }
+
+  // Honeypot: answer exactly as a success would, and do nothing.
+  if (result.silent) return res.status(200).json({ ok: true, next: 'portal', to: landing.to });
+
+  if (result.outcome === 'created') {
+    await issuePortalSession(res, result.user, req);
+    await logPortalActivity({ req, portalUserId: result.user.id, eventKey: landing.activityKey });
+    // Queue the nudge series. Nothing sends until the cron is enabled in
+    // Admin → Crash course, and every step re-checks its gates at send time.
+    if (landing.drip) await scheduleCourseEmails(result.signupId, result.user.email);
+    // Best-effort: a failed welcome email must not cost them the account they
+    // just created and are already signed in to.
+    try {
+      await sendMail({
+        to: result.user.email,
+        subject: landing.subject,
+        html: landing.html({ name: result.user.name }),
+        text: landing.textNew,
+      });
+    } catch (err) { console.warn(`[${source}] welcome email failed`, err.message); }
+    return res.status(200).json({ ok: true, next: 'portal', to: landing.to });
+  }
+
+  // Existing account (or a disabled one — same answer either way). Send a
+  // sign-in link, reusing the magic-link machinery and its rate limit.
+  if (result.user) {
+    const recent = await sql`
+      SELECT COUNT(*)::int AS n FROM portal_login_tokens
+       WHERE portal_user_id = ${result.user.id} AND purpose = 'magic_link'
+         AND created_at > NOW() - INTERVAL '10 minutes'
+    `;
+    if ((recent[0]?.n || 0) < MAGIC_SENDS_PER_10MIN) {
+      const raw = await issueLoginToken(result.user.id, 'magic_link', 15);
+      const loginUrl = `${PORTAL_URL}?login=${encodeURIComponent(raw)}`;
+      try {
+        await sendMail({
+          to: result.user.email,
+          subject: landing.subject,
+          html: landing.html({ name: result.user.name, loginUrl, returning: true }),
+          text: landing.textReturning(loginUrl),
+        });
+      } catch (err) { console.warn(`[${source}] returning-user email failed`, err.message); }
+    }
+  }
+  return res.status(200).json({ ok: true, next: 'email', to: landing.to });
+}
+
 // ═════════════════════════ auth ═════════════════════════
 async function authRoutes(req, res) {
   const op = req.query.op || null;
@@ -994,82 +1110,10 @@ async function authRoutes(req, res) {
     return res.status(200).json({ user: publicPortalUser(user) });
   }
 
-  // ── course-signup ── the ONLY self-serve account creation in the product
-  //
-  // Two outcomes the caller can tell apart:
-  //   next:'portal' — brand new account, signed in, go straight to the course.
-  //   next:'email'  — that address already has a portal account, so a magic
-  //                   link is sent instead. It must NOT be signed in here: a
-  //                   public form that hands out a session for any address
-  //                   typed into it is an account takeover, not a signup.
-  //
-  // That difference is an enumeration oracle — it reveals whether an address
-  // has a Squideo portal account. Accepted deliberately: the alternative is a
-  // "check your email" wall for everyone, which is the single biggest drop-off
-  // on the page. The throttle (5/IP/hour, 20/day) makes bulk enumeration
-  // impractical, which is the part that actually matters.
-  if (bodyOp === 'course-signup') {
-    let result;
-    try {
-      result = await createCourseSignup({
-        email: body.email,
-        name: body.name,
-        companyName: body.companyName,
-        marketingConsent: body.marketingConsent === true,
-        consentText: body.consentText,
-        attribution: body.attribution,
-        honeypot: body.website,          // off-screen field; bots fill it in
-        ip: clientIp(req),
-      });
-    } catch (err) {
-      if (err instanceof SignupError) return res.status(err.status).json({ error: err.message });
-      throw err;
-    }
-
-    // Honeypot: answer exactly as a success would, and do nothing.
-    if (result.silent) return res.status(200).json({ ok: true, next: 'portal' });
-
-    if (result.outcome === 'created') {
-      await issuePortalSession(res, result.user, req);
-      await logPortalActivity({ req, portalUserId: result.user.id, eventKey: 'course.signup' });
-      // Queue the nudge series. Nothing sends until the cron is enabled in
-      // Admin → Crash course, and every step re-checks its gates at send time.
-      await scheduleCourseEmails(result.signupId, result.user.email);
-      // Best-effort: a failed welcome email must not cost them the account they
-      // just created and are already signed in to.
-      try {
-        await sendMail({
-          to: result.user.email,
-          subject: 'Your Explainer Video Planning Crash Course is unlocked',
-          html: courseCrashCourseHtml({ name: result.user.name }),
-          text: `All eight videos are unlocked here: ${PORTAL_URL}#/course`,
-        });
-      } catch (err) { console.warn('[course] welcome email failed', err.message); }
-      return res.status(200).json({ ok: true, next: 'portal' });
-    }
-
-    // Existing account (or a disabled one — same answer either way). Send a
-    // sign-in link, reusing the magic-link machinery and its rate limit.
-    if (result.user) {
-      const recent = await sql`
-        SELECT COUNT(*)::int AS n FROM portal_login_tokens
-         WHERE portal_user_id = ${result.user.id} AND purpose = 'magic_link'
-           AND created_at > NOW() - INTERVAL '10 minutes'
-      `;
-      if ((recent[0]?.n || 0) < MAGIC_SENDS_PER_10MIN) {
-        const raw = await issueLoginToken(result.user.id, 'magic_link', 15);
-        const loginUrl = `${PORTAL_URL}?login=${encodeURIComponent(raw)}`;
-        try {
-          await sendMail({
-            to: result.user.email,
-            subject: 'Your Explainer Video Planning Crash Course is unlocked',
-            html: courseCrashCourseHtml({ name: result.user.name, loginUrl, returning: true }),
-            text: `You already have a Squideo account — sign in here to watch the course: ${loginUrl}`,
-          });
-        } catch (err) { console.warn('[course] returning-user email failed', err.message); }
-      }
-    }
-    return res.status(200).json({ ok: true, next: 'email' });
+  // ── self-serve signup ── the ONLY account creation in the product without an
+  // invite. One handler, one lead magnet per op — see selfServeSignup below.
+  if (bodyOp === 'course-signup' || bodyOp === 'brief-signup') {
+    return selfServeSignup(req, res, body, bodyOp === 'brief-signup' ? 'brief' : 'course');
   }
 
   // ── magic-request ── (always 200: no account enumeration)

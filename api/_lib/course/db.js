@@ -107,6 +107,23 @@ export function ensureCourseTables() {
       await sql`CREATE INDEX IF NOT EXISTS course_signups_user_idx ON course_signups(portal_user_id)`;
     });
 
+    // More than one public door writes here now — the crash course and the
+    // brief builder — so a row records which one it came through.
+    //
+    // This table stays the single home for self-serve signups rather than
+    // gaining a sibling, because it is what carries first-touch attribution
+    // forward: createPortalQuoteRequest() reads the attr_* columns off it when
+    // the eventual quote request is written. A second table would mean a second
+    // path to keep in step, and a lead with no campaign against it.
+    //
+    // Defaulted to 'course' because every row written before this column came
+    // from the course landing page — which makes the backfill correct rather
+    // than merely convenient.
+    await step('course_signups source', async () => {
+      await sql`ALTER TABLE course_signups ADD COLUMN IF NOT EXISTS signup_source TEXT NOT NULL DEFAULT 'course'`;
+      await sql`CREATE INDEX IF NOT EXISTS course_signups_source_idx ON course_signups(signup_source)`;
+    });
+
     await step('course_events', async () => {
       await sql`
         CREATE TABLE IF NOT EXISTS course_events (

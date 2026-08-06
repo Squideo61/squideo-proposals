@@ -32,6 +32,45 @@ import { ensureCourseTables } from './db.js';
 const SIGNUPS_PER_HOUR_PER_IP = 5;
 const SIGNUPS_PER_DAY_PER_IP = 20;
 
+// ── The public doors ─────────────────────────────────────────────────────────
+// Everything that differs between them lives here, so the signup body below has
+// no idea which page it is serving. Adding a third lead magnet is a new entry,
+// not a new branch through defensive code that took care to get right once.
+//
+// The throttle, the disposable-address check, the never-resolve-an-existing-
+// company rule and the consent record are shared BECAUSE they are shared — they
+// are properties of "a stranger typed their email into a public form", not of
+// any one campaign.
+//
+// They all notify on the same `course.signup` key rather than one key each: the
+// audience is identical (whoever wants to know a stranger just arrived), and a
+// new key would need its own notification default and its own subscription
+// before anyone heard about a lead. Only the wording differs.
+const SIGNUP_SOURCES = {
+  course: {
+    companySource: 'course',
+    contactSource: 'course',
+    invitedBy: 'system:course',
+    consentSource: 'course_landing',
+    tag: { slug: 'course-signup', label: 'Course signup', colour: '#2BB8E6' },
+    notify: { emoji: '🎓', noun: 'Crash course signup', verb: 'signed up for the crash course' },
+  },
+  brief: {
+    companySource: 'brief',
+    contactSource: 'brief',
+    invitedBy: 'system:brief',
+    consentSource: 'brief_landing',
+    tag: { slug: 'brief-signup', label: 'Brief builder', colour: '#7C5CD1' },
+    notify: { emoji: '📝', noun: 'Brief builder signup', verb: 'started a video brief' },
+  },
+};
+
+// Unknown source falls back to 'course' rather than throwing: a typo in a
+// caller must not cost someone the account they just created, and 'course' is
+// the conservative label — it under-claims the new door rather than inventing
+// a category the reports don't know about.
+const sourceConfig = (source) => SIGNUP_SOURCES[source] || SIGNUP_SOURCES.course;
+
 // Rough shape check only. The address is proven by the magic link they get on a
 // return visit, not by a regex — over-strict validation rejects real people
 // (plus-addressing, new TLDs, apostrophes) far more often than it stops abuse.
@@ -73,7 +112,7 @@ async function recordAttempt(ip) {
 // typed, then their own name — a personal address becomes "Jane Smith", never
 // "Gmail". Flagged `prospect` so the CRM's company list can exclude it: a few
 // hundred of these would otherwise make the Organisations tab unusable.
-async function createProspectCompany({ email, name, companyName }) {
+async function createProspectCompany({ email, name, companyName, cfg }) {
   const label = companyNameFromEmail(email)
     || trimOrNull(companyName)
     || trimOrNull(name)
@@ -81,7 +120,7 @@ async function createProspectCompany({ email, name, companyName }) {
   const id = makeId('co');
   await sql`
     INSERT INTO companies (id, name, prospect, source)
-    VALUES (${id}, ${label}, TRUE, 'course')
+    VALUES (${id}, ${label}, TRUE, ${cfg.companySource})
   `;
   return { id, name: label };
 }
@@ -92,11 +131,13 @@ async function createProspectCompany({ email, name, companyName }) {
 //   'existing' → the email already has a portal account. The caller must NOT
 //                issue a session (that would hand anyone a login for any
 //                address they can guess) — it sends a magic link instead.
-export async function createCourseSignup({
+export async function createPortalSignup({
   email: rawEmail, name: rawName, companyName, marketingConsent, consentText,
-  attribution, ip, honeypot,
+  attribution, ip, honeypot, source = 'course',
 }) {
   await ensureCourseTables();
+  const cfg = sourceConfig(source);
+  const signupSource = SIGNUP_SOURCES[source] ? source : 'course';
 
   // Bots fill in every field they can see, including the one positioned off
   // screen. Silently succeed rather than erroring — telling a bot it was
@@ -130,13 +171,14 @@ export async function createCourseSignup({
     const signupId = await upsertSignupRow({
       email, name, companyName, portalUserId: existing.id,
       contactId: null, companyId: null, marketingConsent, consentText, attribution, ip,
+      cfg, signupSource,
     });
     return { outcome: 'existing', user: existing, signupId };
   }
 
-  const company = await createProspectCompany({ email, name, companyName });
+  const company = await createProspectCompany({ email, name, companyName, cfg });
   const contact = await resolveContactForSigner({
-    email, name, companyId: company.id, source: 'course',
+    email, name, companyId: company.id, source: cfg.contactSource,
   });
 
   const userId = makeId('pu');
@@ -146,20 +188,20 @@ export async function createCourseSignup({
   `;
   await sql`
     INSERT INTO portal_memberships (portal_user_id, company_id, invited_by)
-    VALUES (${userId}, ${company.id}, 'system:course')
+    VALUES (${userId}, ${company.id}, ${cfg.invitedBy})
     ON CONFLICT (portal_user_id, company_id) DO NOTHING
   `;
 
   const signupId = await upsertSignupRow({
     email, name, companyName, portalUserId: userId,
     contactId: contact?.id || null, companyId: company.id,
-    marketingConsent, consentText, attribution, ip,
+    marketingConsent, consentText, attribution, ip, cfg, signupSource,
   });
 
   // Best-effort by design — applyTag swallows its own errors. A tagging
   // failure must never cost someone the account they just created.
-  await applyTag(contact?.id, 'course-signup', {
-    label: 'Course signup', colour: '#2BB8E6', by: 'system:course',
+  await applyTag(contact?.id, cfg.tag.slug, {
+    label: cfg.tag.label, colour: cfg.tag.colour, by: cfg.invitedBy,
   });
 
   const [user] = await sql`
@@ -167,6 +209,10 @@ export async function createCourseSignup({
   `;
   return { outcome: 'created', user, signupId, companyId: company.id };
 }
+
+// The crash course was the first door and is still the busiest one, so it keeps
+// a name of its own rather than every call site spelling out the source.
+export const createCourseSignup = (args) => createPortalSignup({ ...args, source: 'course' });
 
 // password_hash is deliberately NULL above: the course signup asks for a name
 // and an email and nothing else. Dropping the password field (and the
@@ -176,7 +222,7 @@ export async function createCourseSignup({
 
 async function upsertSignupRow({
   email, name, companyName, portalUserId, contactId, companyId,
-  marketingConsent, consentText, attribution, ip,
+  marketingConsent, consentText, attribution, ip, cfg, signupSource,
 }) {
   const attr = pickAttribution({ attribution }) || {};
   const id = makeId('csu');
@@ -188,6 +234,7 @@ async function upsertSignupRow({
     INSERT INTO course_signups (
       id, email, name, company_name, portal_user_id, contact_id, company_id,
       marketing_consent, consent_text, consent_ip, consent_at, consent_source,
+      signup_source,
       attr_channel, attr_source, attr_medium, attr_campaign, attr_term, attr_content,
       attr_gclid, attr_gbraid, attr_wbraid, attr_fbclid, attr_msclkid,
       attr_campaign_id, attr_adgroup_id, attr_keyword, attr_matchtype,
@@ -196,7 +243,8 @@ async function upsertSignupRow({
       ${id}, ${email}, ${name}, ${trimOrNull(companyName)}, ${portalUserId},
       ${contactId}, ${companyId},
       ${marketingConsent === true}, ${trimOrNull(consentText)}, ${ip || null},
-      ${marketingConsent === true ? new Date() : null}, 'course_landing',
+      ${marketingConsent === true ? new Date() : null}, ${cfg.consentSource},
+      ${signupSource},
       ${attr.attr_channel ?? null}, ${attr.attr_source ?? null}, ${attr.attr_medium ?? null},
       ${attr.attr_campaign ?? null}, ${attr.attr_term ?? null}, ${attr.attr_content ?? null},
       ${attr.attr_gclid ?? null}, ${attr.attr_gbraid ?? null}, ${attr.attr_wbraid ?? null},
@@ -207,6 +255,9 @@ async function upsertSignupRow({
       ${attr.attr_landing_url ?? null}, ${attr.attr_referrer ?? null},
       ${attr.attr_first_seen_at ?? null}
     )
+    -- signup_source is deliberately absent from the DO UPDATE, for the same
+    -- reason as the attribution: whoever came in through the course and later
+    -- filled in a brief was earned by the course.
     ON CONFLICT (LOWER(email)) DO UPDATE SET
       portal_user_id = COALESCE(course_signups.portal_user_id, EXCLUDED.portal_user_id),
       contact_id     = COALESCE(course_signups.contact_id,     EXCLUDED.contact_id),
@@ -229,14 +280,14 @@ async function upsertSignupRow({
   // same person comes back with a different id to the one we just generated.
   // Without that check, anyone re-signing-up would ping the team again.
   if (signupId === id) {
-    notifyNewSignup({ signupId, email, name, companyName, attr }).catch(() => {});
+    notifyNewSignup({ signupId, email, name, companyName, attr, cfg }).catch(() => {});
   }
   return signupId;
 }
 
 // Best-effort and never awaited by the caller: a signup must complete whether
 // or not anyone can be told about it.
-async function notifyNewSignup({ signupId, email, name, companyName, attr }) {
+async function notifyNewSignup({ signupId, email, name, companyName, attr, cfg }) {
   try {
     // Our own testing shouldn't buzz anyone's phone.
     const ourEmails = await internalEmails().catch(() => []);
@@ -246,22 +297,22 @@ async function notifyNewSignup({ signupId, email, name, companyName, attr }) {
     const who = trimOrNull(name) || email;
     const where = attr?.attr_campaign || attr?.attr_source || null;
     await sendNotification('course.signup', {
-      subject: `🎓 Crash course signup — ${who}${companyName ? ` (${companyName})` : ''}`,
+      subject: `${cfg.notify.emoji} ${cfg.notify.noun} — ${who}${companyName ? ` (${companyName})` : ''}`,
       text: [
-        `${who} signed up for the crash course.`,
+        `${who} ${cfg.notify.verb}.`,
         '',
         `Email: ${email}`,
         companyName ? `Company: ${companyName}` : null,
         where ? `Came from: ${where}` : null,
       ].filter(Boolean).join('\n'),
       inApp: {
-        title: `Crash course signup — ${who}`,
+        title: `${cfg.notify.noun} — ${who}`,
         // Kept short: this is the line a phone shows on the lock screen.
         body: [companyName, where].filter(Boolean).join(' · ') || email,
         link: '#/marketing/course',
       },
     });
   } catch (err) {
-    console.warn('[course] signup notify failed', err.message, signupId);
+    console.warn('[signup] notify failed', err.message, signupId);
   }
 }

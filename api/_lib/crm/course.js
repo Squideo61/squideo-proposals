@@ -369,10 +369,15 @@ async function courseReach(from, to, skip, ourEmails) {
 
   // Filtered by EMAIL rather than by portal user id: a signup row can exist
   // before an account does, so the id list alone would miss one.
+  // signup_source keeps this to people who actually came through the course
+  // landing page. The table also holds brief-builder signups — same self-serve
+  // door, different campaign — and counting those here would show the course
+  // converting traffic it never saw.
   const [signupCount] = await sql`
     SELECT COUNT(*)::int AS n FROM course_signups
      WHERE (${start}::timestamptz IS NULL OR created_at >= ${start})
        AND (${endEx}::timestamptz IS NULL OR created_at < ${endEx})
+       AND signup_source = 'course'
        AND LOWER(email) <> ALL(${ourEmails})
        AND email NOT ILIKE '%@squideo.co.uk'
        AND email NOT ILIKE '%@squideo.com'
@@ -429,7 +434,8 @@ async function courseAnalytics(res, from = null, to = null) {
                           AND p.completed_at IS NOT NULL), '{}') AS done_module_ids
         FROM course_signups s
         LEFT JOIN companies c ON c.id = s.company_id
-       WHERE LOWER(s.email) <> ALL(${ourEmails})
+       WHERE s.signup_source = 'course'
+         AND LOWER(s.email) <> ALL(${ourEmails})
          AND s.email NOT ILIKE '%@squideo.co.uk'
          AND s.email NOT ILIKE '%@squideo.com'
        ORDER BY s.created_at DESC
