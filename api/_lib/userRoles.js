@@ -232,15 +232,22 @@ export function ensureSystemRoles() {
 
       // ── Client portal preview ──
       // Looking at a client's portal read-only is roughly what looking at their
-      // deal already shows, so it goes to everyone who works on delivery:
-      // Directors, Project/Production Managers ('member') and Producers.
-      // Admins via '*'. Copywriters and freelancers are deliberately left out.
+      // deal already shows, so it goes to every internal role: Directors,
+      // Project/Production Managers ('member'), Producers and Copywriters.
+      // Admins via '*'.
+      //
+      // Two roles are deliberately left out. Marketing accounts are scoped to
+      // the Marketing section and have no client-delivery remit. Freelancers are
+      // external contractors, scoped server-side to only their assigned
+      // projects — the portal activity feed is cross-client by nature, so it
+      // would be their one window onto every other client.
+      //
       // WRITING in the portal (manage mode) still needs a portal-admin
       // permission — see PORTAL_ADMIN_PERMS in api/crm/portal-admin.js.
       const portalPreview = await sql`
         UPDATE roles
            SET permissions = permissions || '["portal.preview"]'::jsonb, updated_at = NOW()
-         WHERE id IN ('director', 'member', 'producer') AND NOT (permissions @> '["portal.preview"]'::jsonb)
+         WHERE id IN ('director', 'member', 'producer', 'copywriter') AND NOT (permissions @> '["portal.preview"]'::jsonb)
       `;
       if ((portalPreview.count || portalPreview.rowCount || 0) > 0) invalidateRoleCache();
 

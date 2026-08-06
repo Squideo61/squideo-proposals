@@ -86,7 +86,9 @@ describe('hasPermission', () => {
 describe('portalPreviewPerms', () => {
   const producer = { permissions: ['portal.preview', 'schedule.access', 'production.access'] };
   const projectManager = { permissions: ['portal.preview', 'deals.manage_all'] };
-  const copywriter = { permissions: ['schedule.access'] };
+  // Freelancers are the role deliberately left without portal.preview — they're
+  // external contractors scoped to their own assigned projects.
+  const freelancer = { permissions: ['schedule.access', 'revisions.access', 'production.access'] };
   const admin = { permissions: ['*'] };
   const allows = (role, manage) => portalPreviewPerms(manage).some((p) => hasPermission(role, p));
 
@@ -114,8 +116,8 @@ describe('portalPreviewPerms', () => {
   });
 
   it('keeps roles without portal.preview out entirely', () => {
-    expect(allows(copywriter, false)).toBe(false);
-    expect(allows(copywriter, true)).toBe(false);
+    expect(allows(freelancer, false)).toBe(false);
+    expect(allows(freelancer, true)).toBe(false);
   });
 
   it('lets an admin wildcard through both', () => {

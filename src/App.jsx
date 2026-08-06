@@ -431,7 +431,7 @@ function AppShell() {
     // The production board (the fall-through case) stays full width; the detail
     // pages a producer opens are centred at the cap like the rest of the app.
     // Freelancers have no board, so everything is centred for them.
-    const producerBoard = !freelancer && !((view === 'video' && activeId) || ((view === 'project' || view === 'deal') && activeId) || view === 'projects' || view === 'revisions' || view === 'storyboards' || view === 'tasks' || view === 'emails' || view === 'email' || view === 'triage' || view === 'prod-dashboard' || (view === 'client' && activeId));
+    const producerBoard = !freelancer && !((view === 'video' && activeId) || ((view === 'project' || view === 'deal') && activeId) || view === 'projects' || view === 'revisions' || view === 'storyboards' || view === 'tasks' || view === 'emails' || view === 'email' || view === 'triage' || view === 'prod-dashboard' || view === 'portal-activity' || (view === 'client' && activeId));
     return (
       <div style={{ minHeight: '100vh', background: BRAND.paper, color: BRAND.ink }}>
         <DesktopNotifier onOpenLink={openLink} />
@@ -475,6 +475,11 @@ function AppShell() {
               projectId={activeId}
               onOpenProject={(id) => navigate('storyboards', id)}
               onCloseProject={() => navigate('storyboards')} />
+          ) : view === 'portal-activity' && canAccessView('portal-activity', user?.permissions) ? (
+            // Client Portal Activity is in the producer nav too, so it needs a
+            // route here or the item would dead-end on the board. No company or
+            // contact pages exist in this shell, so only the deal link is wired.
+            <PortalActivityView onOpenDeal={(id) => navigate('project', id)} />
           ) : view === 'tasks' ? (
             <TasksView onBack={() => navigate('production')} onOpenDeal={(id) => navigate('deal', id)} forceMine={activeId === 'mine'} />
           ) : (view === 'emails' || view === 'triage' || view === 'email') ? (() => {

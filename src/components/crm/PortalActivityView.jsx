@@ -23,6 +23,16 @@ const WINDOWS = [
   { value: 'all', label: 'All time' },
 ];
 
+// The company a row belongs to. Clickable only where there's somewhere to go:
+// the producer/copywriter shell has no company pages, so there it's plain text
+// rather than a button that does nothing.
+const CHIP = { padding: 0, fontSize: 11.5, color: BRAND.muted, display: 'inline-flex', alignItems: 'center', gap: 4 };
+function CompanyChip({ id, name, onOpen }) {
+  const inner = <><Building2 size={11} /> {name}</>;
+  if (!id || !onOpen) return <span style={CHIP}>{inner}</span>;
+  return <button className="btn-ghost" onClick={() => onOpen(id)} style={CHIP}>{inner}</button>;
+}
+
 export function PortalActivityView({ onOpenCompany, onOpenDeal, onOpenContact }) {
   const isMobile = useIsMobile();
   const [mode, setMode] = useState('timeline'); // 'timeline' | 'people'
@@ -146,10 +156,7 @@ export function PortalActivityView({ onOpenCompany, onOpenDeal, onOpenContact })
                 </div>
                 <div style={{ fontSize: 11.5, color: BRAND.muted, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                   {p.companies && (
-                    <button className="btn-ghost" onClick={() => p.companyId && onOpenCompany?.(p.companyId)}
-                      style={{ padding: 0, fontSize: 11.5, color: BRAND.muted, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                      <Building2 size={11} /> {p.companies}
-                    </button>
+                    <CompanyChip id={p.companyId} name={p.companies} onOpen={onOpenCompany} />
                   )}
                   <span>{p.logins} sign-in{p.logins === 1 ? '' : 's'}</span>
                   <span>{p.activeDays} active day{p.activeDays === 1 ? '' : 's'}</span>
@@ -189,10 +196,7 @@ export function PortalActivityView({ onOpenCompany, onOpenDeal, onOpenContact })
                 </div>
                 <div style={{ fontSize: 11.5, color: BRAND.muted, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                   {it.companyName && (
-                    <button className="btn-ghost" onClick={() => it.companyId && onOpenCompany?.(it.companyId)}
-                      style={{ padding: 0, fontSize: 11.5, color: BRAND.muted, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                      <Building2 size={11} /> {it.companyName}
-                    </button>
+                    <CompanyChip id={it.companyId} name={it.companyName} onOpen={onOpenCompany} />
                   )}
                   {it.loc && <span>{it.loc}</span>}
                 </div>
