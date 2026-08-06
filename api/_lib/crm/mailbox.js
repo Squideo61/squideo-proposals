@@ -427,22 +427,26 @@ async function getAttachment(req, res, accessToken) {
   return res.status(200).end(buf);
 }
 
-// POST /api/crm/gmail/modify  { action, ids: [threadId, ...] }
-// Applies the action to whole conversations (Gmail's own behaviour — archiving
-// a conversation archives every message in it).
+// POST /api/crm/gmail/modify  { action, ids: [id, ...], scope? }
+// Default scope is the whole conversation (Gmail's own behaviour — archiving a
+// conversation archives every message in it), with `ids` as thread ids.
+// scope:'message' applies the same actions to individual messages instead, so a
+// single email can be trashed out of a thread the rest of which is worth
+// keeping. Gmail's messages.* endpoints mirror threads.* exactly.
 async function modifyThreads(req, res, accessToken) {
   if (req.method !== 'POST') return res.status(405).end();
-  const { action, ids } = req.body || {};
+  const { action, ids, scope } = req.body || {};
   const idList = Array.isArray(ids) ? ids.filter(Boolean) : (ids ? [ids] : []);
   if (!idList.length) return res.status(400).json({ error: 'ids required' });
   const map = actionToLabels(action);
   if (!map) return res.status(400).json({ error: 'Unknown action: ' + action });
+  const collection = scope === 'message' ? 'messages' : 'threads';
 
   const op = map.trash ? 'trash' : map.untrash ? 'untrash' : null;
   const run = (tid) => op
-    ? gmailFetch(accessToken, `/threads/${encodeURIComponent(tid)}/${op}`, { method: 'POST' })
-    // threads.modify has no batch form — apply the label delta per thread.
-    : gmailFetch(accessToken, `/threads/${encodeURIComponent(tid)}/modify`, {
+    ? gmailFetch(accessToken, `/${collection}/${encodeURIComponent(tid)}/${op}`, { method: 'POST' })
+    // modify has no batch form — apply the label delta one at a time.
+    : gmailFetch(accessToken, `/${collection}/${encodeURIComponent(tid)}/modify`, {
         method: 'POST',
         body: JSON.stringify({ addLabelIds: map.add || [], removeLabelIds: map.remove || [] }),
       });

@@ -271,6 +271,10 @@ export async function gmailRoute(req, res, id, action, user) {
     return gmailAttachments(req, res, user);
   }
 
+  if (id === 'copy-attachments') {
+    return gmailCopyAttachments(req, res, user);
+  }
+
   if (id === 'inline-image') {
     return gmailInlineImage(req, res, user);
   }
@@ -337,6 +341,98 @@ async function gmailAttachments(req, res, user) {
   }
 
   return res.status(405).end();
+}
+
+// POST /api/crm/gmail/copy-attachments
+//   { items: [{ messageId, attachmentId, filename, mimeType, size }] }
+//
+// Copies attachments off existing Gmail messages into the same temporary blob
+// store an upload from disk would land in, and returns refs in the identical
+// shape — so forwarding a conversation carries its files without the user
+// having to download and re-attach each one by hand.
+//
+// Enforces the same 20 MB ceiling as a manual upload: anything that would tip
+// it over is skipped and named in `skipped`, rather than failing the whole
+// forward or silently sending a message with files missing.
+async function gmailCopyAttachments(req, res, user) {
+  if (req.method !== 'POST') return res.status(405).end();
+  if (!process.env.BLOB_READ_WRITE_TOKEN)
+    return res.status(503).json({ error: 'File storage not configured' });
+
+  const items = Array.isArray(req.body?.items) ? req.body.items.filter(a => a && a.messageId && a.attachmentId) : [];
+  if (!items.length) return res.status(200).json({ attachments: [], skipped: [] });
+
+  // The messages live in whoever's mailbox synced them; fall back to the caller
+  // (viewing their own live mailbox). Mirrors gmailInlineImage.
+  let owner = user.email;
+  try {
+    const [row] = await sql`
+      SELECT user_email FROM email_messages
+       WHERE gmail_message_id = ${String(items[0].messageId)} LIMIT 1
+    `;
+    if (row?.user_email) owner = row.user_email;
+  } catch { /* fall back to current user */ }
+
+  let accessToken;
+  try { accessToken = await getFreshAccessToken(owner); }
+  catch (err) {
+    if (err.code === 'NOT_CONNECTED' || err.code === 'REAUTH') {
+      return res.status(409).json({ error: err.message, code: err.code });
+    }
+    throw err;
+  }
+
+  const base = 'https://gmail.googleapis.com/gmail/v1/users/me';
+  const attachments = [];
+  const skipped = [];
+  let total = 0;
+
+  // Serial on purpose: the size ceiling is a running total, and a thread's
+  // worth of attachments is a handful of files, not a fan-out worth parallelising.
+  for (const it of items.slice(0, 25)) {
+    const filename = String(it.filename || 'attachment');
+    // Trust the declared size only to skip an obviously oversized file early;
+    // the real check is on the bytes we actually get back.
+    if (Number(it.size) > 0 && total + Number(it.size) > ATTACHMENT_MAX_BYTES) {
+      skipped.push({ filename, reason: 'too-large' });
+      continue;
+    }
+    let buf;
+    try {
+      const r = await fetch(
+        `${base}/messages/${encodeURIComponent(it.messageId)}/attachments/${encodeURIComponent(it.attachmentId)}`,
+        { headers: { Authorization: 'Bearer ' + accessToken } },
+      );
+      if (!r.ok) throw new Error('gmail ' + r.status);
+      buf = Buffer.from((await r.json()).data || '', 'base64url');
+    } catch (err) {
+      console.warn('[gmail copy-attachments] fetch failed', filename, err?.message);
+      skipped.push({ filename, reason: 'fetch-failed' });
+      continue;
+    }
+    if (!buf.length) { skipped.push({ filename, reason: 'empty' }); continue; }
+    if (total + buf.length > ATTACHMENT_MAX_BYTES) { skipped.push({ filename, reason: 'too-large' }); continue; }
+
+    const mimeType = it.mimeType || 'application/octet-stream';
+    try {
+      const fileId = crypto.randomUUID();
+      const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const blob = await put(`email-attachments/${user.email}/${fileId}/${safeName}`, buf, {
+        access: 'private', contentType: mimeType,
+      });
+      total += buf.length;
+      attachments.push({
+        id: 'copied_' + fileId,
+        filename, mimeType, sizeBytes: buf.length,
+        blobUrl: blob.url, blobPathname: blob.pathname,
+      });
+    } catch (err) {
+      console.warn('[gmail copy-attachments] store failed', filename, err?.message);
+      skipped.push({ filename, reason: 'store-failed' });
+    }
+  }
+
+  return res.status(200).json({ attachments, skipped });
 }
 
 // GET /api/crm/gmail/inline-image?messageId=<id>&cid=<contentId>

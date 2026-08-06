@@ -3452,6 +3452,50 @@ export function StoreProvider({ children }) {
           throw err;
         });
     },
+    // Apply a Gmail action to individual MESSAGES rather than whole threads —
+    // trashing one email out of a conversation you're keeping. The message is
+    // dropped from the cached thread straight away (Gmail's own thread.get lags
+    // a beat behind the trash), and the folder row goes too if that emptied the
+    // conversation. Reversible: the message lands in Gmail's Trash.
+    mailboxMessageAction(action, messageIds, { threadId = null, folder = null } = {}) {
+      const idList = (Array.isArray(messageIds) ? messageIds : [messageIds]).filter(Boolean);
+      if (!idList.length) return Promise.resolve(null);
+      const idSet = new Set(idList);
+      const removes = action === 'trash' || action === 'spam';
+      let emptied = false;
+      if (threadId && removes) {
+        setState(s => {
+          const cached = s.threadCache?.[threadId];
+          if (!cached || !Array.isArray(cached.messages)) return s;
+          const messages = cached.messages.filter(m => !idSet.has(m.id));
+          emptied = messages.length === 0;
+          return { ...s, threadCache: { ...s.threadCache, [threadId]: { ...cached, messages } } };
+        });
+      }
+      if (emptied && folder) {
+        setState(s => {
+          const f = s.mailbox?.[folder];
+          if (!f || !Array.isArray(f.rows)) return s;
+          return { ...s, mailbox: { ...s.mailbox, [folder]: { ...f, rows: f.rows.filter(r => r.id !== threadId) } } };
+        });
+      }
+      return api.post('/api/crm/gmail/modify', { action, ids: idList, scope: 'message' })
+        .then((r) => ({ ...r, emptied }))
+        .catch((err) => {
+          // Put the thread back the way Gmail actually has it.
+          if (threadId) actions.loadMailboxThread(threadId).catch(() => {});
+          if (folder) actions.loadMailboxFolder(folder);
+          throw err;
+        });
+    },
+    // Copy attachments off existing Gmail messages into the temporary send
+    // store, returning refs the composer treats exactly like an upload from
+    // disk. Used when forwarding, so the files go with the thread.
+    copyEmailAttachments(items) {
+      const list = Array.isArray(items) ? items.filter(i => i && i.messageId && i.attachmentId) : [];
+      if (!list.length) return Promise.resolve({ attachments: [], skipped: [] });
+      return api.post('/api/crm/gmail/copy-attachments', { items: list });
+    },
     // Unread/total counts for the folder sidebar badges.
     loadMailboxLabels() {
       return api.get('/api/crm/gmail/labels')

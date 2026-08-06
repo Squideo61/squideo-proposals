@@ -19,6 +19,7 @@ import { TrackingEye, TrackingBanner } from './EmailTracking.jsx';
 import { ActionMenu, Modal } from '../ui.jsx';
 import { NewDealModal } from './PipelineView.jsx';
 import { STAGE_COLOURS, STAGE_LABEL } from '../../lib/stages.js';
+import { isHtmlEmpty } from '../../lib/emailHtml.js';
 
 // 'deals' + 'triage' are DB-backed (CRM-aware); the rest proxy live to Gmail
 // via /api/crm/gmail/folder. kind drives which store action loads each folder.
@@ -1574,6 +1575,9 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
     const d = state.threadDrafts?.[openRef.threadId];
     if (d && folder !== 'drafts') setComposeMode(d.mode || 'reply');
     else setComposeMode(null);
+    // A forward in progress belongs to the thread it was started from.
+    setForwardMsgs(null);
+    setForwardAttachments([]);
   }, [openRef.threadId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // True if WE sent this message. DB/deal threads carry an explicit direction
@@ -1604,16 +1608,125 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
   }, [latest, myEmail]);
   const canReplyAll = otherParticipants.size > 1;
 
+  // Every attachment on the conversation, tagged with the message it came from
+  // so the server can pull the bytes back out of Gmail.
+  const threadAttachments = useMemo(() => {
+    const out = [];
+    for (const m of messages) {
+      const mid = m.gmailMessageId || m.id;
+      if (!mid) continue;
+      for (const a of (m.attachments || [])) {
+        if (!a?.attachmentId) continue;
+        out.push({
+          messageId: mid,
+          attachmentId: a.attachmentId,
+          filename: a.filename || 'attachment',
+          mimeType: a.mimeType || 'application/octet-stream',
+          size: a.size ?? a.sizeBytes ?? 0,
+        });
+      }
+    }
+    return out;
+  }, [messages]);
+
+  // Files copied into the send store for the open forward (see startForward),
+  // and which messages that forward covers — null means the whole conversation.
+  const [forwardAttachments, setForwardAttachments] = useState([]);
+  const [forwardMsgs, setForwardMsgs] = useState(null);
+  const [preparingForward, setPreparingForward] = useState(false);
+  // Bumped per forward so the composer remounts and re-reads its seed draft —
+  // without it, forwarding a single message while a forward is already open
+  // would leave the previous body on screen.
+  const [forwardSeq, setForwardSeq] = useState(0);
+  const forwarding = forwardMsgs || messages;
+
+  // One message rendered into the forwarded body. Uses the same quote-stripped
+  // "main" part the reader shows, so a ten-reply thread forwards as ten
+  // messages rather than ten copies of the one below it. Falls back to the
+  // whole body whenever the split finds nothing to keep — never forward blank.
+  const forwardedMessageHtml = (m) => {
+    const hasHtml = !!(m.html && m.html.trim());
+    let inner = '';
+    if (hasHtml) {
+      const { main } = splitQuotedHtml(m.html);
+      inner = quoteSourceHtml(isHtmlEmpty(main) ? m.html : main);
+    }
+    if (!inner) inner = m.text ? escapeText(m.text).replace(/\n/g, '<br>') : '';
+    const to = (m.to || []).join(', ');
+    const cc = (m.cc || []).join(', ');
+    return '---------- Forwarded message ----------<br>'
+      + `From: ${escapeText(m.from || m.fromEmail || '')}<br>`
+      + (m.date ? `Date: ${escapeText(formatDateLabel(m.date))}<br>` : '')
+      + `Subject: ${escapeText(m.subject || subject)}<br>`
+      + (to ? `To: ${escapeText(to)}<br>` : '')
+      + (cc ? `Cc: ${escapeText(cc)}<br>` : '')
+      + '<br>' + inner;
+  };
+
+  // Forward the whole conversation by default, oldest first — forwarding a
+  // thread and sending only its last message loses the half of the story that
+  // explains it. A single message can still be forwarded on its own from that
+  // message's own menu.
+  const forwardBody = () => '<br><br>' + forwarding.map(forwardedMessageHtml).join('<br><hr><br>');
+
+  // Copy the forwarded messages' attachments into the send store BEFORE opening
+  // the composer, so they're already chips in the editor. Failure is never
+  // fatal: the forward opens regardless, with the files named so they can be
+  // attached by hand.
+  const startForward = async (msgs = null) => {
+    setForwardAttachments([]);
+    setForwardMsgs(msgs);
+    // Starting a forward replaces any forward already in progress on this
+    // thread — otherwise the saved draft would win and you'd get the previous
+    // selection's body back. A reply draft is a different mode and survives.
+    if (state.threadDrafts?.[openRef.threadId]?.mode === 'forward') actions.clearThreadDraft(openRef.threadId);
+    setForwardSeq(n => n + 1);
+    const ids = new Set((msgs || messages).map(m => m.gmailMessageId || m.id).filter(Boolean));
+    const wanted = threadAttachments.filter(a => ids.has(a.messageId));
+    if (!wanted.length) { setComposeMode('forward'); return; }
+    setPreparingForward(true);
+    try {
+      const r = await actions.copyEmailAttachments(wanted);
+      setForwardAttachments(r?.attachments || []);
+      const skipped = r?.skipped || [];
+      if (skipped.length) {
+        showMsg(`Couldn't attach ${skipped.map(s => s.filename).join(', ')} — add ${skipped.length === 1 ? 'it' : 'them'} by hand`, 'error');
+      }
+    } catch {
+      showMsg('Couldn’t copy the attachments — attach them by hand', 'error');
+    } finally {
+      setPreparingForward(false);
+      setComposeMode('forward');
+    }
+  };
+
+  // Trash one message out of the conversation, leaving the rest. Gmail's Trash
+  // holds it for 30 days, so this is recoverable — hence a plain confirm rather
+  // than anything heavier.
+  const deleteMessage = async (m) => {
+    const id = m.gmailMessageId || m.id;
+    if (!id) return;
+    const who = displayName(m.from) || m.fromEmail || 'this message';
+    if (!window.confirm(`Move this email from ${who} to Gmail's Trash?\n\nThe rest of the conversation stays.`)) return;
+    try {
+      const r = await actions.mailboxMessageAction('trash', [id], { threadId: openRef.threadId, folder });
+      showMsg('Email moved to Trash');
+      if (r?.emptied) onBack?.(); // nothing left of the conversation to show
+    } catch {
+      showMsg('Could not delete that email', 'error');
+    }
+  };
+
   // Build the seed draft for the inline composer for each mode.
   const draftFor = (mode) => {
     if (!latest) return null;
     if (mode === 'forward') {
+      const subj = (forwarding.length === 1 && forwarding[0].subject) || subject;
       return {
         to: '',
-        subject: /^fwd:/i.test(subject) ? subject : 'Fwd: ' + subject,
-        body: `<br><br>---------- Forwarded message ----------<br>`
-          + `From: ${escapeText(latest.from || latest.fromEmail || '')}<br>Subject: ${escapeText(subject)}<br><br>`
-          + (quoteSourceHtml(latest.html) || (latest.text ? escapeText(latest.text).replace(/\n/g, '<br>') : '')),
+        subject: /^fwd:/i.test(subj) ? subj : 'Fwd: ' + subj,
+        body: forwardBody(),
+        attachments: forwardAttachments,
       };
     }
     const primary = replyRecipient(latest);
@@ -1699,7 +1812,9 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
                     folder !== 'sent' && folder !== 'drafts' && folder !== 'trash' && folder !== 'spam' && { label: 'Archive', icon: Archive, onClick: () => act('archive') },
                     folder === 'trash'
                       ? { label: 'Restore', icon: RefreshCw, onClick: () => act('untrash') }
-                      : { label: 'Delete', icon: Trash2, danger: true, onClick: () => act('trash') },
+                      // Named for its scope now that each message has its own
+                      // Delete — this one takes the entire conversation.
+                      : { label: 'Delete conversation', icon: Trash2, danger: true, onClick: () => act('trash') },
                     folder !== 'spam' && folder !== 'drafts' && { label: 'Mark as spam', icon: ShieldAlert, onClick: () => act('spam') },
                     folder === 'spam' && { label: 'Not spam', icon: ShieldAlert, onClick: () => act('unspam') },
                     folder !== 'drafts' && { label: 'Mark unread', icon: Mail, onClick: () => act('markUnread') },
@@ -1715,7 +1830,7 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
                 )}
                 {folder === 'trash'
                   ? <button onClick={() => act('untrash')} className="btn-icon" title="Restore" aria-label="Restore"><RefreshCw size={16} /></button>
-                  : <button onClick={() => act('trash')} className="btn-icon" title="Delete" aria-label="Delete"><Trash2 size={16} /></button>}
+                  : <button onClick={() => act('trash')} className="btn-icon" title="Delete conversation" aria-label="Delete conversation"><Trash2 size={16} /></button>}
                 {folder !== 'spam' && folder !== 'drafts' && <button onClick={() => act('spam')} className="btn-icon" title="Mark as spam" aria-label="Mark as spam"><ShieldAlert size={16} /></button>}
                 {folder === 'spam' && <button onClick={() => act('unspam')} className="btn-icon" title="Not spam" aria-label="Not spam"><ShieldAlert size={16} /></button>}
                 {folder !== 'drafts' && <button onClick={() => act('markUnread')} className="btn-icon" title="Mark unread" aria-label="Mark unread"><Mail size={16} /></button>}
@@ -1736,6 +1851,11 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
                   connected={connected}
                   addToDealId={embedded ? (contextDeal?.id || null) : null}
                   defaultExpanded={i === messages.length - 1 || m.unread}
+                  onForward={folder === 'drafts' ? null : () => startForward([m])}
+                  // Deleting one message means trashing it in Gmail, so it's
+                  // offered only on the live-mailbox folders. A deal's copy of a
+                  // thread is unlinked from the deal instead, on the deal page.
+                  onDelete={isGmail && folder !== 'drafts' && folder !== 'trash' ? () => deleteMessage(m) : null}
                 />
               ))}
               {messages.length === 0 && <div style={{ color: BRAND.muted, fontStyle: 'italic', fontSize: 13 }}>(no messages)</div>}
@@ -1753,7 +1873,7 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
               ? (
                 <div style={{ marginTop: 14 }} ref={composerRef}>
                   <EmailComposerModal
-                    key={composeMode}
+                    key={composeMode === 'forward' ? 'forward:' + forwardSeq : composeMode}
                     inline
                     deal={resolvedDeal}
                     contact={null}
@@ -1783,7 +1903,7 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
                       {canReplyAll && (
                         <button onClick={() => setComposeMode('replyAll')} className="btn-ghost" title="Reply all" aria-label="Reply all" style={{ flexShrink: 0 }}><ReplyAll size={15} /></button>
                       )}
-                      <button onClick={() => setComposeMode('forward')} className="btn-ghost" title="Forward" aria-label="Forward" style={{ flexShrink: 0 }}><Forward size={15} /></button>
+                      <button onClick={startForward} disabled={preparingForward} className="btn-ghost" title="Forward" aria-label="Forward" style={{ flexShrink: 0 }}><Forward size={15} /></button>
                     </div>,
                     document.body
                   )
@@ -1793,7 +1913,9 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
                         <button onClick={() => setComposeMode('replyAll')} className="btn-ghost"><ReplyAll size={15} /> Reply all</button>
                       )}
                       <button onClick={() => setComposeMode('reply')} className="btn-ghost"><Reply size={15} /> Reply</button>
-                      <button onClick={() => setComposeMode('forward')} className="btn-ghost"><Forward size={15} /> Forward</button>
+                      <button onClick={startForward} disabled={preparingForward} className="btn-ghost">
+                        <Forward size={15} /> {preparingForward ? 'Preparing…' : (messages.length > 1 ? `Forward all ${messages.length}` : 'Forward')}
+                      </button>
                     </div>
                   )
               )
@@ -1830,7 +1952,7 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
 
 // One message inside a conversation. Collapsed shows a one-line header; click
 // to expand the full sanitised body + attachments.
-function MessageBlock({ message, myEmail, connected, defaultExpanded, addToDealId = null }) {
+function MessageBlock({ message, myEmail, connected, defaultExpanded, addToDealId = null, onForward = null, onDelete = null }) {
   const isMobile = useIsMobile();
   const [open, setOpen] = useState(!!defaultExpanded);
   const [showQuoted, setShowQuoted] = useState(false);
@@ -1838,6 +1960,28 @@ function MessageBlock({ message, myEmail, connected, defaultExpanded, addToDealI
   const hasHtml = !!(message.html && message.html.trim());
   const who = displayName(message.from) || message.fromEmail || (outbound ? 'me' : '—');
   const hasAttach = message.attachments?.length > 0;
+
+  // Per-message actions, so one email can be forwarded or removed without
+  // taking the rest of the conversation with it. Rendered as a sibling of the
+  // header button, not inside it — a button can't legally contain a button.
+  const menuItems = [
+    onForward && { label: 'Forward this message', icon: Forward, onClick: onForward },
+    onDelete && { label: 'Delete this message', icon: Trash2, danger: true, onClick: onDelete },
+  ].filter(Boolean);
+  const menu = menuItems.length > 0
+    ? (
+      <span style={{ flexShrink: 0, display: 'inline-flex', paddingRight: 6 }}>
+        <ActionMenu align="right" triggerTitle="Message actions" items={menuItems} />
+      </span>
+    )
+    : null;
+  // The header's own chrome moves to the row wrapper when there's a menu beside
+  // the button, so the two read as one bar.
+  const headerRow = {
+    display: 'flex', alignItems: 'center',
+    background: open ? '#FAFBFC' : 'white',
+    borderBottom: open ? '1px solid ' + BRAND.border : 'none',
+  };
 
   // Clip the quoted reply history (Gmail-style) so only the new content shows.
   const { main, quoted, hasQuote } = useMemo(
@@ -1862,12 +2006,12 @@ function MessageBlock({ message, myEmail, connected, defaultExpanded, addToDealI
   if (isMobile) {
     return (
       <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 8, overflow: 'hidden', background: 'white' }}>
+        <div style={headerRow}>
         <button
           onClick={() => setOpen(o => !o)}
           style={{
-            width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 4,
-            padding: '10px 12px', background: open ? '#FAFBFC' : 'white', border: 'none',
-            borderBottom: open ? '1px solid ' + BRAND.border : 'none',
+            flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'stretch', gap: 4,
+            padding: '10px 12px', background: 'transparent', border: 'none',
             cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit',
           }}
         >
@@ -1890,6 +2034,8 @@ function MessageBlock({ message, myEmail, connected, defaultExpanded, addToDealI
             }}>{decodeHtmlEntities(message.snippet)}</span>
           )}
         </button>
+        {menu}
+        </div>
         {open && <MessageBody message={message} connected={connected} addToDealId={addToDealId} isMobile hasHtml={hasHtml} main={main} quoted={quoted} hasQuote={hasQuote} showQuoted={showQuoted} onToggleQuote={() => setShowQuoted(s => !s)} />}
       </div>
     );
@@ -1897,11 +2043,12 @@ function MessageBlock({ message, myEmail, connected, defaultExpanded, addToDealI
 
   return (
     <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 8, overflow: 'hidden', background: 'white' }}>
+      <div style={headerRow}>
       <button
         onClick={() => setOpen(o => !o)}
         style={{
-          width: '100%', display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px',
-          background: open ? '#FAFBFC' : 'white', border: 'none', borderBottom: open ? '1px solid ' + BRAND.border : 'none',
+          flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px',
+          background: 'transparent', border: 'none',
           cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit',
         }}
       >
@@ -1926,6 +2073,8 @@ function MessageBlock({ message, myEmail, connected, defaultExpanded, addToDealI
         <span style={{ marginLeft: (message.tracking || hasAttach) ? 0 : 'auto', flexShrink: 0, fontSize: 11, color: BRAND.muted }}>{formatDateLabel(message.date)}</span>
         {chevron}
       </button>
+      {menu}
+      </div>
       {open && <MessageBody message={message} connected={connected} addToDealId={addToDealId} isMobile={false} hasHtml={hasHtml} main={main} quoted={quoted} hasQuote={hasQuote} showQuoted={showQuoted} onToggleQuote={() => setShowQuoted(s => !s)} />}
     </div>
   );
