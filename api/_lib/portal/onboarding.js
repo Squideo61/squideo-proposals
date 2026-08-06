@@ -72,14 +72,24 @@ export async function createPortalInvite({ email, companyId, prefill = null, inv
 
 // Send a colleague invite (self-invite from the portal Team page, or a staff
 // invite from the CRM). Throws on a send failure so callers can surface it.
-export async function sendTeamInvite({ email, companyId, companyName, inviterName, invitedBy, prefill = null }) {
+// `subject` / `message` are the wording the sender confirmed in the CRM before
+// sending; both fall back to the standard copy when absent (the automatic
+// post-signing invite passes neither).
+export async function sendTeamInvite({ email, companyId, companyName, inviterName, invitedBy, prefill = null, subject = null, message = null }) {
   const { rawToken } = await createPortalInvite({ email, companyId, prefill, invitedBy });
   const logoUrl = await emailLogoUrl(companyId);
+  const defaultSubject = `${inviterName || 'A colleague'} invited you to ${companyName || 'your team'}'s Squideo portal`;
+  const body = (message || '').trim();
   await sendMail({
     to: email,
-    subject: `${inviterName || 'A colleague'} invited you to ${companyName || 'your team'}'s Squideo portal`,
-    html: portalTeamInviteHtml({ inviterName, companyName, inviteUrl: inviteUrlFor(rawToken), logoUrl }),
-    text: `${inviterName || 'A colleague'} invited you to ${companyName || 'your team'}'s Squideo Client Portal. Join here: ${inviteUrlFor(rawToken)} (expires in ${INVITE_DAYS} days)`,
+    subject: (subject || '').trim() || defaultSubject,
+    html: portalTeamInviteHtml({
+      inviterName, companyName, inviteUrl: inviteUrlFor(rawToken), logoUrl,
+      heading: (subject || '').trim() || null,
+      message: body || null,
+    }),
+    text: (body ? body + '\n\n' : `${defaultSubject}. `)
+      + `Join here: ${inviteUrlFor(rawToken)} (expires in ${INVITE_DAYS} days)`,
     throwOnError: true,
   });
 }

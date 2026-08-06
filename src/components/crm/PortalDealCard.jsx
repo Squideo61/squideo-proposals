@@ -18,7 +18,7 @@ import { PortalOpenButtons } from './PortalOpenButtons.jsx';
 // Pick who gets a portal invite for this deal. Defaults to the deal's contacts
 // + proposal signer (anyone who doesn't already have access is pre-ticked);
 // extra emails can be typed in and optionally saved as CRM contacts.
-function InviteModal({ dealId, data, onClose, onSent }) {
+function InviteModal({ dealId, data, inviterName, onClose, onSent }) {
   const candidates = data?.candidates || [];
   const [picked, setPicked] = useState(() => {
     const s = new Set();
@@ -29,6 +29,16 @@ function InviteModal({ dealId, data, onClose, onSent }) {
   const [newEmail, setNewEmail] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  // The wording that will go out. Seeded with the standard copy (matching the
+  // server's fallback exactly) so what's on screen is what sends — Squideo
+  // sends this one, so this is the only chance to read it first.
+  const org = data?.companyName || 'your team';
+  const [subject, setSubject] = useState(
+    `${inviterName || 'A colleague'} invited you to ${org}'s Squideo portal`
+  );
+  const [message, setMessage] = useState(
+    "Track your team's video projects, review drafts, share files and download finished videos — all in one place."
+  );
 
   const toggle = (email) => setPicked((prev) => {
     const next = new Set(prev);
@@ -53,10 +63,13 @@ function InviteModal({ dealId, data, onClose, onSent }) {
       ...extras.map((e) => ({ email: e.email, name: e.name || null, createContact: e.createContact })),
     ];
     if (!recipients.length) return setError('Pick at least one person to invite');
+    if (!subject.trim()) return setError('Give the email a subject');
     setBusy(true);
     setError(null);
     try {
-      const r = await api.post('/api/crm/portal-admin?op=invite-deal', { dealId, recipients });
+      const r = await api.post('/api/crm/portal-admin?op=invite-deal', {
+        dealId, recipients, subject: subject.trim(), message: message.trim(),
+      });
       onSent(`Portal invite sent to ${r.sent.length} ${r.sent.length === 1 ? 'person' : 'people'}`
         + (r.failed?.length ? ` — ${r.failed.length} failed` : ''));
       onClose();
@@ -163,6 +176,32 @@ function InviteModal({ dealId, data, onClose, onSent }) {
         <button className="btn-ghost" onClick={addExtra} style={{ fontSize: 12.5 }}>
           <Plus size={13} style={{ verticalAlign: -2, marginRight: 3 }} />Add
         </button>
+      </div>
+
+      {/* The draft. Squideo sends this from its own address, wrapped in the
+          branded template with the "Join the portal" button and the personal
+          link below it — so only the words above the button are editable. */}
+      <div style={{ marginTop: 18, borderTop: '1px solid ' + BRAND.border, paddingTop: 14 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 700, color: BRAND.ink, marginBottom: 8 }}>What they'll receive</div>
+        <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: BRAND.muted, marginBottom: 3 }}>Subject</label>
+        <input
+          className="input"
+          value={subject}
+          onChange={(e) => setSubject(e.target.value)}
+          style={{ width: '100%', fontSize: 13, boxSizing: 'border-box' }}
+        />
+        <label style={{ display: 'block', fontSize: 11.5, fontWeight: 600, color: BRAND.muted, margin: '10px 0 3px' }}>Message</label>
+        <textarea
+          className="input"
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          rows={4}
+          style={{ width: '100%', fontSize: 13, boxSizing: 'border-box', resize: 'vertical' }}
+        />
+        <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 6, lineHeight: 1.5 }}>
+          Sent from Squideo, with a <strong>Join the portal</strong> button and each person's own sign-up link underneath.
+          Everyone picked above gets the same wording.
+        </div>
       </div>
 
       {error && (
@@ -289,6 +328,10 @@ export function PortalDealCard({ dealId, dealTitle = null }) {
     ).then(() => { setShowCustom(false); setCustom({ title: '', description: '', amount: '' }); });
   };
 
+  // Who a copied invite link is minted for: the first deal contact with an
+  // email, matching launchIntroEmail so the link and the intro email always
+  // name the same person.
+  const inviteContact = (data?.candidates || []).find((c) => c.email) || null;
   const derived = data?.derived || [];
   const customOffers = (data?.offers || []).filter((o) => o.kind === 'custom');
   const hiddenIds = new Set((data?.offers || []).filter((o) => o.kind === 'override' && o.hidden).map((o) => o.proposalExtraId));
@@ -299,9 +342,15 @@ export function PortalDealCard({ dealId, dealTitle = null }) {
       title={<><Sparkles size={12} style={{ verticalAlign: -1, marginRight: 5 }} />Client portal</>}
       action={
         <div style={{ display: 'flex', gap: 6 }}>
-          <PortalOpenButtons companyId={data?.companyId} onError={flash} />
-          <button className="btn-ghost" style={{ fontSize: 12 }} disabled={!data} onClick={() => setShowInvite(true)} title="Invite this deal's contacts to the client portal">
-            <Send size={12} style={{ verticalAlign: -1, marginRight: 4 }} />Portal invite
+          {/* The invite link is per-person, so it's minted for the first deal
+              contact with an email — the same one the intro email goes to. */}
+          <PortalOpenButtons
+            companyId={data?.companyId}
+            onError={flash}
+            invite={{ dealId, email: inviteContact?.email || null, name: inviteContact?.name || null }}
+          />
+          <button className="btn-ghost" style={{ fontSize: 12 }} disabled={!data} onClick={() => setShowInvite(true)} title="Squideo sends the invite email — you confirm the wording first">
+            <Send size={12} style={{ verticalAlign: -1, marginRight: 4 }} />CRM portal invite
           </button>
           <button className="btn-ghost" style={{ fontSize: 12 }} onClick={() => setShowCustom(true)}>
             <Plus size={12} style={{ verticalAlign: -1, marginRight: 4 }} />Custom offer
@@ -449,6 +498,9 @@ export function PortalDealCard({ dealId, dealTitle = null }) {
         <InviteModal
           dealId={dealId}
           data={data}
+          // Names the sender in the default subject, matching what the server
+          // would fall back to.
+          inviterName={state.session?.name || 'The Squideo team'}
           onClose={() => setShowInvite(false)}
           onSent={(msg) => { flash(msg); load(); }}
         />

@@ -123,10 +123,22 @@ export function portalProjectAddedHtml({ clientName, projectTitle, companyName, 
   return shell(inner, logoUrl);
 }
 
-export function portalTeamInviteHtml({ inviterName, companyName, inviteUrl, logoUrl = null }) {
+// `heading` and `message` let the sender confirm (and adjust) the wording in the
+// CRM before it goes out; both fall back to the standard copy. `message` is
+// plain text typed into a textarea — escaped, with blank lines becoming
+// paragraphs — so nothing typed there can inject markup into the email.
+export function portalTeamInviteHtml({ inviterName, companyName, inviteUrl, logoUrl = null, heading = null, message = null }) {
+  const headingText = (heading || '').trim()
+    || `${inviterName || 'A colleague'} invited you to ${companyName || 'your team'}'s Squideo portal`;
+  const messageText = (message || '').trim()
+    || "Track your team's video projects, review drafts, share files and download finished videos — all in one place.";
+  const paragraphs = messageText
+    .split(/\n{2,}/)
+    .map((para) => `<p style="margin:0 0 18px;">${escapeHtml(para.trim()).replace(/\n/g, '<br>')}</p>`)
+    .join('');
   const inner = `
-    <h2 style="margin:0 0 12px;font-size:19px;font-weight:700;">${escapeHtml(inviterName || 'A colleague')} invited you to ${escapeHtml(companyName || 'your team')}'s Squideo portal</h2>
-    <p style="margin:0 0 18px;">Track your team's video projects, review drafts, share files and download finished videos — all in one place.</p>
+    <h2 style="margin:0 0 12px;font-size:19px;font-weight:700;">${escapeHtml(headingText)}</h2>
+    ${paragraphs}
     <p style="margin:0 0 18px;">${ctaButton(inviteUrl, 'Join the portal')}</p>
     <p style="margin:0 0 6px;font-size:12px;color:#6B7785;">This invite expires in 14 days. If the button doesn't work, paste this into your browser:</p>
     <p style="margin:0;font-size:12px;color:#6B7785;word-break:break-all;">${escapeHtml(inviteUrl)}</p>

@@ -655,6 +655,11 @@ export default async function handler(req, res) {
             inviterName: user.name || 'The Squideo team',
             invitedBy: user.email,
             prefill: { name },
+            // The wording the sender confirmed in the invite modal. Capped so a
+            // paste accident can't post an unbounded body; blank falls back to
+            // the standard copy.
+            subject: trimOrNull(body.subject)?.slice(0, 200) || null,
+            message: trimOrNull(body.message)?.slice(0, 4000) || null,
           });
           sent.push(email);
         } catch (err) {
