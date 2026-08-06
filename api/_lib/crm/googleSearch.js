@@ -3,11 +3,16 @@
 // Marketing → Search report. This is data we have nowhere else: which search
 // queries surface the site, and how we rank for them.
 //
-// Two stored grains, both upserted from a trailing window each run (GSC finalises
+// Three stored grains, all upserted from a trailing window each run (GSC finalises
 // data with a ~2-3 day lag, so we re-pull and reconcile):
 //   • gsc_totals_daily   — one row per day (accurate headline + over-time chart)
 //   • gsc_query_daily    — one row per day per query (top-queries table; we
 //                          re-aggregate over the report range on read)
+//   • gsc_page_daily     — one row per day per landing page. Google only retains
+//                          16 rolling months, so this is also our permanent
+//                          per-URL archive: the baseline a site migration is
+//                          judged against ("did /explainer-videos lose clicks?"),
+//                          which the query grain cannot answer.
 // Gated behind gscConfigured(): until the OAuth token + GSC_SITE_URL are present,
 // the cron no-ops and the report renders empty with a "connect" hint.
 import sql, { batchWrite } from '../db.js';
@@ -46,6 +51,21 @@ export function ensureGscTables() {
         PRIMARY KEY (day, query)
       )`;
     await sql`CREATE INDEX IF NOT EXISTS gsc_query_daily_day_idx ON gsc_query_daily(day)`;
+    await sql`
+      CREATE TABLE IF NOT EXISTS gsc_page_daily (
+        day         DATE   NOT NULL,
+        page        TEXT   NOT NULL,
+        clicks      BIGINT  NOT NULL DEFAULT 0,
+        impressions BIGINT  NOT NULL DEFAULT 0,
+        position    NUMERIC NOT NULL DEFAULT 0,
+        updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (day, page)
+      )`;
+    await sql`CREATE INDEX IF NOT EXISTS gsc_page_daily_day_idx ON gsc_page_daily(day)`;
+    // Per-URL trend lookups ("this page, over time") drive the migration
+    // comparison report, so page needs its own leading index — the composite
+    // PK is (day, page) and can't serve them.
+    await sql`CREATE INDEX IF NOT EXISTS gsc_page_daily_page_idx ON gsc_page_daily(page)`;
   })().catch((err) => { ensured = null; throw err; });
   return ensured;
 }
@@ -75,16 +95,12 @@ function ymd(daysAgo) {
   return d.toISOString().slice(0, 10);
 }
 
-// Re-pull the trailing window and upsert both grains. Shared by the daily cron
-// and the "Sync now" button.
-export async function runGscSync({ days = 30 } = {}) {
-  if (!gscConfigured()) return { ok: false, skipped: 'not_configured' };
-  await ensureGscTables();
-  const startDate = ymd(days);
-  const endDate = ymd(0);
-
-  const totals = await runQuery({ startDate, endDate, dimensions: ['date'] });
-  await batchWrite(totals.map((row) => {
+// Each grain is a fetch-and-upsert over one date window. Split out so the
+// backfill can walk the same three calls across older windows without
+// duplicating the SQL.
+async function syncTotals(startDate, endDate) {
+  const rows = await runQuery({ startDate, endDate, dimensions: ['date'] });
+  await batchWrite(rows.map((row) => {
     const day = row.keys?.[0];
     if (!day) return null;
     return sql`
@@ -95,9 +111,12 @@ export async function runGscSync({ days = 30 } = {}) {
         clicks = EXCLUDED.clicks, impressions = EXCLUDED.impressions,
         ctr = EXCLUDED.ctr, position = EXCLUDED.position, updated_at = NOW()`;
   }));
+  return rows.length;
+}
 
-  const queries = await runQuery({ startDate, endDate, dimensions: ['date', 'query'] });
-  await batchWrite(queries.map((row) => {
+async function syncQueries(startDate, endDate) {
+  const rows = await runQuery({ startDate, endDate, dimensions: ['date', 'query'] });
+  await batchWrite(rows.map((row) => {
     const day = row.keys?.[0];
     const query = row.keys?.[1];
     if (!day || query == null) return null;
@@ -109,8 +128,101 @@ export async function runGscSync({ days = 30 } = {}) {
         clicks = EXCLUDED.clicks, impressions = EXCLUDED.impressions,
         position = EXCLUDED.position, updated_at = NOW()`;
   }));
+  return rows.length;
+}
 
-  return { ok: true, days, totalRows: totals.length, queryRows: queries.length };
+async function syncPages(startDate, endDate) {
+  const rows = await runQuery({ startDate, endDate, dimensions: ['date', 'page'] });
+  await batchWrite(rows.map((row) => {
+    const day = row.keys?.[0];
+    const page = row.keys?.[1];
+    if (!day || !page) return null;
+    return sql`
+      INSERT INTO gsc_page_daily (day, page, clicks, impressions, position, updated_at)
+      VALUES (${day}, ${page}, ${Math.round(row.clicks) || 0}, ${Math.round(row.impressions) || 0},
+              ${Number(row.position) || 0}, NOW())
+      ON CONFLICT (day, page) DO UPDATE SET
+        clicks = EXCLUDED.clicks, impressions = EXCLUDED.impressions,
+        position = EXCLUDED.position, updated_at = NOW()`;
+  }));
+  return rows.length;
+}
+
+// Re-pull the trailing window and upsert all three grains. Shared by the daily
+// cron and the "Sync now" button.
+export async function runGscSync({ days = 30 } = {}) {
+  if (!gscConfigured()) return { ok: false, skipped: 'not_configured' };
+  await ensureGscTables();
+  const startDate = ymd(days);
+  const endDate = ymd(0);
+
+  const totalRows = await syncTotals(startDate, endDate);
+  const queryRows = await syncQueries(startDate, endDate);
+  const pageRows = await syncPages(startDate, endDate);
+
+  return { ok: true, days, totalRows, queryRows, pageRows };
+}
+
+// One-off historical pull. Google retains 16 rolling months, so this is the only
+// window in which a pre-migration baseline can be captured — after that it is
+// gone from GSC for good and this table is the only copy.
+//
+// Walked in 30-day chunks rather than one call because a single request caps at
+// 25k rows, and the page grain over a long window blows straight past that.
+//
+// Resumable rather than all-in-one: 16 months is ~48 upstream calls, well past a
+// single function's budget. Each invocation works backwards from `startDaysAgo`
+// until `budgetMs` is spent, then hands back `nextStartDaysAgo` for the caller to
+// continue with. Every write is an idempotent upsert, so re-running a chunk that
+// already landed is free and a partial run is never a corrupt state.
+export async function runGscBackfill({
+  months = 16,
+  chunkDays = 30,
+  startDaysAgo = 0,
+  budgetMs = 40000,
+} = {}) {
+  if (!gscConfigured()) return { ok: false, skipped: 'not_configured' };
+  await ensureGscTables();
+
+  const totalDays = Math.round(months * 30.4);
+  const startedAt = Date.now();
+  let offset = startDaysAgo;
+  let totalRows = 0, queryRows = 0, pageRows = 0, chunksDone = 0;
+  const failed = [];
+
+  while (offset < totalDays) {
+    // ymd() counts backwards, so the *older* bound is the larger offset.
+    const startDate = ymd(Math.min(offset + chunkDays, totalDays));
+    const endDate = ymd(offset);
+    // Chunks are independent windows. One failure (a transient 5xx from Google,
+    // a quota blip) shouldn't discard the chunks that already landed — record it
+    // and keep walking, so a re-run only has to redo the gaps.
+    try {
+      totalRows += await syncTotals(startDate, endDate);
+      queryRows += await syncQueries(startDate, endDate);
+      pageRows += await syncPages(startDate, endDate);
+    } catch (err) {
+      console.warn(`[gsc backfill] ${startDate}..${endDate} failed`, err?.message);
+      failed.push({ startDate, endDate, error: err?.message || 'failed' });
+    }
+    offset += chunkDays;
+    chunksDone += 1;
+    if (Date.now() - startedAt > budgetMs) break;
+  }
+
+  const done = offset >= totalDays;
+  return {
+    ok: failed.length === 0,
+    done,
+    months,
+    chunksDone,
+    nextStartDaysAgo: done ? null : offset,
+    oldestCovered: ymd(Math.min(offset, totalDays)),
+    totalRows,
+    queryRows,
+    pageRows,
+    failed,
+  };
 }
 
 const round2 = (n) => Number((Number(n) || 0).toFixed(2));
@@ -120,7 +232,7 @@ const round1 = (n) => Number((Number(n) || 0).toFixed(1));
 // exclusive upper bound the analytics route already computes). CTR and average
 // position are impression-weighted so any sub-range aggregates correctly.
 export async function searchReport(fromStr, toStr) {
-  if (!gscConfigured()) return { configured: false, totals: null, series: [], queries: [] };
+  if (!gscConfigured()) return { configured: false, totals: null, series: [], queries: [], pages: [] };
   await ensureGscTables();
 
   const [tot] = await sql`
@@ -166,11 +278,34 @@ export async function searchReport(fromStr, toStr) {
     };
   });
 
+  const pageRows = await sql`
+    SELECT page,
+           SUM(clicks)::bigint AS clicks,
+           SUM(impressions)::bigint AS impressions,
+           SUM(position * impressions)::numeric AS pos_weight
+      FROM gsc_page_daily
+     WHERE day >= ${fromStr}::date AND day < ${toStr}::date
+     GROUP BY page
+     ORDER BY clicks DESC, impressions DESC
+     LIMIT 100`;
+  const pages = pageRows.map((r) => {
+    const c = Number(r.clicks) || 0;
+    const i = Number(r.impressions) || 0;
+    return {
+      page: r.page,
+      clicks: c,
+      impressions: i,
+      ctr: i > 0 ? round2((c / i) * 100) : 0,
+      position: i > 0 ? round1(Number(r.pos_weight) / i) : null,
+    };
+  });
+
   return {
     configured: true,
     totals,
     series: series.map((s) => ({ day: s.day, clicks: Number(s.clicks) || 0, impressions: Number(s.impressions) || 0 })),
     queries,
+    pages,
   };
 }
 

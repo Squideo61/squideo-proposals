@@ -11,7 +11,7 @@ vi.mock('../api/_lib/permissions.js', () => ({ hasPermission: () => true }));
 vi.mock('../api/_lib/email.js', () => ({ APP_URL: 'https://app.squideo.com' }));
 vi.mock('../api/_lib/leadAttribution.js', () => ({ ensureLeadAttribution: async () => {} }));
 vi.mock('../api/_lib/crm/googleAds.js', () => ({ adsConfigured: () => false, ensureAdSpend: async () => {}, runAdSpendSync: async () => {} }));
-vi.mock('../api/_lib/crm/googleSearch.js', () => ({ gscConfigured: () => false, runGscSync: async () => {}, searchReport: async () => ({}) }));
+vi.mock('../api/_lib/crm/googleSearch.js', () => ({ gscConfigured: () => false, runGscSync: async () => {}, runGscBackfill: async () => ({}), searchReport: async () => ({}) }));
 vi.mock('../api/_lib/crm/googleAnalytics.js', () => ({ ga4Configured: () => false, runGa4Sync: async () => {}, trafficReport: async () => ({}) }));
 vi.mock('../api/_lib/crm/marketingSyncStatus.js', () => ({ getSyncStatus: async () => null, recordSyncStatus: async () => {} }));
 vi.mock('../api/_lib/crm/deals.js', () => ({

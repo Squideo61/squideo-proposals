@@ -14,7 +14,7 @@ import { APP_URL } from '../email.js';
 import { annotateDeals } from './deals.js';
 import { ensureLeadAttribution } from '../leadAttribution.js';
 import { adsConfigured, ensureAdSpend, runAdSpendSync } from './googleAds.js';
-import { gscConfigured, runGscSync, searchReport } from './googleSearch.js';
+import { gscConfigured, runGscSync, runGscBackfill, searchReport } from './googleSearch.js';
 import { ga4Configured, runGa4Sync, trafficReport } from './googleAnalytics.js';
 import { getSyncStatus, recordSyncStatus } from './marketingSyncStatus.js';
 import { isSignedSale } from './signedSale.js';
@@ -519,6 +519,24 @@ export async function analyticsRoute(req, res, id, action, user) {
     ]);
     const ok = [ads, gsc, ga4].some((r) => r?.ok);
     return res.status(200).json({ ok, ads, gsc, ga4 });
+  }
+
+  // One-off Search Console historical backfill. The daily sync only re-pulls a
+  // trailing 30 days, so everything older than that has never been stored —
+  // and Google drops it entirely at 16 months. Run this to capture the archive
+  // (notably: the per-URL baseline a site migration is measured against).
+  //
+  // Resumable by design — 16 months is more upstream calls than one invocation
+  // can make. Call it, then keep calling it with the `nextStartDaysAgo` it hands
+  // back until `done` is true. Writes are upserts, so repeating a chunk is safe.
+  if (req.method === 'POST' && id === 'gsc-backfill') {
+    if (!gscConfigured()) {
+      return res.status(400).json({ ok: false, error: 'Search Console is not connected — add the Google OAuth and GSC_SITE_URL environment variables.' });
+    }
+    const months = Number(req.body?.months) || 16;
+    const startDaysAgo = Number(req.body?.startDaysAgo) || 0;
+    const r = await runGscBackfill({ months, startDaysAgo });
+    return res.status(200).json(r);
   }
 
   // Marketing data cutoff — the "show leads from" date. GET reads it; PUT/POST

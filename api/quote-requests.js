@@ -154,12 +154,26 @@ export function buildNotificationEmail(qr, files, { qualifyUrl, disqualifyUrl, c
   return html;
 }
 
+// The form is embedded cross-origin (the marketing site iframes /quote and
+// /contact, and will eventually post here directly from www.squideo.com), so
+// every response needs the CORS headers — not just the preflight. Setting them
+// only on the OPTIONS branch means the preflight succeeds and the actual POST
+// is then blocked by the browser, which looks like a silent form failure.
+//
+// Wildcard origin is deliberate: this endpoint is public and unauthenticated,
+// and nothing here reads the session cookie. Do not add credentials support
+// without swapping this for an explicit origin allowlist — '*' and
+// `credentials: 'include'` are mutually exclusive.
+function applyCors(res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Filename');
+}
+
 export default async function handler(req, res) {
+  applyCors(res);
   try {
     if (req.method === 'OPTIONS') {
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Filename');
       return res.status(204).end();
     }
 
