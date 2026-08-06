@@ -22,6 +22,7 @@ import {
   Info, GraduationCap, ChevronDown,
 } from 'lucide-react';
 import { BRAND } from '../../theme.js';
+import { useIsMobile } from '../../utils.js';
 import { portalApi } from '../api.js';
 import { usePortal } from '../PortalContext.jsx';
 import { Card, EmptyState } from '../components.jsx';
@@ -76,11 +77,16 @@ const isBlank = (v) =>
     : !String(r).trim()))));
 
 // ── field chrome ─────────────────────────────────────────────────────────────
-const inputStyle = {
+// 16px on phones is not a taste call: below it, iOS Safari zooms the page on
+// focus and does not zoom back out. Across twenty-five questions that means
+// pinching after every single field, which is enough on its own to lose the
+// brief. Mirrors the .input rule in src/styles.css, which this page can't use
+// because its fields are styled inline.
+const inputStyle = (isMobile) => ({
   width: '100%', boxSizing: 'border-box', padding: '11px 13px',
-  border: '1px solid #D8E0E8', borderRadius: 9, fontSize: 14.5,
+  border: '1px solid #D8E0E8', borderRadius: 9, fontSize: isMobile ? 16 : 14.5,
   fontFamily: 'inherit', color: BRAND.ink, background: '#fff', lineHeight: 1.5,
-};
+});
 
 function WhyWeAsk({ text, videoRef }) {
   if (!text && !videoRef) return null;
@@ -148,6 +154,8 @@ function Chips({ options, value, onChange, multi = false }) {
 // The two-column script/visuals table from the original PDF. Kept because it's
 // the bit that makes this feel like their document rather than our form.
 function ScriptTable({ value, onChange }) {
+  const isMobile = useIsMobile();
+  const inp = inputStyle(isMobile);
   const rows = Array.isArray(value) && value.length ? value : [{ script: '', visual: '' }];
   const set = (i, k, v) => onChange(rows.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
   return (
@@ -157,17 +165,21 @@ function ScriptTable({ value, onChange }) {
           display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 10,
           alignItems: 'flex-start',
         }}>
+          {/* Side by side the two columns explain themselves and a placeholder
+              on every row is just noise. Stacked on a phone they don't: row
+              three would be two identical boxes with no way to tell which is
+              the script and which is the visual. */}
           <textarea
             value={r.script || ''} rows={3}
             onChange={(e) => set(i, 'script', e.target.value)}
-            placeholder={i === 0 ? 'What is said…' : ''}
-            style={{ ...inputStyle, flex: '1 1 240px', resize: 'vertical' }}
+            placeholder={isMobile || i === 0 ? 'What is said…' : ''}
+            style={{ ...inp, flex: '1 1 240px', resize: 'vertical' }}
           />
           <textarea
             value={r.visual || ''} rows={3}
             onChange={(e) => set(i, 'visual', e.target.value)}
-            placeholder={i === 0 ? 'What is on screen…' : ''}
-            style={{ ...inputStyle, flex: '1 1 240px', resize: 'vertical' }}
+            placeholder={isMobile || i === 0 ? 'What is on screen…' : ''}
+            style={{ ...inp, flex: '1 1 240px', resize: 'vertical' }}
           />
           {rows.length > 1 && (
             <button
@@ -196,6 +208,8 @@ function ScriptTable({ value, onChange }) {
 }
 
 function Question({ q, value, onChange, onBlur, answers, invalid }) {
+  const isMobile = useIsMobile();
+  const inp = inputStyle(isMobile);
   const suggestion = q.suggestFrom ? suggestedLength(answers) : null;
   return (
     <div style={{ marginBottom: 26 }}>
@@ -213,14 +227,14 @@ function Question({ q, value, onChange, onBlur, answers, invalid }) {
         <input
           type="text" value={value || ''} placeholder={q.placeholder || ''}
           onChange={(e) => onChange(e.target.value)} onBlur={onBlur}
-          style={{ ...inputStyle, borderColor: invalid ? '#E9A0A0' : '#D8E0E8' }}
+          style={{ ...inp, borderColor: invalid ? '#E9A0A0' : '#D8E0E8' }}
         />
       )}
       {q.type === 'textarea' && (
         <textarea
           value={value || ''} rows={q.rows || 3} placeholder={q.placeholder || ''}
           onChange={(e) => onChange(e.target.value)} onBlur={onBlur}
-          style={{ ...inputStyle, resize: 'vertical', borderColor: invalid ? '#E9A0A0' : '#D8E0E8' }}
+          style={{ ...inp, resize: 'vertical', borderColor: invalid ? '#E9A0A0' : '#D8E0E8' }}
         />
       )}
       {(q.type === 'chips' || q.type === 'multi') && (
@@ -250,6 +264,7 @@ function Question({ q, value, onChange, onBlur, answers, invalid }) {
 // ── page ─────────────────────────────────────────────────────────────────────
 export default function Brief() {
   const { showToast } = usePortal();
+  const isMobile = useIsMobile();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [answers, setAnswers] = useState({});
@@ -264,6 +279,16 @@ export default function Brief() {
   const pending = useRef({});
   const timer = useRef(null);
   const briefId = useRef(null);
+  const stepsRef = useRef(null);
+
+  // With the screen pills on one scrollable row, moving on with Next would
+  // otherwise leave the highlighted pill off-screen — so the one cue telling
+  // you how far through you are disappears exactly when you use it.
+  useEffect(() => {
+    if (!isMobile || !stepsRef.current) return;
+    const el = stepsRef.current.children[step];
+    el?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+  }, [step, isMobile]);
 
   useEffect(() => {
     (async () => {
@@ -437,13 +462,23 @@ export default function Brief() {
           {save.icon}{save.text}
         </div>
 
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        {/* Seven pills wrap to three rows at phone width, pushing the actual
+            question below the fold before anyone has answered anything. One
+            swipeable row instead — the same trick the CRM boards use. */}
+        <div
+          ref={stepsRef}
+          className={isMobile ? 'hide-scrollbar' : undefined}
+          style={isMobile
+            ? { display: 'flex', gap: 6, overflowX: 'auto', margin: '0 -16px', padding: '0 16px', scrollSnapType: 'x proximity' }
+            : { display: 'flex', flexWrap: 'wrap', gap: 6 }}
+        >
           {screens.map((s, i) => (
             <button
               key={s.key} type="button" onClick={() => setStep(i)}
               style={{
                 padding: '5px 11px', borderRadius: 999, cursor: 'pointer',
                 fontSize: 12, fontFamily: 'inherit',
+                flexShrink: 0, scrollSnapAlign: 'start',
                 fontWeight: i === step ? 700 : 500,
                 border: `1px solid ${i === step ? BRAND.blue : '#E0E7ED'}`,
                 background: i === step ? '#EAF7FD' : '#fff',

@@ -7,7 +7,7 @@ import { SQUIDEO_LOGO } from '../defaults.js';
 import { useIsMobile } from '../utils.js';
 import { Toast } from '../components/ui.jsx';
 import {
-  Home, Film, FolderOpen, Sparkles, Users, Settings as SettingsIcon, PlusCircle, LogOut, Wallet, UserPlus, GraduationCap, FileText, Handshake,
+  Home, Film, FolderOpen, Sparkles, Users, Settings as SettingsIcon, PlusCircle, LogOut, Wallet, UserPlus, GraduationCap, FileText, Handshake, MoreHorizontal, X as XIcon,
 } from 'lucide-react';
 import { Eye, PencilLine } from 'lucide-react';
 import { PortalProvider, usePortal } from './PortalContext.jsx';
@@ -62,10 +62,15 @@ const NAV = [
   // shortLabel is what the mobile tab bar uses — "Current projects" doesn't fit
   // under an icon at phone width.
   //
-  // mobile:false drops an item from the phone tab bar (it stays in the desktop
-  // nav). The bar lays items out evenly with no scroll, so past about six they
-  // stop being tappable — adding the course meant one had to give, and buying
-  // video credit is the least likely thing anyone does on a phone.
+  // mobilePrimary:true earns an item its own tab in the phone bar. The bar lays
+  // items out evenly with no scroll, so past about six they stop being tappable
+  // — everything else goes behind "More" rather than being dropped. The old
+  // mobile:false hid three sections from phones outright, which meant they were
+  // reachable only by typing a hash: the portal is an installable PWA, so every
+  // section has to be reachable at phone width.
+  //
+  // The five primaries cover both arrivals: a prospect lives in Course and
+  // Brief, a client in Projects, Library and New video.
   // Ordered for the way people now ARRIVE, not for how a long-standing client
   // uses it. Most new accounts come in through the course, so the course and
   // then the brief sit above Current projects — for a prospect that page is
@@ -75,17 +80,17 @@ const NAV = [
   // "Planning" is load-bearing, not decoration: without it the course reads as
   // one about animating videos yourself, which is the opposite of who it's for.
   // The rail is sized to fit it on one line — see SIDEBAR_W.
-  { view: 'course', label: 'Planning crash course', shortLabel: 'Course', hash: '#/course', Icon: GraduationCap },
-  { view: 'brief', label: 'Brief Builder', shortLabel: 'Brief', hash: '#/brief', Icon: FileText, mobile: false },
-  { view: 'home', label: 'Current projects', shortLabel: 'Projects', hash: '#/', Icon: Home },
-  { view: 'library', label: 'Your Video Library', shortLabel: 'Library', hash: '#/library', Icon: Film },
-  { view: 'video-credit', label: 'Video credit', hash: '#/video-credit', Icon: Wallet, mobile: false },
+  { view: 'course', label: 'Planning crash course', shortLabel: 'Course', hash: '#/course', Icon: GraduationCap, mobilePrimary: true },
+  { view: 'brief', label: 'Brief Builder', shortLabel: 'Brief', hash: '#/brief', Icon: FileText, mobilePrimary: true },
+  { view: 'home', label: 'Current projects', shortLabel: 'Projects', hash: '#/', Icon: Home, mobilePrimary: true },
+  { view: 'library', label: 'Your Video Library', shortLabel: 'Library', hash: '#/library', Icon: Film, mobilePrimary: true },
+  { view: 'video-credit', label: 'Video credit', hash: '#/video-credit', Icon: Wallet },
   // Sits under Video credit because it's the same idea committed to monthly.
   // Unlike Video credit it shows no rate — the plan is scoped on a call — so
   // it needs no prospect gate.
-  { view: 'partner', label: 'Partner Programme', shortLabel: 'Partner', hash: '#/partner', Icon: Handshake, mobile: false },
+  { view: 'partner', label: 'Partner Programme', shortLabel: 'Partner', hash: '#/partner', Icon: Handshake },
   { view: 'documents', label: 'Documents', hash: '#/documents', Icon: FolderOpen },
-  { view: 'request', label: 'New video', hash: '#/request', Icon: PlusCircle, highlight: true },
+  { view: 'request', label: 'New video', hash: '#/request', Icon: PlusCircle, highlight: true, mobilePrimary: true },
   // shortLabel matters here now the full labels are possessive — "Your Video
   // Library" under a phone tab-bar icon would wrap to three lines.
   { view: 'team', label: 'Your Team', shortLabel: 'Team', hash: '#/team', Icon: Users },
@@ -260,28 +265,105 @@ function SideNav({ view, company }) {
   );
 }
 
+const tabStyle = (active, highlight) => ({
+  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
+  padding: '9px 6px 7px', textDecoration: 'none', minWidth: 52,
+  color: highlight ? BRAND.blue : active ? BRAND.ink : BRAND.muted,
+});
+
 function MobileTabBar({ view, company }) {
+  const [moreOpen, setMoreOpen] = useState(false);
+  const items = visibleNav(company);
+  const primary = items.filter((n) => n.mobilePrimary);
+  const overflow = items.filter((n) => !n.mobilePrimary);
+  // "More" lights up when the section you're actually in lives behind it —
+  // otherwise the bar would show nothing selected and you'd have no idea where
+  // you were.
+  const inOverflow = overflow.some((n) => n.view === view);
+
+  // Close on navigation. The sheet is rendered by the shell, not the page, so
+  // it survives a hash change and would otherwise stay open over the new page.
+  useEffect(() => { setMoreOpen(false); }, [view]);
+
   return (
-    <nav style={{
-      position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 40,
-      background: '#fff', borderTop: `1px solid ${BRAND.border}`,
-      display: 'flex', justifyContent: 'space-around',
-      paddingBottom: 'env(safe-area-inset-bottom)',
-    }}>
-      {visibleNav(company).filter((n) => n.mobile !== false).map(({ view: v, label, shortLabel, hash, Icon, highlight }) => {
-        const active = view === v || (v === 'home' && view === 'project');
-        return (
-          <a key={v} href={hash} style={{
-            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
-            padding: '9px 6px 7px', textDecoration: 'none', minWidth: 52,
-            color: highlight ? BRAND.blue : active ? BRAND.ink : BRAND.muted,
+    <>
+      {moreOpen && (
+        <>
+          {/* Deliberately not click-to-close: consistent with the rest of the
+              app's dialogs. There are three ways out — the X, tapping More
+              again, and picking anything in the list. */}
+          <div style={{
+            position: 'fixed', inset: 0, zIndex: 45, background: 'rgba(15,42,61,.45)',
+          }} />
+          <div style={{
+            position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 46,
+            background: '#fff', borderRadius: '16px 16px 0 0',
+            padding: '8px 8px calc(12px + env(safe-area-inset-bottom))',
+            boxShadow: '0 -8px 30px rgba(15,42,61,.18)',
           }}>
-            <Icon size={20} strokeWidth={active || highlight ? 2.4 : 2} />
-            <span style={{ fontSize: 10, fontWeight: active ? 700 : 500 }}>{shortLabel || label}</span>
-          </a>
-        );
-      })}
-    </nav>
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '6px 10px 10px',
+            }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: BRAND.ink }}>More</span>
+              <button
+                type="button" aria-label="Close" onClick={() => setMoreOpen(false)}
+                style={{
+                  background: 'none', border: 'none', padding: 8, cursor: 'pointer',
+                  color: BRAND.muted, display: 'flex',
+                }}
+              ><XIcon size={18} /></button>
+            </div>
+            {overflow.map(({ view: v, label, hash, Icon }) => {
+              const active = view === v;
+              return (
+                <a key={v} href={hash} onClick={() => setMoreOpen(false)} style={{
+                  display: 'flex', alignItems: 'center', gap: 12,
+                  padding: '13px 12px', textDecoration: 'none', borderRadius: 10,
+                  color: active ? BRAND.ink : '#5A7382',
+                  background: active ? '#EAF7FD' : 'transparent',
+                  fontSize: 15, fontWeight: active ? 700 : 500,
+                }}>
+                  <Icon size={19} strokeWidth={active ? 2.4 : 2} />
+                  {label}
+                </a>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      <nav style={{
+        position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 47,
+        background: '#fff', borderTop: `1px solid ${BRAND.border}`,
+        display: 'flex', justifyContent: 'space-around',
+        paddingBottom: 'env(safe-area-inset-bottom)',
+      }}>
+        {primary.map(({ view: v, label, shortLabel, hash, Icon, highlight }) => {
+          const active = view === v || (v === 'home' && view === 'project');
+          return (
+            <a key={v} href={hash} style={tabStyle(active, highlight)}>
+              <Icon size={20} strokeWidth={active || highlight ? 2.4 : 2} />
+              <span style={{ fontSize: 10, fontWeight: active ? 700 : 500 }}>{shortLabel || label}</span>
+            </a>
+          );
+        })}
+        {overflow.length > 0 && (
+          <button
+            type="button"
+            aria-expanded={moreOpen}
+            onClick={() => setMoreOpen((o) => !o)}
+            style={{
+              ...tabStyle(moreOpen || inOverflow, false),
+              background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+            }}
+          >
+            <MoreHorizontal size={20} strokeWidth={moreOpen || inOverflow ? 2.4 : 2} />
+            <span style={{ fontSize: 10, fontWeight: moreOpen || inOverflow ? 700 : 500 }}>More</span>
+          </button>
+        )}
+      </nav>
+    </>
   );
 }
 
