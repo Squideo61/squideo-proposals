@@ -682,9 +682,17 @@ export function StoreProvider({ children }) {
               nextProposals[pid] = p;
             }
           }
-          // Proposals deleted on the server should also vanish locally.
+          // Proposals deleted on the server should also vanish locally — but not
+          // one created moments ago, which can legitimately be missing from a
+          // response that was already in flight when it was made. Without the
+          // grace period a brand-new proposal could blink out of the list until
+          // the following poll.
+          const JUST_CREATED_MS = 60_000;
           for (const pid of Object.keys(s.proposals)) {
-            if (!proposals[pid] && !saveTimers.current[pid]) delete nextProposals[pid];
+            if (proposals[pid] || saveTimers.current[pid]) continue;
+            const bornAt = Number(s.proposals[pid]?.createdAt) || 0;
+            if (bornAt > 0 && now - bornAt < JUST_CREATED_MS) continue;
+            delete nextProposals[pid];
           }
           return { ...s, proposals: nextProposals, signatures: nextSignatures, payments: nextPayments };
         });
@@ -918,6 +926,13 @@ export function StoreProvider({ children }) {
         delete payload._views;
         delete payload._createdAt;
         api.put('/api/proposals/' + id, payload).then((resp) => {
+          // The write has landed, so this proposal is no longer "being edited"
+          // and the 20s poll can go back to trusting the server for it. Left
+          // set, the entry stuck around for the rest of the session and the
+          // poll kept the local copy forever — which has no _createdAt (that's
+          // server-assigned), so anything sorting on it put a proposal created
+          // in this session last. A later keystroke sets the timer again.
+          delete saveTimers.current[id];
           // Refresh any cached deal detail that carries this proposal, so a
           // deal's VALUE (derived from its latest proposal's price in
           // dealDetail.proposals — see DealContextPanel / the deal page) reflects
@@ -936,7 +951,10 @@ export function StoreProvider({ children }) {
             return s;
           });
           staleDealIds.forEach((did) => actions.loadDealDetail(did));
-        }).catch(() => {});
+        }).catch(() => {
+          // Keep the guard on when the write failed — the local copy is the only
+          // one that has the edit, so the poll must not overwrite it.
+        });
       }, 800);
     },
     // Duplicate a proposal from the row as STORED, server-side, rather than from

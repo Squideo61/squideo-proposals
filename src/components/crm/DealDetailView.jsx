@@ -3431,6 +3431,18 @@ function EditDealModal({ deal, onClose }) {
 // of saving a standalone proposal, so they're fair game to re-point at a real
 // deal. Proposals whose contact/company/name match this deal are surfaced as
 // suggestions at the top.
+// When a proposal was created, as a timestamp. `_createdAt` is assigned by the
+// server, so a proposal made in this browser session hasn't got one until the
+// list refetches — sorting on it alone dropped a just-created proposal to the
+// BOTTOM of the list, which is exactly where you don't look for it. The
+// proposal's own `createdAt` (set at creation, in ms) covers that gap.
+function proposalCreatedMs(p) {
+  const server = Date.parse(p?._createdAt || '');
+  if (Number.isFinite(server)) return server;
+  const local = Number(p?.createdAt);
+  return Number.isFinite(local) ? local : 0;
+}
+
 function CreateOrLinkProposalModal({ deal, contact, company, onClose, onCreate, onLink }) {
   const { state } = useStore();
   const [query, setQuery] = useState('');
@@ -3462,7 +3474,7 @@ function CreateOrLinkProposalModal({ deal, contact, company, onClose, onCreate, 
       // Suggested first, then newest.
       .sort((a, b) => {
         if (!!a._reason !== !!b._reason) return a._reason ? -1 : 1;
-        return String(b._createdAt || '').localeCompare(String(a._createdAt || ''));
+        return proposalCreatedMs(b) - proposalCreatedMs(a);
       });
   }, [state.proposals, query, deal, contact, company]); // eslint-disable-line react-hooks/exhaustive-deps
 
