@@ -71,6 +71,10 @@
     {
       "source": "/reviews",
       "destination": "/reviews.html"
+    },
+    {
+      "source": "/brief-start",
+      "destination": "/brief-start.html"
     }
   ],
   "crons": [
@@ -154,7 +158,7 @@
       ]
     },
     {
-      "source": "/((?!api/|extension-auth|quote|contact|portal|course|reviews).*)",
+      "source": "/((?!api/|extension-auth|quote|contact|portal|course|reviews|brief-start).*)",
       "headers": [
         {
           "key": "Content-Security-Policy",
@@ -226,6 +230,35 @@
     },
     {
       "source": "/contact(.html)?",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self' https://squideo.com https://*.squideo.com https://squideo.co.uk https://*.squideo.co.uk https://*.duda.co https://*.dudaone.com https://*.multiscreensite.com"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        },
+        {
+          "key": "Cross-Origin-Resource-Policy",
+          "value": "cross-origin"
+        },
+        {
+          "key": "Cross-Origin-Embedder-Policy",
+          "value": "unsafe-none"
+        },
+        {
+          "key": "Permissions-Policy",
+          "value": "camera=(), microphone=(), geolocation=()"
+        }
+      ]
+    },
+    {
+      "source": "/brief-start(.html)?",
       "headers": [
         {
           "key": "Content-Security-Policy",

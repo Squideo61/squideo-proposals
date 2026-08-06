@@ -14,6 +14,7 @@ export default defineConfig({
         portal: resolve(__dirname, 'portal.html'),
         course: resolve(__dirname, 'course.html'),
         reviews: resolve(__dirname, 'reviews.html'),
+        briefStart: resolve(__dirname, 'brief-start.html'),
       },
       output: {
         manualChunks(id) {

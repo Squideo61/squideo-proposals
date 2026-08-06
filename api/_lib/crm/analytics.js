@@ -470,8 +470,31 @@ function snippetConfig() {
     'gclid={gclid}&campaignid={campaignid}&adgroupid={adgroupid}&keyword={keyword}' +
     '&matchtype={matchtype}&network={network}&device={device}&creative={creative}' +
     '&placement={placement}&utm_source=google&utm_medium=cpc&utm_campaign={campaignid}';
+  // The brief-builder signup, ready to drop into a marketing page.
+  //
+  // Only the SIGNUP is embedded — the builder itself needs a portal session, and
+  // a SameSite=Lax cookie is never sent inside a cross-site iframe, so an
+  // embedded builder would be permanently signed out. The form breaks out to the
+  // top level on success, which is why the iframe is NOT sandboxed: a sandbox
+  // without allow-top-navigation would trap someone in the frame.
+  //
+  // The height listener mirrors the quote form's, and deliberately reuses the
+  // same `squideo-quote-form:height` message, so a page already handling one
+  // needs no second listener.
+  const briefEmbed = `<iframe src="${origin}/brief-start" title="Build your video brief"
+        style="width:100%;max-width:560px;border:0;display:block;margin:0 auto"
+        height="520" loading="lazy"></iframe>
+<script>
+window.addEventListener('message', function (e) {
+  if (e.origin !== '${origin}') return;
+  if (!e.data || e.data.type !== 'squideo-quote-form:height') return;
+  var f = document.querySelector('iframe[src*="/brief-start"]');
+  if (f) f.height = e.data.height;
+});
+<\/script>`;
+
   return {
-    appOrigin: origin, scriptTag, finalUrlSuffix,
+    appOrigin: origin, scriptTag, finalUrlSuffix, briefEmbed,
     adsConfigured: adsConfigured(), gscConfigured: gscConfigured(), ga4Configured: ga4Configured(),
   };
 }

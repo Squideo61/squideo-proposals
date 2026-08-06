@@ -1284,7 +1284,7 @@ function SettingsTab({ snippet, onSync, onReloadStatus, cutoff, onCutoffChange }
       )}
       <p style={{ fontSize: 14, color: BRAND.ink, lineHeight: 1.6, marginTop: 0 }}>
         Marketing attribution links every web-form lead back to the ad, keyword and campaign that
-        produced it. Two one-time steps capture the data:
+        produced it. The first two steps are what capture the data:
       </p>
 
       <Step n={1} title="Add the tracking snippet to squideo.com">
@@ -1296,7 +1296,21 @@ function SettingsTab({ snippet, onSync, onReloadStatus, cutoff, onCutoffChange }
         <CopyBox value={snippet.scriptTag} />
       </Step>
 
-      <Step n={2} title="Add the tracking template to Google Ads">
+      <Step n={2} title="Embed the brief builder on a landing page">
+        <p style={{ fontSize: 13, color: BRAND.muted, margin: '0 0 10px' }}>
+          Drop this where the brief-template download used to be. It captures a name and work email,
+          then sends them straight into the brief builder — a half-finished brief still shows up
+          here as a lead, which a downloaded template never did. It picks up attribution from the
+          snippet above automatically, so leads arrive with their campaign attached.
+        </p>
+        <p style={{ fontSize: 12.5, color: BRAND.muted, margin: '0 0 10px' }}>
+          Don't add a <code>sandbox</code> attribute — the form has to move the whole page to the
+          portal when someone signs up, and a sandbox would trap them inside the frame.
+        </p>
+        <CopyBox value={snippet.briefEmbed} />
+      </Step>
+
+      <Step n={3} title="Add the tracking template to Google Ads">
         <p style={{ fontSize: 13, color: BRAND.muted, margin: '0 0 10px' }}>
           In Google Ads → <strong>Account settings → Tracking → Final URL suffix</strong>, paste the
           string below. This appends the campaign id, keyword and match type to every ad click so we
@@ -1305,7 +1319,7 @@ function SettingsTab({ snippet, onSync, onReloadStatus, cutoff, onCutoffChange }
         <CopyBox value={snippet.finalUrlSuffix} />
       </Step>
 
-      <Step n={3} title="Connect the Google Ads API (spend & ROAS)">
+      <Step n={4} title="Connect the Google Ads API (spend & ROAS)">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
           <span style={{
             display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600,
@@ -1328,7 +1342,7 @@ function SettingsTab({ snippet, onSync, onReloadStatus, cutoff, onCutoffChange }
 
       </Step>
 
-      <Step n={4} title="Connect Search Console + Google Analytics (GA4)">
+      <Step n={5} title="Connect Search Console + Google Analytics (GA4)">
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
           <StatusPill ok={snippet.gscConfigured} label="Search Console" />
           <StatusPill ok={snippet.ga4Configured} label="Google Analytics 4" />

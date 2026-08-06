@@ -896,6 +896,27 @@ async function selfServeSignup(req, res, body, source) {
   if (result.outcome === 'created') {
     await issuePortalSession(res, result.user, req);
     await logPortalActivity({ req, portalUserId: result.user.id, eventKey: landing.activityKey });
+
+    // ── The iframe handoff ────────────────────────────────────────────────────
+    // A form embedded on the marketing site runs in a THIRD-PARTY browsing
+    // context. The session cookie above is set on a same-origin fetch, but the
+    // context is what browsers judge: Safari blocks third-party cookie writes
+    // outright and Chrome partitions them, so the cookie either never lands or
+    // lands somewhere the top-level portal will never read. The visitor would
+    // arrive signed out, on the one page we told them was already theirs.
+    //
+    // So the embed asks for a one-time login token instead and redirects the
+    // TOP window to /portal?login=…, where the exchange — and the cookie — is
+    // first-party and works everywhere.
+    //
+    // Only ever minted for a brand-new account, i.e. exactly where we already
+    // issue a session unconditionally. Never on the 'existing' branch below:
+    // handing a login token to whoever typed an address into a public form is
+    // the account takeover this whole route is written to avoid.
+    let loginToken = null;
+    if (body.handoff === true) {
+      loginToken = await issueLoginToken(result.user.id, 'magic_link', 15).catch(() => null);
+    }
     // Queue this door's nudge series. Nothing sends until the cron is enabled in
     // Admin → Crash course, and every step re-checks its gates at send time.
     await landing.schedule(result.signupId, result.user.email);
@@ -909,7 +930,7 @@ async function selfServeSignup(req, res, body, source) {
         text: landing.textNew,
       });
     } catch (err) { console.warn(`[${source}] welcome email failed`, err.message); }
-    return res.status(200).json({ ok: true, next: 'portal', to: landing.to });
+    return res.status(200).json({ ok: true, next: 'portal', to: landing.to, loginToken });
   }
 
   // Existing account (or a disabled one — same answer either way). Send a
