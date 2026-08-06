@@ -298,6 +298,10 @@ export default function Brief() {
         briefId.current = d.brief?.id || null;
         const fromServer = d.brief?.answers || {};
 
+        // Previewing staff have no draft of their own to recover, and must not
+        // push one into the client's brief.
+        if (d.readOnly) { setAnswers(fromServer); return; }
+
         // Recover anything that was typed but hadn't reached the server — a
         // save in flight when the tab closed, or edits made while offline.
         const mirror = readMirror(d.brief?.id);
@@ -406,6 +410,35 @@ export default function Brief() {
 
   if (error) return <EmptyState title="Couldn't open your brief" body={error} />;
   if (!data) return <div style={{ padding: 32, color: '#6B7785' }}>Loading…</div>;
+
+  // Staff previewing a client's portal. Read-only by design — see briefRoute —
+  // so render what they filled in rather than an editable form whose every
+  // keystroke would 403.
+  if (data.readOnly) {
+    if (!data.brief && !data.past?.length) {
+      return (
+        <EmptyState
+          icon={<FileText size={22} />}
+          title="No brief yet"
+          body="This client hasn't started a video brief. Once they do, their answers appear here as they type — you don't have to wait for them to send it."
+        />
+      );
+    }
+    return (
+      <div style={{ maxWidth: 720, margin: '0 auto' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+          <FileText size={20} style={{ color: BRAND.blue }} />
+          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: BRAND.ink }}>Their video brief</h1>
+        </div>
+        <p style={{ margin: '0 0 16px', fontSize: 13.5, lineHeight: 1.6, color: '#6B7785' }}>
+          {progress.done} of {progress.total} answered
+          {data.brief?.submittedAt ? ' · sent' : ' · still a draft, so this may still change'}.
+          You're previewing, so this is read-only.
+        </p>
+        <Card><BriefSummary answers={answers} /></Card>
+      </div>
+    );
+  }
 
   // Reassurance, not telemetry. Someone deciding whether they can close the tab
   // and finish this tomorrow needs to be told they can, in words — a timestamp

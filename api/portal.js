@@ -2758,10 +2758,21 @@ async function briefRoute(req, res, user) {
   const companyId = resolveCompanyId(req, res, user);
   if (!companyId) return;
 
+  // A staff preview session has no puid of its own (see signPortalPreviewToken),
+  // so "my open brief" is meaningless for it. It looks at the ORGANISATION's
+  // open brief instead — which is what staff opening this actually want to see,
+  // and it's the same company the preview token is already scoped to.
+  const isPreview = !user.puid;
+
   const loadOpen = async () => {
-    const [row] = await sql`
-      SELECT * FROM client_briefs
-       WHERE portal_user_id = ${user.puid} AND submitted_at IS NULL LIMIT 1`;
+    const [row] = isPreview
+      ? await sql`
+          SELECT * FROM client_briefs
+           WHERE company_id = ${companyId} AND submitted_at IS NULL
+           ORDER BY updated_at DESC LIMIT 1`
+      : await sql`
+          SELECT * FROM client_briefs
+           WHERE portal_user_id = ${user.puid} AND submitted_at IS NULL LIMIT 1`;
     return row || null;
   };
 
@@ -2775,9 +2786,13 @@ async function briefRoute(req, res, user) {
 
   if (req.method === 'GET') {
     let row = await loadOpen();
-    if (!row) {
+    if (!row && !isPreview) {
       // Created lazily on first open rather than at signup, so an untouched
       // brief never shows up in the CRM as a lead signal that isn't real.
+      //
+      // Skipped entirely for a preview: portal_user_id is NOT NULL, so staff
+      // opening this would have hit a constraint error instead of a page — and
+      // even if it inserted, it would invent a brief no client ever started.
       const id = crypto.randomUUID();
       await sql`
         INSERT INTO client_briefs (id, portal_user_id, company_id)
@@ -2787,18 +2802,31 @@ async function briefRoute(req, res, user) {
       if (!row) return res.status(500).json({ error: "Couldn't start a brief" });
     }
     // Past briefs, so someone who has already sent one can look it up.
-    const past = await sql`
-      SELECT id, answers, submitted_at FROM client_briefs
-       WHERE portal_user_id = ${user.puid} AND submitted_at IS NOT NULL
-       ORDER BY submitted_at DESC LIMIT 10`.catch(() => []);
+    const past = await (isPreview
+      ? sql`
+          SELECT id, answers, submitted_at FROM client_briefs
+           WHERE company_id = ${companyId} AND submitted_at IS NOT NULL
+           ORDER BY submitted_at DESC LIMIT 10`
+      : sql`
+          SELECT id, answers, submitted_at FROM client_briefs
+           WHERE portal_user_id = ${user.puid} AND submitted_at IS NOT NULL
+           ORDER BY submitted_at DESC LIMIT 10`).catch(() => []);
     return res.status(200).json({
-      brief: serialise(row),
+      brief: row ? serialise(row) : null,
+      readOnly: isPreview,
       past: past.map((p) => ({
         id: p.id,
         submittedAt: p.submitted_at,
         projectName: (p.answers || {}).projectName || 'Untitled brief',
       })),
     });
+  }
+
+  // Preview is look-don't-touch. Manage mode doesn't lift this one: a brief is
+  // the client's own account of what they want, and portal_user_id is NOT NULL
+  // so there is no honest row to write it to anyway.
+  if (isPreview) {
+    return res.status(403).json({ error: 'A brief can only be edited by the client themselves.' });
   }
 
   if (req.method === 'PATCH') {
