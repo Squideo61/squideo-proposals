@@ -24,6 +24,9 @@ describe('quotedProjectExVat', () => {
   it('takes the manual discount off the base price', () => {
     expect(quotedProjectExVat({ basePrice: 1250, discount: { type: 'percent', value: 20 } })).toBe(1000);
     expect(quotedProjectExVat({ basePrice: 1250, discount: { type: 'amount', value: 250 } })).toBe(1000);
+    // The Membership Plus proposal: £1,250 at 25% off is what the client is
+    // looking at, so it's what the deal and the pipeline have to say too.
+    expect(quotedProjectExVat({ basePrice: 1250, discount: { type: 'percent', value: 25 } })).toBe(937.5);
   });
 
   it('is the base price when there is no discount', () => {
