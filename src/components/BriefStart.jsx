@@ -14,7 +14,7 @@
 // like this, and the asset is a planning tool, not a bank account.
 
 import React, { useState } from 'react';
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, Check } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { MARKETING_CONSENT_TEXT, consentRecord } from '../lib/courseConsent.js';
 
@@ -45,7 +45,72 @@ function goTop(url) {
   try { window.location.href = url; return true; } catch { return false; }
 }
 
-export function BriefStart({ getAttribution }) {
+// Two shapes, one page — the same trick /reviews uses with ?theme and ?speed,
+// so a second embed costs a query param rather than another rollup input,
+// rewrite, CSP block and lookahead entry.
+//
+//   compact (default) — just the card. For the dedicated landing page, where
+//                       the page around it is already doing the selling.
+//   full              — card plus the pitch. For dropping into a homepage or a
+//                       process page, where nothing else explains what this is.
+export function BriefStart({ getAttribution, variant = 'compact' }) {
+  const full = variant === 'full';
+  const form = <BriefStartForm getAttribution={getAttribution} full={full} />;
+  return full ? <BriefPromo>{form}</BriefPromo> : form;
+}
+
+// Deliberately no JS breakpoints: inside an iframe the useful width is the
+// frame's, not the device's, and the host controls that. Letting the two
+// columns wrap on their own basis means it lays out correctly at any width
+// without knowing anything about where it's been embedded.
+function BriefPromo({ children }) {
+  return (
+    <div style={{
+      display: 'flex', flexWrap: 'wrap', gap: 34, alignItems: 'center',
+      justifyContent: 'center', maxWidth: 1060, margin: '0 auto',
+      padding: '38px 22px', boxSizing: 'border-box',
+      fontFamily: 'inherit', color: BRAND.ink,
+    }}>
+      <div style={{ flex: '1 1 380px', minWidth: 0, maxWidth: 520 }}>
+        <div style={{
+          display: 'inline-block', fontSize: 11.5, fontWeight: 700, letterSpacing: 1.1,
+          textTransform: 'uppercase', color: BRAND.blue, marginBottom: 12,
+        }}>
+          Free planning tool
+        </div>
+        <h2 style={{
+          margin: '0 0 14px', fontSize: 'clamp(25px, 3.4vw, 34px)', lineHeight: 1.15,
+          fontWeight: 800, letterSpacing: '-0.02em', color: BRAND.ink,
+        }}>
+          You know you need a video.<br />Briefing it is the hard part.
+        </h2>
+        <p style={{ margin: '0 0 20px', fontSize: 15.5, lineHeight: 1.65, color: '#5A7382' }}>
+          The brief builder walks you through the same questions we'd ask on a kick-off
+          call — what it's for, who it's for, and the one thing it has to land. Answer
+          what you can; we can work from as little as a list of key points.
+        </p>
+        <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'grid', gap: 11 }}>
+          {[
+            'Saves as you type — stop halfway and come back whenever',
+            'Twenty-five questions, and only five that really matter',
+            'Ends with a document any production company could work from',
+            'Free, no card, and no password to remember',
+          ].map((line) => (
+            <li key={line} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', fontSize: 14.5, lineHeight: 1.5 }}>
+              <Check size={17} strokeWidth={3} style={{ color: BRAND.blue, flexShrink: 0, marginTop: 2 }} />
+              <span>{line}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div style={{ flex: '1 1 340px', minWidth: 0, maxWidth: 460, width: '100%' }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function BriefStartForm({ getAttribution, full = false }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [consent, setConsent] = useState(false);
@@ -116,11 +181,14 @@ export function BriefStart({ getAttribution }) {
   }
 
   return (
-    <form onSubmit={submit} style={CARD}>
-      <h2 style={H2}>Build your video brief</h2>
+    <form onSubmit={submit} style={full ? { ...CARD, boxShadow: '0 14px 40px rgba(15,42,61,.10)' } : CARD}>
+      {/* In the full variant the column beside this has already made the pitch,
+          so repeating it here would just push the fields below the fold. */}
+      <h2 style={H2}>{full ? 'Start your brief' : 'Build your video brief'}</h2>
       <p style={P}>
-        A guided tool that turns a rough idea into a document any production company
-        could work from. It saves as you type, so you can stop halfway and come back.
+        {full
+          ? 'Two details and you\'re in. Nothing to install, nothing to pay.'
+          : 'A guided tool that turns a rough idea into a document any production company could work from. It saves as you type, so you can stop halfway and come back.'}
       </p>
 
       {error && (
@@ -167,9 +235,13 @@ export function BriefStart({ getAttribution }) {
         <span>{MARKETING_CONSENT_TEXT}</span>
       </label>
 
-      <div style={{ marginTop: 12, fontSize: 12, color: BRAND.muted }}>
-        Free. No card. No password to remember.
-      </div>
+      {/* The full variant already says this as a bullet in the column beside
+          the card, and saying it twice in one eyeful reads as protesting. */}
+      {!full && (
+        <div style={{ marginTop: 12, fontSize: 12, color: BRAND.muted }}>
+          Free. No card. No password to remember.
+        </div>
+      )}
     </form>
   );
 }

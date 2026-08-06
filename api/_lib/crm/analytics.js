@@ -481,10 +481,11 @@ function snippetConfig() {
   // The height listener mirrors the quote form's, and deliberately reuses the
   // same `squideo-quote-form:height` message, so a page already handling one
   // needs no second listener.
-  const briefEmbed = `<iframe src="${origin}/brief-start" title="Build your video brief"
-        style="width:100%;max-width:560px;border:0;display:block;margin:0 auto"
-        height="520" loading="lazy"></iframe>
-<script>
+  //
+  // Two variants. `full` carries its own headline and bullets, for a homepage
+  // or process-page section where nothing around it explains the offer.
+  // `compact` is just the card, for the dedicated landing page.
+  const heightListener = `<script>
 window.addEventListener('message', function (e) {
   if (e.origin !== '${origin}') return;
   if (!e.data || e.data.type !== 'squideo-quote-form:height') return;
@@ -493,8 +494,17 @@ window.addEventListener('message', function (e) {
 });
 <\/script>`;
 
+  const briefEmbedFull = `<iframe src="${origin}/brief-start?variant=full" title="Build your video brief"
+        style="width:100%;border:0;display:block" height="560" loading="lazy"></iframe>
+${heightListener}`;
+
+  const briefEmbed = `<iframe src="${origin}/brief-start" title="Build your video brief"
+        style="width:100%;max-width:560px;border:0;display:block;margin:0 auto"
+        height="520" loading="lazy"></iframe>
+${heightListener}`;
+
   return {
-    appOrigin: origin, scriptTag, finalUrlSuffix, briefEmbed,
+    appOrigin: origin, scriptTag, finalUrlSuffix, briefEmbed, briefEmbedFull,
     adsConfigured: adsConfigured(), gscConfigured: gscConfigured(), ga4Configured: ga4Configured(),
   };
 }

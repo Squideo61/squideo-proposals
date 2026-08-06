@@ -1307,6 +1307,21 @@ function SettingsTab({ snippet, onSync, onReloadStatus, cutoff, onCutoffChange }
           Don't add a <code>sandbox</code> attribute — the form has to move the whole page to the
           portal when someone signs up, and a sandbox would trap them inside the frame.
         </p>
+        <p style={{ fontSize: 13, color: BRAND.ink, fontWeight: 600, margin: '14px 0 6px' }}>
+          Homepage or process page
+        </p>
+        <p style={{ fontSize: 12.5, color: BRAND.muted, margin: '0 0 8px' }}>
+          Carries its own headline and bullets, so it works dropped into a section that isn't
+          otherwise about the brief builder. Put it on a plain white band — the frame is
+          transparent and inherits whatever sits behind it.
+        </p>
+        <CopyBox value={snippet.briefEmbedFull} />
+        <p style={{ fontSize: 13, color: BRAND.ink, fontWeight: 600, margin: '16px 0 6px' }}>
+          Dedicated landing page
+        </p>
+        <p style={{ fontSize: 12.5, color: BRAND.muted, margin: '0 0 8px' }}>
+          Just the sign-up card, for a page whose own copy is already doing the selling.
+        </p>
         <CopyBox value={snippet.briefEmbed} />
       </Step>
 

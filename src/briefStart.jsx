@@ -65,11 +65,18 @@ if (inIframe) {
   } catch { /* ignore */ }
 }
 
+// ?variant=full adds the pitch beside the form, for embedding somewhere that
+// isn't already explaining what this is (a homepage section, the process page).
+// Default stays compact — the dedicated landing page does its own selling.
+const variant = new URLSearchParams(window.location.search).get('variant') === 'full'
+  ? 'full'
+  : 'compact';
+
 const container = document.getElementById('brief-start-root');
 // The no-JS fallback in the HTML is real content a crawler can read; clear it
 // before mounting so it can't show through behind the form.
 container.innerHTML = '';
-createRoot(container).render(<BriefStart getAttribution={getAttribution} />);
+createRoot(container).render(<BriefStart getAttribution={getAttribution} variant={variant} />);
 
 // Auto-resize: post the rendered height to the embedding page so the iframe can
 // adjust. Reuses the quote form's `squideo-quote-form:height` message type so the
