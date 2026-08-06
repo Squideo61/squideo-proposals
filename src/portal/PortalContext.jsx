@@ -146,13 +146,27 @@ export function PortalProvider({ children }) {
     setOverview(null);
   }, []);
 
+  // The active organisation, resolved once. Several pages need to know whether
+  // they're talking to a prospect — someone who signed themselves up off a
+  // marketing page and has never bought anything — so that they can say
+  // "not yet" rather than showing an empty room.
+  //
+  // `isProspect` defaults to FALSE when the flag is missing, deliberately: an
+  // older session payload should read as a paying client and be told nothing,
+  // rather than have a real client shown prospect copy about their own account.
+  // Same defensive direction as visibleNav's creditVisible check.
+  const company = useMemo(
+    () => (user?.companies || []).find((c) => c.id === companyId) || null,
+    [user, companyId],
+  );
+
   const value = useMemo(() => ({
     booting, user, setUser,
-    companyId, setActiveCompanyId,
+    companyId, setActiveCompanyId, company, isProspect: company?.prospect === true,
     overview, overviewLoading, refreshOverview, refreshSession,
     preview, manageMode: preview?.manage === true, logout, toast, showToast,
     notifications, unreadCount, refreshNotifications, markRead, markAllRead,
-  }), [booting, user, companyId, setActiveCompanyId, overview, overviewLoading, refreshOverview, refreshSession, preview, logout, toast, showToast, notifications, unreadCount, refreshNotifications, markRead, markAllRead]);
+  }), [booting, user, companyId, setActiveCompanyId, company, overview, overviewLoading, refreshOverview, refreshSession, preview, logout, toast, showToast, notifications, unreadCount, refreshNotifications, markRead, markAllRead]);
 
   return <PortalContext.Provider value={value}>{children}</PortalContext.Provider>;
 }

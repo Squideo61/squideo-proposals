@@ -64,7 +64,7 @@ function reorderLocally(data, order) {
 }
 
 export default function Library() {
-  const { companyId, manageMode, showToast } = usePortal();
+  const { companyId, manageMode, showToast, isProspect } = usePortal();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
 
@@ -112,7 +112,12 @@ export default function Library() {
       <div>
         <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: BRAND.ink }}>Your video library</h1>
         <p style={{ margin: '6px 0 0', fontSize: 13.5, color: BRAND.muted }}>
-          Every finished video we've delivered — watch it here, download and share anywhere, any time.
+          {/* "Every finished video we've delivered" is a claim, and for someone
+              we have delivered nothing to it reads as a system that has lost
+              their work rather than one they haven't used yet. */}
+          {isProspect
+            ? 'Where your finished videos will live — watch them here, download and share anywhere, any time.'
+            : "Every finished video we've delivered — watch it here, download and share anywhere, any time."}
         </p>
       </div>
 
@@ -137,12 +142,24 @@ export default function Library() {
 
       {data && (data.projects || []).length === 0 && (
         <Card>
+          {/* An empty page with nothing to click is where a prospect stops.
+              The sample project tour is the strongest thing we can offer here:
+              it shows them a delivered video in situ, which is exactly what
+              this page is otherwise promising and failing to demonstrate. */}
           <EmptyState
             icon={<Clapperboard size={34} />}
-            title="Your finished videos will live here"
+            title={isProspect ? 'Nothing here yet — and that\'s expected' : 'Your finished videos will live here'}
             body={data.unavailable
               ? 'The library is temporarily unavailable — try again shortly.'
-              : 'As soon as a video is signed off and delivered, it appears here ready to watch and download.'}
+              : isProspect
+                ? 'This fills up as we sign off each video. Have a look at the sample project to see how a finished one arrives — every cut, every format, downloadable for good.'
+                : 'As soon as a video is signed off and delivered, it appears here ready to watch and download.'}
+            action={data.unavailable ? null : (
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
+                {isProspect && <a className="btn" href="#/demo">See a sample project</a>}
+                <a className={isProspect ? 'btn-ghost' : 'btn'} href="#/brief">Start a brief</a>
+              </div>
+            )}
           />
         </Card>
       )}

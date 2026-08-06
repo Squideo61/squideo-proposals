@@ -43,7 +43,7 @@ function UploadZone({ onFiles, uploading, label }) {
 }
 
 export default function Documents() {
-  const { companyId, showToast } = usePortal();
+  const { companyId, showToast, isProspect } = usePortal();
   const [files, setFiles] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [tab, setTab] = useState('brand'); // 'brand' | 'document'
@@ -95,7 +95,9 @@ export default function Documents() {
       <div>
         <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: BRAND.ink }}>Documents & brand</h1>
         <p style={{ margin: '6px 0 0', fontSize: 13.5, color: BRAND.muted }}>
-          Share your brand guidelines and documents once — our whole team uses them across every project.
+          {isProspect
+            ? 'Share your brand guidelines and documents once — whoever ends up working on your project will already have them.'
+            : 'Share your brand guidelines and documents once — our whole team uses them across every project.'}
         </p>
       </div>
 
@@ -118,11 +120,20 @@ export default function Documents() {
           {files === null ? (
             <div style={{ color: BRAND.muted, fontSize: 13, textAlign: 'center', padding: 10 }}>Loading…</div>
           ) : visible.length === 0 ? (
+            /* Unlike the library, this page genuinely works before there's a
+               project — anything dropped here now saves a round trip on the
+               first one. So a prospect gets a reason to use it today, not a
+               "come back later". */
             <EmptyState
+              icon={tab === 'brand' ? <Palette size={34} /> : <FolderOpen size={34} />}
               title={tab === 'brand' ? 'No brand files yet' : 'No documents yet'}
               body={tab === 'brand'
-                ? 'Logos, fonts, colour palettes, tone-of-voice docs — anything that helps us nail your brand.'
-                : 'Anything else you want our team to have on hand.'}
+                ? (isProspect
+                  ? 'Logos, fonts, colour palettes, tone-of-voice docs. Adding them now means your first video looks like you from the very first draft, rather than after a round of notes.'
+                  : 'Logos, fonts, colour palettes, tone-of-voice docs — anything that helps us nail your brand.')
+                : (isProspect
+                  ? "Anything you'd want our team to have on hand — a deck, an existing script, a video you like. It all goes to whoever ends up working on your project."
+                  : 'Anything else you want our team to have on hand.')}
             />
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

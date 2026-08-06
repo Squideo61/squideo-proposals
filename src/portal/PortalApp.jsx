@@ -131,10 +131,9 @@ const HEADER_BTN = {
 };
 
 function Header() {
-  const { user, companyId, setActiveCompanyId, logout } = usePortal();
+  const { user, companyId, setActiveCompanyId, logout, company: activeCompany } = usePortal();
   const isMobile = useIsMobile();
   const companies = user?.companies || [];
-  const activeCompany = companies.find((c) => c.id === companyId) || null;
   return (
     <header style={{
       background: BRAND.ink,
@@ -368,10 +367,9 @@ function MobileTabBar({ view, company }) {
 }
 
 function AuthedApp() {
-  const { toast, companyId, preview, user } = usePortal();
+  const { toast, companyId, preview, user, company: activeCompany } = usePortal();
   const isMobile = useIsMobile();
   const [route, setRoute] = useState(parseHash);
-  const activeCompany = (user?.companies || []).find((c) => c.id === companyId) || null;
 
   useEffect(() => {
     const onHash = () => { setRoute(parseHash()); window.scrollTo(0, 0); };

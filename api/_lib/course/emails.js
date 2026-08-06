@@ -296,7 +296,4 @@ export function buildNudgeEmail(kind, ctx) {
   };
 }
 
-// Kept as the old name for the course cron path and any caller still on it.
-export const buildCourseEmail = buildNudgeEmail;
-
 export { PORTAL_COURSE_URL, PORTAL_BRIEF_URL, firstName };
