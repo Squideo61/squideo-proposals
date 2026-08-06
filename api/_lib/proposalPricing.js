@@ -149,6 +149,22 @@ function computeBaseDiscount(basePrice, discount) {
 
 const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
+// What an UNSIGNED proposal currently quotes for the project, ex VAT: the price
+// the client is looking at as "Project total" before they pick any extras.
+//
+// Not simply basePrice. A proposal offering video options quotes the first
+// option (that's the one shown selected), and a manual discount comes off —
+// reading basePrice raw reports a discounted £1,000 project as £1,250 on the
+// deal, in its value, and everywhere the pipeline totals those up.
+export function quotedProjectExVat(proposalData) {
+  if (!proposalData) return null;
+  const opts = Array.isArray(proposalData.videoOptions) ? proposalData.videoOptions : [];
+  const raw = opts.length ? (opts[0]?.price ?? proposalData.basePrice) : proposalData.basePrice;
+  const base = Number(raw);
+  if (!Number.isFinite(base)) return null;
+  return round2(base - computeBaseDiscount(base, proposalData.discount));
+}
+
 // Recompute the gross amount due *now* for a signed proposal, plus the partner
 // ex-VAT split the checkout uses for its two line items. Returns null if there
 // isn't enough data to price (caller should refuse the checkout).

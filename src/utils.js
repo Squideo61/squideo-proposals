@@ -95,12 +95,27 @@ export function computeBaseDiscount(basePrice, discount) {
   return base * Math.min(v, 100) / 100;
 }
 
+// What an unsigned proposal quotes for the project, ex VAT — the figure the
+// client sees as "Project total" before picking extras. Mirrors
+// quotedProjectExVat in api/_lib/proposalPricing.js: a proposal offering video
+// options quotes the first one (the one shown selected), and a manual discount
+// comes off. Reading basePrice raw reports a discounted £1,000 project as
+// £1,250 wherever a proposal's worth is shown.
+export function proposalQuotedExVat(proposal) {
+  if (!proposal) return null;
+  const opts = Array.isArray(proposal.videoOptions) ? proposal.videoOptions : [];
+  const raw = opts.length ? (opts[0]?.price ?? proposal.basePrice) : proposal.basePrice;
+  const base = Number(raw);
+  if (!Number.isFinite(base)) return null;
+  return Math.round((base - computeBaseDiscount(base, proposal.discount)) * 100) / 100;
+}
+
 // Ex-VAT value of a proposal that best reflects the actual deal value.
 // Mirrors computeProposalTotalExVat in api/_lib/crm/deals.js so the dashboard
 // and CRM agree. Signed: prefer signature.amountBreakdown.projectExVat
 // (excludes the recurring partner-programme subscription), falling back to
-// signature.total/(1+vatRate) for the simple non-partner case. Unsigned:
-// fall back to basePrice.
+// signature.total/(1+vatRate) for the simple non-partner case. Unsigned: what
+// the proposal currently quotes.
 export function proposalSignedTotalExVat(proposal, signed) {
   if (signed?.amountBreakdown?.projectExVat != null) {
     const v = Number(signed.amountBreakdown.projectExVat);
@@ -113,7 +128,7 @@ export function proposalSignedTotalExVat(proposal, signed) {
       return t / (1 + vatRate);
     }
   }
-  return proposal?.basePrice ?? null;
+  return proposalQuotedExVat(proposal) ?? proposal?.basePrice ?? null;
 }
 
 const CURRENCY_SYMBOLS = { GBP: '£', EUR: '€', USD: '$', AUD: 'A$', CAD: 'C$', NZD: 'NZ$', JPY: '¥' };

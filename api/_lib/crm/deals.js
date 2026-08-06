@@ -18,6 +18,7 @@ import { sendNotification, ensurePoReceivedNotificationDefault } from '../notifi
 import { getDealCreditProject } from './retainers.js';
 import { companyCreditTotals } from '../partnerCredits.js';
 import { isFreelancer, userOnDeal } from './access.js';
+import { quotedProjectExVat } from '../proposalPricing.js';
 import { APP_URL } from '../email.js';
 
 // Self-heal for db/migrations/20260604_deal_files_drive.sql — Drive-backed
@@ -2025,7 +2026,9 @@ async function notifyPoReceived(dealId, poNumber, wasAlreadyReceived, user) {
 //   - Signed proposals: use signature.amountBreakdown.projectExVat when
 //     the partner programme split is present (so we exclude the recurring
 //     subscription), or signature.total/(1+vatRate) for the simple case.
-//   - Unsigned proposals: fall back to basePrice (no extras selected yet).
+//   - Unsigned proposals: what the proposal quotes today — the selected video
+//     option's price where the proposal offers options, less any manual
+//     discount (no extras selected yet). See quotedProjectExVat.
 export function computeProposalTotalExVat(proposalData, signatureData) {
   if (signatureData?.amountBreakdown?.projectExVat != null) {
     const v = Number(signatureData.amountBreakdown.projectExVat);
@@ -2035,7 +2038,7 @@ export function computeProposalTotalExVat(proposalData, signatureData) {
     const vatRate = Number(proposalData?.vatRate) || 0;
     return Number(signatureData.total) / (1 + vatRate);
   }
-  return proposalData?.basePrice ?? null;
+  return quotedProjectExVat(proposalData) ?? proposalData?.basePrice ?? null;
 }
 
 export function serialiseDeal(r) {

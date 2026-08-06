@@ -10,6 +10,7 @@ import { getRole } from '../_lib/userRoles.js';
 import { hasPermission } from '../_lib/permissions.js';
 import { ensureDealForProposal, advanceStage } from '../_lib/dealStage.js';
 import { formatDateGB, freshExpiryISO } from '../_lib/proposalDates.js';
+import { quotedProjectExVat } from '../_lib/proposalPricing.js';
 import { logStaffActivity } from '../_lib/crm/staffActivity.js';
 
 // What to call a proposal in the activity log — it keeps reading properly after
@@ -239,7 +240,11 @@ export default async function handler(req, res) {
       const expectedAutoDealId = 'deal_' + id;
       const title = (data.contactBusinessName || data.clientName || 'Untitled deal').toString().slice(0, 200);
       const ownerEmail = data.preparedByEmail || user.email || null;
-      const value = Number.isFinite(Number(data.basePrice)) ? Number(data.basePrice) : null;
+      // What the proposal actually quotes — the selected video option's price
+      // where it offers options, net of any manual discount. Syncing basePrice
+      // raw put a discounted £1,000 project on the deal (and in the pipeline
+      // totals) as £1,250.
+      const value = quotedProjectExVat(data);
 
       if (!hasDeal) {
         const inserted = await sql`
@@ -447,7 +452,7 @@ function signedValueExVat(data, sig) {
   if (sig?.total != null && Number.isFinite(Number(sig.total))) {
     return Number(sig.total) / (1 + (Number(data?.vatRate) || 0));
   }
-  return Number.isFinite(Number(data?.basePrice)) ? Number(data.basePrice) : null;
+  return quotedProjectExVat(data);
 }
 
 let pbPaidColEnsured = null;

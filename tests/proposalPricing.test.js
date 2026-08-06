@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeProposalCheckout } from '../api/_lib/proposalPricing.js';
+import { computeProposalCheckout, quotedProjectExVat } from '../api/_lib/proposalPricing.js';
 
 // Authoritative server-side pricing for Stripe checkout. These lock in that the
 // figure is derived from the PROPOSAL's prices and the SIGNED selections — never
@@ -17,6 +17,47 @@ const baseProposal = {
   ],
   partnerProgramme: { discountRate: 0.1, extraDiscountPerCredit: 0, maxDiscount: 0.1, standardRatePerMin: 1250 },
 };
+
+// What an unsigned proposal is worth on the deal it's attached to, in the
+// pipeline, and in the value synced onto deals.value.
+describe('quotedProjectExVat', () => {
+  it('takes the manual discount off the base price', () => {
+    expect(quotedProjectExVat({ basePrice: 1250, discount: { type: 'percent', value: 20 } })).toBe(1000);
+    expect(quotedProjectExVat({ basePrice: 1250, discount: { type: 'amount', value: 250 } })).toBe(1000);
+  });
+
+  it('is the base price when there is no discount', () => {
+    expect(quotedProjectExVat({ basePrice: 1250 })).toBe(1250);
+    expect(quotedProjectExVat({ basePrice: 1250, discount: { type: 'percent', value: 0 } })).toBe(1250);
+  });
+
+  it('quotes the first video option, which is the one shown selected', () => {
+    const data = {
+      basePrice: 1250,
+      videoOptions: [{ id: 'a', price: 3000 }, { id: 'b', price: 8000 }],
+      discount: { type: 'percent', value: 10 },
+    };
+    expect(quotedProjectExVat(data)).toBe(2700); // 3000 - 10%, not off the 1250
+  });
+
+  it('falls back to the base price when an option carries no price of its own', () => {
+    expect(quotedProjectExVat({ basePrice: 900, videoOptions: [{ id: 'a' }] })).toBe(900);
+  });
+
+  it('rounds to the penny', () => {
+    expect(quotedProjectExVat({ basePrice: 999.99, discount: { type: 'percent', value: 33 } })).toBe(669.99);
+  });
+
+  it('returns null when there is nothing to price', () => {
+    expect(quotedProjectExVat(null)).toBeNull();
+    expect(quotedProjectExVat({})).toBeNull();
+    expect(quotedProjectExVat({ basePrice: 'free' })).toBeNull();
+  });
+
+  it('never returns a negative price from an oversized £ discount', () => {
+    expect(quotedProjectExVat({ basePrice: 500, discount: { type: 'amount', value: 900 } })).toBe(0);
+  });
+});
 
 describe('computeProposalCheckout', () => {
   it('prices a plain full-payment proposal (base + VAT)', () => {

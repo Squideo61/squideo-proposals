@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Archive, ArchiveRestore, BarChart3, Check, ChevronDown, Clock, Copy, Download, ExternalLink, Eye, EyeOff, FileText, Inbox, LayoutTemplate, Link2, MoreVertical, Pencil, Plus, Receipt, Search, Trash2, Undo2, Users, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
-import { formatDuration, formatGBP, formatProposalNumber, formatRelativeTime, proposalSignedTotalExVat, computeBaseDiscount, useIsMobile } from '../utils.js';
+import { formatDuration, formatGBP, formatProposalNumber, formatRelativeTime, proposalSignedTotalExVat, proposalQuotedExVat, useIsMobile } from '../utils.js';
 import { openPrintWindow, printOptionsForSigned } from '../utils/printProposal.js';
 import { Badge } from './ui.jsx';
 import { ViewAnalyticsModal } from './ViewAnalyticsModal.jsx';
@@ -426,12 +426,13 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onDuplicate, onAn
   // Once signed, the figure reflects what the client actually agreed to (ex-VAT,
   // excluding the recurring partner-programme subscription) — not the proposal's
   // basePrice, which may not include selected extras or the partner discount.
-  // Unsigned: show the base price net of any manual discount so the card matches
-  // the proposal's headline price.
+  // Unsigned: what the proposal quotes — net of any manual discount, and off the
+  // selected video option where it offers a choice — so the card matches the
+  // proposal's headline price.
   const figure = formatGBP(
     signed
       ? proposalSignedTotalExVat(proposal, signed)
-      : (Number(proposal.basePrice) || 0) - computeBaseDiscount(proposal.basePrice, proposal.discount)
+      : (proposalQuotedExVat(proposal) ?? 0)
   );
 
   const handleCardClick = () => onPreview(proposal.id);
