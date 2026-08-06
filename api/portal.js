@@ -119,7 +119,9 @@ import {
 import { ensureCourseTables } from './_lib/course/db.js';
 import { createPortalSignup, SignupError } from './_lib/course/signup.js';
 import { applyTag } from './_lib/crm/tags.js';
-import { scheduleCourseEmails, cancelCourseEmails } from './_lib/course/emails.js';
+import {
+  scheduleCourseEmails, scheduleBriefEmails, cancelCourseEmails, kindsInFamily,
+} from './_lib/course/emails.js';
 import { ensureClientBriefs } from './_lib/brief/db.js';
 import { missingRequired, renderBriefText, briefProgress, answerLabel } from './_lib/brief/questions.js';
 import { anyDriveAccessToken, listSignedOffFiles, streamDriveFile } from './_lib/portal/drive.js';
@@ -765,9 +767,14 @@ async function stampCourseCompletionIfDone(req, puid) {
     await applyTag(updated[0].contact_id, 'course-completed', {
       label: 'Course completed', colour: '#15803D', by: 'system:course',
     });
-    // Stop the nudges. The cron re-checks this anyway, but cancelling now means
-    // the rows are visibly dead rather than looking due until the sweep runs.
-    await cancelCourseEmails(updated[0].id);
+    // Stop the course nudges. The cron re-checks this anyway, but cancelling
+    // now means the rows are visibly dead rather than looking due until the
+    // sweep runs.
+    //
+    // Scoped to the course family: finishing the videos says nothing about a
+    // half-written brief, and silencing those would lose the warmer lead of
+    // the two.
+    await cancelCourseEmails(updated[0].id, kindsInFamily('course'));
   }
 }
 
@@ -850,11 +857,7 @@ const SIGNUP_LANDINGS = {
     textNew: `All eight videos are unlocked here: ${PORTAL_URL}#/course`,
     textReturning: (loginUrl) => `You already have a Squideo account — sign in here to watch the course: ${loginUrl}`,
     activityKey: 'course.signup',
-    // The nudge series only exists for the course. A brief-specific drip
-    // ("you're 8 questions in — finish it off") is worth having and doesn't
-    // exist yet; until it does, scheduling the course one here would send
-    // someone who never asked for it eight videos.
-    drip: true,
+    schedule: scheduleCourseEmails,
   },
   brief: {
     to: '#/brief',
@@ -863,7 +866,7 @@ const SIGNUP_LANDINGS = {
     textNew: `Pick up your brief here: ${PORTAL_URL}#/brief`,
     textReturning: (loginUrl) => `You already have a Squideo account — sign in here to carry on with your brief: ${loginUrl}`,
     activityKey: 'brief.signup',
-    drip: false,
+    schedule: scheduleBriefEmails,
   },
 };
 
@@ -893,9 +896,9 @@ async function selfServeSignup(req, res, body, source) {
   if (result.outcome === 'created') {
     await issuePortalSession(res, result.user, req);
     await logPortalActivity({ req, portalUserId: result.user.id, eventKey: landing.activityKey });
-    // Queue the nudge series. Nothing sends until the cron is enabled in
+    // Queue this door's nudge series. Nothing sends until the cron is enabled in
     // Admin → Crash course, and every step re-checks its gates at send time.
-    if (landing.drip) await scheduleCourseEmails(result.signupId, result.user.email);
+    await landing.schedule(result.signupId, result.user.email);
     // Best-effort: a failed welcome email must not cost them the account they
     // just created and are already signed in to.
     try {
@@ -2945,6 +2948,18 @@ async function briefRoute(req, res, user) {
              quote_request_id = ${quoteRequestId}, updated_at = NOW()
        WHERE id = ${row.id}`;
     await logPortalActivity({ req, portalUserId: user.puid, eventKey: 'brief.submitted' })
+      .catch(() => {});
+
+    // They've done the thing the brief series exists to nudge, so stop it now
+    // rather than letting one more "your brief is still unfinished" go out
+    // before the next sweep. Course nudges are left alone — sending us a brief
+    // doesn't mean they've watched the videos.
+    //
+    // Best-effort: the cron re-checks this gate anyway, so a failure here costs
+    // at most one badly-timed email, never the submission itself.
+    await sql`
+      SELECT id FROM course_signups WHERE portal_user_id = ${user.puid} LIMIT 1
+    `.then(([s]) => (s ? cancelCourseEmails(s.id, kindsInFamily('brief')) : null))
       .catch(() => {});
 
     return res.status(201).json({ ok: true, id: row.id, quoteRequestId });

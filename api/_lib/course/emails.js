@@ -12,18 +12,43 @@ import { APP_URL } from '../email.js';
 import { unsubscribeUrlFor } from '../emailSuppression.js';
 
 const PORTAL_COURSE_URL = `${APP_URL.replace(/\/$/, '')}/portal#/course`;
+const PORTAL_BRIEF_URL = `${APP_URL.replace(/\/$/, '')}/portal#/brief`;
 
 // kind, offset in days, and whether the marketing tick is required.
 //
 // The first four teach — they help someone finish the thing they asked for, so
 // they run on legitimate interest. The last two sell, so they need consent.
 export const SEQUENCE = [
-  { kind: 'nudge_1', days: 2,  needsConsent: false },
-  { kind: 'nudge_2', days: 5,  needsConsent: false },
-  { kind: 'nudge_3', days: 9,  needsConsent: false },
-  { kind: 'offer_1', days: 14, needsConsent: true },
-  { kind: 'offer_2', days: 25, needsConsent: true },
+  { kind: 'nudge_1', days: 2,  needsConsent: false, family: 'course' },
+  { kind: 'nudge_2', days: 5,  needsConsent: false, family: 'course' },
+  { kind: 'nudge_3', days: 9,  needsConsent: false, family: 'course' },
+  { kind: 'offer_1', days: 14, needsConsent: true,  family: 'course' },
+  { kind: 'offer_2', days: 25, needsConsent: true,  family: 'course' },
 ];
+
+// The brief builder's own sequence. Shorter and tighter than the course's,
+// because the thing being nudged is smaller and the intent behind it is much
+// higher: someone who started a brief is telling us they have a video in mind.
+//
+// The same legitimate-interest / consent split applies. The first three help
+// someone finish the brief they themselves started; only the last one sells,
+// and it needs the tick.
+export const BRIEF_SEQUENCE = [
+  { kind: 'brief_1',     days: 2,  needsConsent: false, family: 'brief' },
+  { kind: 'brief_2',     days: 5,  needsConsent: false, family: 'brief' },
+  { kind: 'brief_3',     days: 11, needsConsent: false, family: 'brief' },
+  { kind: 'brief_offer', days: 21, needsConsent: true,  family: 'brief' },
+];
+
+const ALL_STEPS = [...SEQUENCE, ...BRIEF_SEQUENCE];
+
+export const stepFor = (kind) => ALL_STEPS.find((s) => s.kind === kind) || null;
+
+// The kinds belonging to one family, so a gate can stop the sequence it applies
+// to without silencing the other. Finishing the course says nothing about a
+// half-written brief, and vice versa.
+export const kindsInFamily = (family) =>
+  ALL_STEPS.filter((s) => s.family === family).map((s) => s.kind);
 
 let ensured = null;
 export function ensureCourseEmails() {
@@ -53,13 +78,15 @@ export function ensureCourseEmails() {
   return ensured;
 }
 
-// Write the whole series at signup. ON CONFLICT DO NOTHING means a repeat
-// signup can't queue a second set.
-export async function scheduleCourseEmails(signupId, email) {
+// Write a whole series at signup. ON CONFLICT DO NOTHING means a repeat signup
+// can't queue a second set — and, because the unique index is on
+// (signup, kind), someone who came for the course and later starts a brief gets
+// the brief series added alongside rather than instead.
+async function scheduleSeries(sequence, signupId, email) {
   if (!signupId || !email) return;
   await ensureCourseEmails();
   try {
-    for (const step of SEQUENCE) {
+    for (const step of sequence) {
       await sql`
         INSERT INTO course_emails (id, course_signup_id, email, kind, scheduled_for)
         VALUES (${makeId('cem')}, ${signupId}, ${email}, ${step.kind},
@@ -71,6 +98,12 @@ export async function scheduleCourseEmails(signupId, email) {
     console.warn('[courseEmails] schedule failed', err.message);
   }
 }
+
+export const scheduleCourseEmails = (signupId, email) =>
+  scheduleSeries(SEQUENCE, signupId, email);
+
+export const scheduleBriefEmails = (signupId, email) =>
+  scheduleSeries(BRIEF_SEQUENCE, signupId, email);
 
 // Stop the rest of the series. Called when someone finishes the course or makes
 // contact — at that point every remaining nudge is either redundant or rude.
@@ -97,14 +130,14 @@ const esc = (s = '') => String(s).replace(/[&<>"']/g, (c) => ({
 
 const firstName = (name) => (name ? String(name).trim().split(/\s+/)[0] : '');
 
-function shell(inner, unsubscribeUrl) {
+function shell(inner, unsubscribeUrl, heading = 'Crash Course') {
   return `<!doctype html>
 <html><body style="margin:0;padding:0;background:#FAFBFC;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#0F2A3D;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#FAFBFC;padding:32px 16px;">
     <tr><td align="center">
       <table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;background:#fff;border:1px solid #E5E9EE;border-radius:12px;overflow:hidden;">
         <tr><td style="padding:24px 28px;border-bottom:1px solid #E5E9EE;">
-          <div style="font-size:18px;font-weight:800;color:#0F2A3D;">Squideo <span style="color:#2BB8E6;">Crash Course</span></div>
+          <div style="font-size:18px;font-weight:800;color:#0F2A3D;">Squideo <span style="color:#2BB8E6;">${esc(heading)}</span></div>
         </td></tr>
         <tr><td style="padding:24px 28px;font-size:14px;line-height:1.6;color:#0F2A3D;">${inner}</td></tr>
         <tr><td style="padding:16px 28px;background:#FAFBFC;border-top:1px solid #E5E9EE;font-size:12px;color:#6B7785;line-height:1.6;">
@@ -182,19 +215,88 @@ const TEMPLATES = {
       <p style="margin:0;font-size:13px;color:#6B7785;">If the timing's wrong, no problem — this is
         the last email in the series either way.</p>`,
   }),
+
+  // ── the brief builder ──────────────────────────────────────────────────────
+  // `ctx.answered` / `ctx.totalQuestions` come from briefProgress() over the
+  // stored answers, so the copy can be honest about how far in they are. The
+  // whole point of the builder over a downloadable template is that a
+  // half-finished brief is visible — these are what make it useful.
+  brief_1: (ctx) => ({
+    heading: 'Video Brief',
+    subject: ctx.answered > 0
+      ? `Your brief is ${ctx.answered} question${ctx.answered === 1 ? '' : 's'} in`
+      : 'Your video brief is still blank',
+    inner: `
+      <p style="margin:0 0 14px;">Hi${ctx.name ? ' ' + esc(ctx.name) : ''},</p>
+      <p style="margin:0 0 14px;">${ctx.answered > 0
+        ? `You've answered ${ctx.answered} of ${ctx.totalQuestions}. Everything you typed is saved exactly where you left it.`
+        : 'You started a brief but haven\'t answered anything yet — which is completely normal, the first question is the hardest one.'}</p>
+      <p style="margin:0 0 18px;">You don't need to fill it all in. The five starred questions are
+        enough for us to work from; the rest just makes the first draft closer.</p>
+      <p style="margin:0 0 18px;">${cta(PORTAL_BRIEF_URL, ctx.answered > 0 ? 'Carry on where you left off' : 'Open my brief')}</p>`,
+  }),
+
+  brief_2: (ctx) => ({
+    heading: 'Video Brief',
+    subject: 'The question worth getting right',
+    inner: `
+      <p style="margin:0 0 14px;">Hi${ctx.name ? ' ' + esc(ctx.name) : ''},</p>
+      <p style="margin:0 0 14px;">If you answer one more question, make it <strong>"what do you want
+        someone to do after watching?"</strong></p>
+      <p style="margin:0 0 14px;">Almost every video that underperforms was made without a clear answer
+        to it. Not "raise awareness" — something a person could actually do on the day they watch.
+        Get that right and the script mostly writes itself.</p>
+      <p style="margin:0 0 18px;">${cta(PORTAL_BRIEF_URL, 'Add it to my brief')}</p>
+      <p style="margin:0;font-size:13px;color:#6B7785;">${ctx.answered}/${ctx.totalQuestions} answered so far.</p>`,
+  }),
+
+  brief_3: (ctx) => ({
+    heading: 'Video Brief',
+    subject: 'Want us to just do this bit with you?',
+    inner: `
+      <p style="margin:0 0 14px;">Hi${ctx.name ? ' ' + esc(ctx.name) : ''},</p>
+      <p style="margin:0 0 14px;">Briefs are easier out loud than on a form. If yours has stalled, send
+        it as it is — half-finished is genuinely fine — and we'll read it and come back with the two
+        or three questions that actually matter.</p>
+      <p style="margin:0 0 14px;">No pitch, and no obligation to make anything. A well-briefed project
+        is easier for everyone, including us.</p>
+      <p style="margin:0 0 18px;">${cta(PORTAL_BRIEF_URL, 'Send what I have')}</p>`,
+  }),
+
+  brief_offer: (ctx) => ({
+    heading: 'Video Brief',
+    subject: 'Ready for a number?',
+    inner: `
+      <p style="margin:0 0 14px;">Hi${ctx.name ? ' ' + esc(ctx.name) : ''},</p>
+      <p style="margin:0 0 14px;">Last one from us. If the video is still on your list, finish the brief
+        — or just tell us roughly what you're after — and we'll come back with a real price. Not a
+        range, and not a meeting invitation first.</p>
+      <p style="margin:0 0 18px;">${cta(PORTAL_BRIEF_URL, 'Finish my brief')}</p>
+      <p style="margin:0;font-size:13px;color:#6B7785;">If the timing's wrong, no problem — this is
+        the last email in the series either way.</p>`,
+  }),
 };
 
-export function buildCourseEmail(kind, ctx) {
+export function buildNudgeEmail(kind, ctx) {
   const t = TEMPLATES[kind];
   if (!t) return null;
-  const { subject, inner } = t(ctx);
-  const unsubscribeUrl = unsubscribeUrlFor(ctx.email, 'course');
+  const { subject, inner, heading } = t(ctx);
+  const family = stepFor(kind)?.family || 'course';
+  // The suppression list is one row per address regardless of this label, so an
+  // unsubscribe from either sequence stops both — which is what someone
+  // clicking it means. The label is for reporting: which email lost them.
+  const unsubscribeUrl = unsubscribeUrlFor(ctx.email, family);
+  const link = family === 'brief' ? PORTAL_BRIEF_URL : PORTAL_COURSE_URL;
+  const linkLabel = family === 'brief' ? 'Open your brief' : 'Watch the course';
   return {
     subject,
-    html: shell(inner, unsubscribeUrl),
-    text: `${subject}\n\nWatch the course: ${PORTAL_COURSE_URL}\n\nUnsubscribe: ${unsubscribeUrl}`,
+    html: shell(inner, unsubscribeUrl, heading),
+    text: `${subject}\n\n${linkLabel}: ${link}\n\nUnsubscribe: ${unsubscribeUrl}`,
     unsubscribeUrl,
   };
 }
 
-export { PORTAL_COURSE_URL, firstName };
+// Kept as the old name for the course cron path and any caller still on it.
+export const buildCourseEmail = buildNudgeEmail;
+
+export { PORTAL_COURSE_URL, PORTAL_BRIEF_URL, firstName };

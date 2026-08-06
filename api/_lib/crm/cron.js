@@ -13,7 +13,11 @@ import { spawnRecurringSuccessor } from './tasks.js';
 import { quarterTaxSummary } from './stats.js';
 import { cronAdSpendSync } from './googleAds.js';
 import { ensureSuppressionTable, listUnsubscribeHeaders } from '../emailSuppression.js';
-import { ensureCourseEmails, cancelCourseEmails, buildCourseEmail, firstName, SEQUENCE } from '../course/emails.js';
+import {
+  ensureCourseEmails, cancelCourseEmails, buildNudgeEmail, firstName,
+  stepFor, kindsInFamily,
+} from '../course/emails.js';
+import { briefProgress } from '../brief/questions.js';
 import { cronGscSync } from './googleSearch.js';
 import { cronGa4Sync } from './googleAnalytics.js';
 import { captureCostSnapshot } from './costSnapshot.js';
@@ -1205,7 +1209,12 @@ export async function cronCourseNudges(req, res) {
                                 WHERE p2.module_id = m2.id
                                   AND p2.portal_user_id = s.portal_user_id
                                   AND p2.completed_at IS NOT NULL)
-             ORDER BY COALESCE(m2.sort_order, m2.module_number) LIMIT 1) AS next_title
+             ORDER BY COALESCE(m2.sort_order, m2.module_number) LIMIT 1) AS next_title,
+           (SELECT b.answers FROM client_briefs b
+             WHERE b.portal_user_id = s.portal_user_id AND b.submitted_at IS NULL
+             ORDER BY b.updated_at DESC LIMIT 1) AS brief_answers,
+           (SELECT COUNT(*)::int FROM client_briefs b
+             WHERE b.portal_user_id = s.portal_user_id AND b.submitted_at IS NOT NULL) AS briefs_sent
       FROM course_emails e
       JOIN course_signups s ON s.id = e.course_signup_id
      WHERE e.sent_at IS NULL AND e.cancelled_at IS NULL AND e.scheduled_for <= NOW()
@@ -1218,22 +1227,31 @@ export async function cronCourseNudges(req, res) {
 
   for (const row of due) {
     try {
-      const step = SEQUENCE.find((s) => s.kind === row.kind);
+      const step = stepFor(row.kind);
+      const family = step?.family || 'course';
 
-      // Finished the course → every remaining nudge is redundant. Cancel the
-      // lot rather than just this one, so we stop asking every day.
-      if (row.completed_at) {
-        await cancelCourseEmails(row.course_signup_id);
-        skipped++;
-        continue;
-      }
-      // Already in touch → stop selling. They're a conversation now, not a list.
+      // Already in touch → stop everything. They're a conversation now, not a
+      // list, and that is true whichever sequence the row belongs to.
       if (row.enquiries > 0) {
         await cancelCourseEmails(row.course_signup_id);
         skipped++;
         continue;
       }
-      // The two sales emails need the marketing tick. Cancel rather than defer:
+
+      // Finished the thing this sequence is nudging → the rest of THAT series
+      // is redundant. Scoped to the family on purpose: finishing the course
+      // says nothing about a half-written brief, and someone who sent us a
+      // brief may still not have watched the videos.
+      const doneWithFamily = family === 'brief'
+        ? Number(row.briefs_sent || 0) > 0
+        : !!row.completed_at;
+      if (doneWithFamily) {
+        await cancelCourseEmails(row.course_signup_id, kindsInFamily(family));
+        skipped++;
+        continue;
+      }
+
+      // The sales emails need the marketing tick. Cancel rather than defer:
       // consent isn't going to appear on its own.
       if (step?.needsConsent && row.marketing_consent !== true) {
         await cancelCourseEmails(row.course_signup_id, [row.kind]);
@@ -1241,12 +1259,17 @@ export async function cronCourseNudges(req, res) {
         continue;
       }
 
-      const built = buildCourseEmail(row.kind, {
+      const briefAnswers = row.brief_answers || null;
+      const briefStats = briefAnswers ? briefProgress(briefAnswers) : null;
+
+      const built = buildNudgeEmail(row.kind, {
         email: row.email,
         name: firstName(row.name),
         videosDone: Number(row.videos_done || 0),
         totalVideos: Number(row.total_videos || 0),
         nextTitle: row.next_title || null,
+        answered: briefStats?.done ?? 0,
+        totalQuestions: briefStats?.total ?? 0,
       });
       if (!built) { skipped++; continue; }
 
@@ -1258,7 +1281,7 @@ export async function cronCourseNudges(req, res) {
         html: built.html,
         text: built.text,
         scope: 'marketing',
-        headers: listUnsubscribeHeaders(row.email, 'course'),
+        headers: listUnsubscribeHeaders(row.email, family),
       });
 
       await sql`UPDATE course_emails SET sent_at = NOW() WHERE id = ${row.id}`;
