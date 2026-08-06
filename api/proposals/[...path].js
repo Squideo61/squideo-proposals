@@ -9,6 +9,7 @@ import { cors, requireAuth } from '../_lib/middleware.js';
 import { getRole } from '../_lib/userRoles.js';
 import { hasPermission } from '../_lib/permissions.js';
 import { ensureDealForProposal, advanceStage } from '../_lib/dealStage.js';
+import { formatDateGB, freshExpiryISO } from '../_lib/proposalDates.js';
 import { logStaffActivity } from '../_lib/crm/staffActivity.js';
 
 // What to call a proposal in the activity log — it keeps reading properly after
@@ -18,13 +19,6 @@ function proposalLabel(data) {
   return d.proposalTitle || d.contactBusinessName || d.clientName || null;
 }
 
-// dd/mm/yyyy — the `date` field's format everywhere else in the app (the
-// browser writes it with toLocaleDateString('en-GB')). Built by hand rather
-// than via toLocaleDateString so it can't drift with the runtime's locale data.
-function formatDateGB(d) {
-  const p = (n) => String(n).padStart(2, '0');
-  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()}`;
-}
 
 // Allowlist of fields the public client view (ClientView + ThankYouView +
 // SignedBlock + printProposal) actually consumes. The full `data` JSONB on
@@ -118,12 +112,16 @@ export default async function handler(req, res) {
       '_signature', '_payment', '_paidAmount',
       '_hasXeroInvoice', '_xeroInvoiceId', '_hasXeroQuote',
     ]) delete copy[k];
-    // A duplicate is new work: it starts unarchived, dated today, prepared by
-    // whoever pressed the button.
+    // A duplicate is new work: it starts unarchived, dated today, with its
+    // validity window running from today, prepared by whoever pressed the button.
+    const now = new Date();
     copy.archived = false;
     copy.preparedBy = user.name || copy.preparedBy || null;
     copy.preparedByEmail = user.email || copy.preparedByEmail || null;
-    copy.date = formatDateGB(new Date());
+    copy.date = formatDateGB(now);
+    const expiry = freshExpiryISO(rows[0].data, now);
+    if (expiry) copy.expiryDate = expiry;
+    else delete copy.expiryDate;
     copy.createdAt = Date.now();
 
     const newId = 'id_' + Date.now() + '_' + crypto.randomBytes(9).toString('hex');

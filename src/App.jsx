@@ -274,6 +274,10 @@ function AppShell() {
     delete copy._number;
     delete copy._views;
     delete copy._createdAt;
+    // A fixed expiry date belongs to the proposal it was set on. Dropping it
+    // here lets this one expire validityDays from today (the builder derives it)
+    // instead of inheriting a date that may already have passed.
+    delete copy.expiryDate;
 
     // When linking to a deal, pull contact + company names off the deal so
     // the builder lands populated. Falls back to blanks when the deal hasn't
@@ -350,6 +354,10 @@ function AppShell() {
     delete tpl._number;
     delete tpl._views;
     delete tpl._createdAt;
+    // Calendar dates are per-proposal; a template carries the validity window
+    // (validityDays) instead, so anything made from it dates from the day it's made.
+    delete tpl.date;
+    delete tpl.expiryDate;
     actions.saveTemplate(id, tpl);
     showMsg('Template saved: ' + name);
   };
@@ -361,6 +369,8 @@ function AppShell() {
     delete tpl.contactBusinessName;
     delete tpl.clientLogo;
     delete tpl.projectVision;
+    delete tpl.date;
+    delete tpl.expiryDate;
     tpl.name = 'New template';
     tpl.createdAt = Date.now();
     actions.saveTemplate(id, tpl);
