@@ -13,6 +13,7 @@ import { useIsMobile, fileSizeLabel } from '../../utils.js';
 import { Modal, FormRow } from '../ui.jsx';
 import { sanitizeEmailHtml, htmlToPlainText, isHtmlEmpty } from '../../lib/emailHtml.js';
 import { NewDealModal } from './PipelineView.jsx';
+import { DealSearchPicker } from './DealSearchPicker.jsx';
 import { TaskFormModal } from './TaskFormModal.jsx';
 
 export function EmailComposerModal({ deal, contact, initialDraft = null, onClose, onSent, onViewThread, inline = false, threadDraftKey = null, draftMode = null }) {
@@ -1286,55 +1287,19 @@ function RecipientInput({ value, onChange, placeholder, autoFocus, required }) {
 // emails always link at thread scope (the message doesn't exist yet so
 // "just this email" doesn't apply meaningfully).
 function ComposerExtraDealPicker({ currentDealId, excludeIds, onClose, onPicked }) {
-  const { state } = useStore();
-  const exclude = new Set(excludeIds || []);
-  const candidates = useMemo(() => {
-    return Object.values(state.deals || {})
-      .filter((d) => d && !exclude.has(d.id) && d.stage !== 'lost' && d.stage !== 'won')
-      .sort((a, b) => {
-        const ta = a.lastActivityAt ? new Date(a.lastActivityAt).getTime() : 0;
-        const tb = b.lastActivityAt ? new Date(b.lastActivityAt).getTime() : 0;
-        return tb - ta;
-      });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.deals, currentDealId, excludeIds.join(',')]);
-  const [dealId, setDealId] = useState(candidates[0]?.id || '');
-
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} maxWidth={520} fullScreenOnMobile>
       <h2 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>Add to another deal</h2>
-      {candidates.length === 0 ? (
-        <>
-          <p style={{ fontSize: 13, color: BRAND.muted, margin: '0 0 16px' }}>
-            No other open deals to link to. Use <strong>Create new deal</strong> instead.
-          </p>
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <button type="button" onClick={onClose} className="btn-ghost">Close</button>
-          </div>
-        </>
-      ) : (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            const picked = candidates.find(d => d.id === dealId);
-            if (picked) onPicked({ id: picked.id, title: picked.title });
-          }}
-          style={{ display: 'flex', flexDirection: 'column', gap: 14 }}
-        >
-          <label style={{ fontSize: 13, fontWeight: 500 }}>
-            Deal
-            <select className="input" value={dealId} onChange={(e) => setDealId(e.target.value)} style={{ marginTop: 4 }} required>
-              {candidates.map((d) => (
-                <option key={d.id} value={d.id}>{d.title}</option>
-              ))}
-            </select>
-          </label>
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-            <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
-            <button type="submit" className="btn" disabled={!dealId}>Add</button>
-          </div>
-        </form>
-      )}
+      {/* Search-and-suggest rather than a select of every deal. Creating one is
+          the composer's own "Create new deal" button, which opens the full
+          form — this picker only finds existing ones. */}
+      <DealSearchPicker
+        excludeIds={[currentDealId, ...(excludeIds || [])].filter(Boolean)}
+        onPick={(d) => onPicked({ id: d.id, title: d.title })}
+      />
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 14 }}>
+        <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
+      </div>
     </Modal>
   );
 }

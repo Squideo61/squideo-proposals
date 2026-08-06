@@ -18,6 +18,7 @@ const SALE_TONE_COLOR = { green: 'green', amber: 'orange', teal: 'blue', grey: '
 import { Avatar, AvatarGroup } from '../Avatar.jsx';
 import { PIPELINE_STAGES, NewDealModal } from './PipelineView.jsx';
 import { TaskFormModal, AssigneePicker } from './TaskFormModal.jsx';
+import { DealSearchPicker } from './DealSearchPicker.jsx';
 import { ScheduleCard, ScheduleModal } from './ScheduleModal.jsx';
 import { Card, Empty } from './Card.jsx';
 import { InvoicesPaymentsCard } from './InvoicesPaymentsCard.jsx';
@@ -1831,86 +1832,92 @@ function ExpandedMessage({ email, dealId = null, defaultOpen = false, isLast = f
 // fetch on open and cache by gmail_message_id in the store so re-opens are
 // instant. HTML is sanitized with DOMPurify before render — emails are an
 // untrusted source.
-// Modal opened from an email row's kebab → "Add to another deal". Lets the
-// user pick which deal to attach this conversation (or just the visible
-// message) to. The deal list is read from the store's cached `state.deals`
-// — same source the pipeline + task picker use — filtered to anything that
-// isn't lost and excluding the deal we're already on.
+// Modal opened from an email row's kebab → "Add to another deal". Choose what
+// to move (the conversation or the one message), then find the deal by typing.
+//
+// It used to be a <select> of every open deal, which is unusable at any real
+// number of deals, so it's the shared search-and-suggest picker now — including
+// its create row, so a deal that doesn't exist yet can be made and linked here
+// rather than backing out to "Create new deal from this email". Lost deals stay
+// out; everything else (signed and paid work included) still collects email.
 export function LinkEmailModal({ target, currentDealId, onClose, onLinked }) {
-  const { state, actions, showMsg } = useStore();
-  const candidates = useMemo(() => {
-    return Object.values(state.deals || {})
-      .filter((d) => d && d.id !== currentDealId && d.stage !== 'lost' && d.stage !== 'won')
-      .sort((a, b) => {
-        const ta = a.lastActivityAt ? new Date(a.lastActivityAt).getTime() : 0;
-        const tb = b.lastActivityAt ? new Date(b.lastActivityAt).getTime() : 0;
-        return tb - ta;
-      });
-  }, [state.deals, currentDealId]);
-  const [dealId, setDealId] = useState(candidates[0]?.id || '');
+  const { actions, showMsg } = useStore();
   const [scope, setScope] = useState('thread');
-  const [submitting, setSubmitting] = useState(false);
+  const [busy, setBusy] = useState(false);
+  // Suggested name for a new deal when nothing's been typed — the subject, minus
+  // the reply/forward prefixes (same suggestion the kebab's create flow makes).
+  const subjectTitle = (target?.subject || '').replace(/^\s*(re|fwd?|fw)\s*:\s*/i, '').trim();
 
-  const submit = async (e) => {
-    e.preventDefault();
-    if (!dealId || submitting) return;
-    setSubmitting(true);
+  const linkTo = async (deal) => {
+    if (busy) return;
+    setBusy(true);
     try {
       const r = await actions.linkEmail({
         threadId: target.threadId,
         gmailMessageId: target.gmailMessageId,
-        dealId,
+        dealId: deal.id,
         scope,
       });
-      showMsg('Linked to ' + (r?.dealTitle || 'deal'));
+      showMsg('Linked to ' + (r?.dealTitle || deal.title || 'deal'));
       onLinked?.();
     } catch (err) {
       showMsg('Could not link: ' + (err?.message || 'unknown error'));
-      setSubmitting(false);
+      setBusy(false);
+    }
+  };
+
+  // Create first, then link — a failure to link leaves a real (empty) deal
+  // behind rather than silently dropping the email somewhere.
+  const createAndLink = async (title) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const deal = await actions.createDeal({ title });
+      if (!deal?.id) throw new Error('Deal was not created');
+      await actions.linkEmail({
+        threadId: target.threadId,
+        gmailMessageId: target.gmailMessageId,
+        dealId: deal.id,
+        scope,
+      });
+      showMsg('Linked to new deal: ' + (deal.title || title));
+      onLinked?.();
+    } catch (err) {
+      showMsg('Could not create the deal: ' + (err?.message || 'unknown error'));
+      setBusy(false);
     }
   };
 
   return (
-    <Modal onClose={onClose}>
+    <Modal onClose={onClose} maxWidth={520} fullScreenOnMobile>
       <h2 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>Add email to another deal</h2>
-      {candidates.length === 0 ? (
-        <>
-          <p style={{ fontSize: 13, color: BRAND.muted, margin: '0 0 16px' }}>
-            No other open deals to link to. Use <strong>Create new deal from this email</strong> instead.
-          </p>
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <button type="button" onClick={onClose} className="btn-ghost">Close</button>
-          </div>
-        </>
-      ) : (
-        <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <label style={{ fontSize: 13, fontWeight: 500 }}>
-            Deal
-            <select className="input" value={dealId} onChange={(e) => setDealId(e.target.value)} style={{ marginTop: 4 }} required>
-              {candidates.map((d) => (
-                <option key={d.id} value={d.id}>{d.title}</option>
-              ))}
-            </select>
+      <form onSubmit={(e) => e.preventDefault()} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <fieldset style={{ border: 'none', padding: 0, margin: 0 }}>
+          <legend style={{ fontSize: 13, fontWeight: 500, marginBottom: 6 }}>Link</legend>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, marginBottom: 4 }}>
+            <input type="radio" name="scope" value="thread" checked={scope === 'thread'} onChange={() => setScope('thread')} />
+            The whole conversation
           </label>
-          <fieldset style={{ border: 'none', padding: 0, margin: 0 }}>
-            <legend style={{ fontSize: 13, fontWeight: 500, marginBottom: 6 }}>Link</legend>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, marginBottom: 4 }}>
-              <input type="radio" name="scope" value="thread" checked={scope === 'thread'} onChange={() => setScope('thread')} />
-              The whole conversation
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
-              <input type="radio" name="scope" value="message" checked={scope === 'message'} onChange={() => setScope('message')} />
-              Just this email
-            </label>
-          </fieldset>
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
-            <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
-            <button type="submit" className="btn" disabled={!dealId || submitting}>
-              {submitting ? 'Linking…' : 'Link'}
-            </button>
-          </div>
-        </form>
-      )}
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+            <input type="radio" name="scope" value="message" checked={scope === 'message'} onChange={() => setScope('message')} />
+            Just this email
+          </label>
+        </fieldset>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 6 }}>Deal</div>
+          <DealSearchPicker
+            excludeIds={[currentDealId]}
+            onPick={linkTo}
+            onCreate={createAndLink}
+            defaultCreateTitle={subjectTitle}
+            busy={busy}
+          />
+        </div>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', alignItems: 'center', marginTop: 4 }}>
+          {busy && <span style={{ fontSize: 12, color: BRAND.muted, marginRight: 'auto' }}>Linking…</span>}
+          <button type="button" onClick={onClose} className="btn-ghost" disabled={busy}>Cancel</button>
+        </div>
+      </form>
     </Modal>
   );
 }
