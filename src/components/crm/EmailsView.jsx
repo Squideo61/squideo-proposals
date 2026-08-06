@@ -1673,15 +1673,19 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
   // the composer, so they're already chips in the editor. Failure is never
   // fatal: the forward opens regardless, with the files named so they can be
   // attached by hand.
+  // `msgs` is a list of messages, or null/absent for the whole conversation.
+  // Guarded rather than trusted: wired straight to onClick it would arrive as a
+  // MouseEvent, and React would take a function as a state updater.
   const startForward = async (msgs = null) => {
+    const list = Array.isArray(msgs) ? msgs : null;
     setForwardAttachments([]);
-    setForwardMsgs(msgs);
+    setForwardMsgs(list);
     // Starting a forward replaces any forward already in progress on this
     // thread — otherwise the saved draft would win and you'd get the previous
     // selection's body back. A reply draft is a different mode and survives.
     if (state.threadDrafts?.[openRef.threadId]?.mode === 'forward') actions.clearThreadDraft(openRef.threadId);
     setForwardSeq(n => n + 1);
-    const ids = new Set((msgs || messages).map(m => m.gmailMessageId || m.id).filter(Boolean));
+    const ids = new Set((list || messages).map(m => m.gmailMessageId || m.id).filter(Boolean));
     const wanted = threadAttachments.filter(a => ids.has(a.messageId));
     if (!wanted.length) { setComposeMode('forward'); return; }
     setPreparingForward(true);
@@ -1903,7 +1907,7 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
                       {canReplyAll && (
                         <button onClick={() => setComposeMode('replyAll')} className="btn-ghost" title="Reply all" aria-label="Reply all" style={{ flexShrink: 0 }}><ReplyAll size={15} /></button>
                       )}
-                      <button onClick={startForward} disabled={preparingForward} className="btn-ghost" title="Forward" aria-label="Forward" style={{ flexShrink: 0 }}><Forward size={15} /></button>
+                      <button onClick={() => startForward()} disabled={preparingForward} className="btn-ghost" title="Forward" aria-label="Forward" style={{ flexShrink: 0 }}><Forward size={15} /></button>
                     </div>,
                     document.body
                   )
@@ -1913,7 +1917,7 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
                         <button onClick={() => setComposeMode('replyAll')} className="btn-ghost"><ReplyAll size={15} /> Reply all</button>
                       )}
                       <button onClick={() => setComposeMode('reply')} className="btn-ghost"><Reply size={15} /> Reply</button>
-                      <button onClick={startForward} disabled={preparingForward} className="btn-ghost">
+                      <button onClick={() => startForward()} disabled={preparingForward} className="btn-ghost">
                         <Forward size={15} /> {preparingForward ? 'Preparing…' : (messages.length > 1 ? `Forward all ${messages.length}` : 'Forward')}
                       </button>
                     </div>
