@@ -1335,12 +1335,12 @@ async function overviewRoute(req, res, user) {
   `.catch(() => []);
 
   // Credit is the rung AFTER a first project, so the dashboard only offers it
-  // to a client who has one and hasn't already bought any. Prospects never see
-  // it — they don't reach this branch, because their nav has no credit item and
-  // CLIENT_ONLY refuses the routes.
+  // to a client who has one and hasn't already bought any. `creditVisible` is
+  // the same rule the nav and CLIENT_ONLY use, so the nudge can never appear
+  // for someone who has no credit page to nudge them to.
   const activeCo = user.companies.find((c) => c.id === companyId) || null;
   let suggestCredit = false;
-  if (!activeCo?.prospect && projects.length > 0) {
+  if (activeCo?.creditVisible !== false && projects.length > 0) {
     const bal = await companyCreditBalance(activeCo || { id: companyId }).catch(() => null);
     suggestCredit = (bal?.issued || 0) === 0;
   }

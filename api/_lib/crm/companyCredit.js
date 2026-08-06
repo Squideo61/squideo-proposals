@@ -2,8 +2,10 @@
 //
 // The default position is the commercial one: credit is the rung AFTER a first
 // project — you buy production time in bulk once a style exists to repeat — so
-// a `prospect` org (a crash-course signup we've never scoped anything for)
-// doesn't see £/min. Showing it would anchor every quote we sent them later.
+// an org with nothing in production doesn't see £/min. That covers both a
+// `prospect` (a crash-course signup we've never scoped anything for) and a
+// company we've only sent a proposal to. Showing it would anchor every quote we
+// sent them later, and undercut the one they're currently reading.
 //
 // But that rule is wrong at both edges, which is what these overrides are for:
 // NHS and framework buyers routinely need their balance visible from day one,
@@ -36,20 +38,71 @@ export function ensureCompanyCreditColumns() {
 //
 // `creditEnabled` is tri-state on purpose: NULL means nobody has decided, which
 // is different from somebody deciding no.
-export function creditVisibleFor({ creditEnabled = null, prospect = false } = {}) {
+//
+// `hasProject` is what "they're a client" actually means here: a deal of theirs
+// has entered production. NOT "we've sent them a proposal" — a company we're
+// still quoting is a prospect whether or not they arrived via the crash course,
+// and handing them £/min mid-negotiation undercuts the proposal they're sitting
+// on. See hasProjectFor() for how it's resolved.
+export function creditVisibleFor({ creditEnabled = null, prospect = false, hasProject = false } = {}) {
   if (creditEnabled === true) return true;    // forced on — NHS, frameworks
   if (creditEnabled === false) return false;  // forced off — quote them per project
-  return !prospect;                           // the default: clients yes, prospects no
+  return !prospect && hasProject === true;    // the default: clients yes, prospects no
 }
 
 // Explains the rule to staff in the CRM, so the button never leaves someone
 // wondering why a client can or can't see it.
-export function creditAccessLabel({ creditEnabled = null, prospect = false } = {}) {
+export function creditAccessLabel({ creditEnabled = null, prospect = false, hasProject = false } = {}) {
   if (creditEnabled === true) return { on: true, why: 'Switched on for this organisation' };
   if (creditEnabled === false) return { on: false, why: 'Switched off for this organisation' };
-  return prospect
-    ? { on: false, why: 'Hidden by default — this is a prospect, not a client yet' }
-    : { on: true, why: 'Visible by default — they have a project with us' };
+  if (prospect) return { on: false, why: 'Hidden by default — this is a prospect, not a client yet' };
+  return hasProject
+    ? { on: true, why: 'Visible by default — they have a project under way' }
+    : { on: false, why: 'Hidden by default — nothing is in production yet, and a proposal isn’t a project' };
+}
+
+// Which of these companies count as clients for the rule above.
+//
+// Two ways in, because the rate card follows the money rather than the
+// paperwork:
+//   1. a deal that has entered production — the "Good to go" gate, i.e. signed,
+//      paid or on a PO. `production_entered_at` is NULL on deals that went into
+//      production before that column existed, hence the phase check too.
+//   2. they already hold credit — buying is itself proof they're a client, and
+//      nobody may ever be locked out of a balance they've paid for. Matched on
+//      the two deterministic links (an explicitly bound subscription, and the
+//      `manual_portalcredit_<companyId>` anchor a portal purchase creates); the
+//      fuzzy name/Xero matching in clientKeysForCompany is deliberately left
+//      out — it costs a join per request, and every client it would find has a
+//      project anyway.
+//
+// Returns a Set of the ids that qualify. Guarded: if either table is missing a
+// column this must not take the whole portal down with it, and the caller
+// treats an empty result as "no project" — which the staff override can undo.
+export async function hasProjectFor(companyIds = []) {
+  const ids = (companyIds || []).filter(Boolean);
+  if (!ids.length) return new Set();
+  const rows = await sql`
+    SELECT c.id
+      FROM companies c
+     WHERE c.id = ANY(${ids})
+       AND (
+         EXISTS (
+           SELECT 1 FROM deals d
+            WHERE d.company_id = c.id
+              AND (d.production_entered_at IS NOT NULL OR d.production_phase IS NOT NULL)
+         )
+         OR EXISTS (
+           SELECT 1 FROM partner_subscriptions ps
+            WHERE ps.company_id = c.id
+               OR ps.stripe_subscription_id = 'manual_portalcredit_' || c.id
+         )
+       )
+  `.catch((err) => {
+    console.warn('[companyCredit] hasProjectFor failed', err.message);
+    return [];
+  });
+  return new Set(rows.map((r) => r.id));
 }
 
 // The rate to quote this company, most specific first:
@@ -120,13 +173,15 @@ export async function loadCompanyCredit(companyId) {
   `.catch(() => []);
   if (!co) return null;
   const rate = await resolveCreditRate(companyId);
+  const hasProject = (await hasProjectFor([co.id])).has(co.id);
   return {
     companyId: co.id,
     companyName: co.name,
     prospect: co.prospect === true,
+    hasProject,
     creditEnabled: co.credit_enabled,           // true | false | null
-    visible: creditVisibleFor({ creditEnabled: co.credit_enabled, prospect: co.prospect }),
-    label: creditAccessLabel({ creditEnabled: co.credit_enabled, prospect: co.prospect }),
+    visible: creditVisibleFor({ creditEnabled: co.credit_enabled, prospect: co.prospect, hasProject }),
+    label: creditAccessLabel({ creditEnabled: co.credit_enabled, prospect: co.prospect, hasProject }),
     ratePerMin: rate.ratePerMin,
     rateSource: rate.source,
     rateOverride: rate.override,

@@ -14,7 +14,8 @@
 -- api/_lib/crm/companyCredit.js.
 
 -- TRI-STATE, and the NULL matters:
---   NULL  → fall back to the default rule (visible unless the org is a prospect)
+--   NULL  → fall back to the default rule (visible once a project of theirs is
+--           in production — see creditVisibleFor(); a proposal isn't a project)
 --   TRUE  → always visible, even for a prospect
 --   FALSE → hidden, even for an established client
 -- A two-state boolean would have forced a default onto every existing company

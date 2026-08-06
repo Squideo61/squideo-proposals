@@ -4,7 +4,8 @@
 // belong to the organisation, not to one deal.
 //
 // The default is the commercial position: credit is the rung after a first
-// project, so a prospect doesn't see £/min. This is the override for the two
+// project, so nobody sees £/min until something of theirs is in production —
+// a proposal on the table isn't a project. This is the override for the two
 // cases where that's wrong — NHS and framework buyers who need their balance
 // visible from day one, and clients we'd rather quote per project.
 
