@@ -1050,6 +1050,9 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
       {creatingExtraDeal && (
         <NewDealModal
           initialTitle={(subject || '').replace(/^(re|fwd?):\s*/i, '').trim()}
+          // Who this email is going to — the first that's already a contact
+          // becomes the new deal's primary contact.
+          suggestContactEmails={String(to || '').split(',').map((s) => s.trim()).filter(Boolean)}
           onClose={() => setCreatingExtraDeal(false)}
           onCreated={(newDeal) => {
             if (newDeal?.id) {

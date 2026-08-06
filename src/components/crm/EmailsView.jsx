@@ -799,6 +799,9 @@ export function EmailsView({ folder = 'inbox', openThreadId = null, onBack, onOp
       {newDealSel && (
         <NewDealModal
           initialTitle={suggestDealTitle(newDealSel.rows)}
+          // The senders of the selected conversations — the first that's already
+          // a contact becomes the deal's primary contact.
+          suggestContactEmails={(newDealSel.rows || []).map((r) => r.fromEmail).filter(Boolean)}
           onClose={() => setNewDealSel(null)}
           onCreated={(deal) => {
             // Close the modal SYNCHRONOUSLY the moment the deal is created — the

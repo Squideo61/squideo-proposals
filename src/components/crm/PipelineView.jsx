@@ -8,6 +8,7 @@ import { Modal, RefBadge } from '../ui.jsx';
 import { describeSaleStatus } from '../../lib/saleStatus.js';
 import { PIPELINE_STAGES } from '../../lib/stages.js';
 import { XeroContactPicker } from './XeroContactPicker.jsx';
+import { ContactSearchPicker, useSuggestedContact } from './ContactSearchPicker.jsx';
 import { api } from '../../api.js';
 
 export { PIPELINE_STAGES };
@@ -717,18 +718,30 @@ const sourceBtn = (on) => ({
   background: on ? BRAND.blue : 'white', color: on ? 'white' : BRAND.ink,
 });
 
-export function NewDealModal({ onClose, onCreated, initialTitle = '' }) {
+// `suggestContactEmails` are the addresses this deal is being created from —
+// the people on the email thread, typically. The first one that's already a CRM
+// contact becomes the primary contact, so creating a deal from an email doesn't
+// mean hunting for someone the email already named.
+export function NewDealModal({ onClose, onCreated, initialTitle = '', suggestContactEmails = [] }) {
   const { state, actions, showMsg } = useStore();
   const [title, setTitle] = useState(initialTitle);
   const [stage, setStage] = useState('lead');
   const [value, setValue] = useState('');
   const [vatPct, setVatPct] = useState('20');
   const [xeroContact, setXeroContact] = useState(null);
+  const suggestedContact = useSuggestedContact(suggestContactEmails);
   const [primaryContactId, setPrimaryContactId] = useState('');
   const [leadSource, setLeadSource] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  const contacts = Object.values(state.contacts || {});
+  // Contacts load asynchronously, so the match may only become available after
+  // the first render. Only ever fills a blank field — never overrides a choice,
+  // including a deliberate clear (touched).
+  const [contactTouched, setContactTouched] = useState(false);
+  useEffect(() => {
+    if (!contactTouched && !primaryContactId && suggestedContact) setPrimaryContactId(suggestedContact.id);
+  }, [suggestedContact, contactTouched, primaryContactId]);
+  const pickContact = (id) => { setContactTouched(true); setPrimaryContactId(id); };
 
   // When a Xero contact is picked, auto-suggest the title if blank.
   function handleXeroPick(c) {
@@ -838,13 +851,14 @@ export function NewDealModal({ onClose, onCreated, initialTitle = '' }) {
             <input className="input" type="number" min="0" max="100" step="0.1" value={vatPct} onChange={(e) => setVatPct(e.target.value)} style={{ marginTop: 4 }} />
           </label>
         </div>
-        <label style={{ fontSize: 13, fontWeight: 500 }}>
+        <div style={{ fontSize: 13, fontWeight: 500 }}>
           Primary contact (optional)
-          <select className="input" value={primaryContactId} onChange={(e) => setPrimaryContactId(e.target.value)} style={{ marginTop: 4 }}>
-            <option value="">—</option>
-            {contacts.map(c => <option key={c.id} value={c.id}>{c.name || c.email}</option>)}
-          </select>
-        </label>
+          <ContactSearchPicker
+            value={primaryContactId}
+            onChange={pickContact}
+            suggestEmails={suggestContactEmails}
+          />
+        </div>
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
           <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
           <button type="submit" className="btn" disabled={!title.trim() || submitting}>

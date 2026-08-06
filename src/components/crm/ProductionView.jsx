@@ -5,6 +5,7 @@ import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
 import { Modal, RefBadge } from '../ui.jsx';
 import { XeroContactPicker } from './XeroContactPicker.jsx';
+import { ContactSearchPicker } from './ContactSearchPicker.jsx';
 import { api } from '../../api.js';
 import {
   PRODUCTION_PHASES, PHASE_BY_ID, STAGE_LABEL, PAYMENT_OPTION_LABEL,
@@ -492,7 +493,6 @@ function NewProjectModal({ onClose, onCreated }) {
   const [value, setValue] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  const contacts = Object.values(state.contacts || {});
   const memberOptions = Object.entries(state.users || {})
     .map(([email, u]) => ({ email, name: u.name || email }))
     .sort((a, b) => a.name.localeCompare(b.name));
@@ -541,13 +541,10 @@ function NewProjectModal({ onClose, onCreated }) {
           Project title
           <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Acme Corp — Brand explainer" style={{ marginTop: 4 }} required />
         </label>
-        <label style={{ fontSize: 13, fontWeight: 500 }}>
+        <div style={{ fontSize: 13, fontWeight: 500 }}>
           Primary contact (optional)
-          <select className="input" value={primaryContactId} onChange={(e) => setPrimaryContactId(e.target.value)} style={{ marginTop: 4 }}>
-            <option value="">—</option>
-            {contacts.map(c => <option key={c.id} value={c.id}>{c.name || c.email}</option>)}
-          </select>
-        </label>
+          <ContactSearchPicker value={primaryContactId} onChange={setPrimaryContactId} />
+        </div>
         <label style={{ fontSize: 13, fontWeight: 500 }}>
           Producer (optional)
           <select className="input" value={producerEmail} onChange={(e) => setProducerEmail(e.target.value)} style={{ marginTop: 4 }}>

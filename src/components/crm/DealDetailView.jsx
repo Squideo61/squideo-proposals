@@ -19,6 +19,7 @@ import { Avatar, AvatarGroup } from '../Avatar.jsx';
 import { PIPELINE_STAGES, NewDealModal } from './PipelineView.jsx';
 import { TaskFormModal, AssigneePicker } from './TaskFormModal.jsx';
 import { DealSearchPicker } from './DealSearchPicker.jsx';
+import { ContactSearchPicker } from './ContactSearchPicker.jsx';
 import { ScheduleCard, ScheduleModal } from './ScheduleModal.jsx';
 import { Card, Empty } from './Card.jsx';
 import { InvoicesPaymentsCard } from './InvoicesPaymentsCard.jsx';
@@ -1574,11 +1575,14 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
   // joins a deal, and they'd otherwise never be offered. Our own team is never a
   // candidate — the filters below drop CRM users, the mailbox and own-domain
   // addresses, which is what keeps internal Cc's out.
-  const unknownParticipants = useMemo(() => {
-    if (!linkedEmails) return [];
-    // Our own team is never a "new contact" to add. Exclude CRM users, the
-    // signed-in user, the connected mailbox, and anyone on our own email domain
-    // (catches teammates + internal aliases like enquiries@ without CRM accounts).
+  // Every outside address on the thread, most recent message first. Split from
+  // the "unknown" list below because the two want different things: prompting
+  // to ADD a contact needs the ones we don't have, while suggesting a primary
+  // contact for a new deal wants the ones we DO.
+  const externalParticipants = useMemo(() => {
+    // Our own team is never a candidate. Exclude CRM users, the signed-in user,
+    // the connected mailbox, and anyone on our own email domain (catches
+    // teammates + internal aliases like enquiries@ without CRM accounts).
     const internal = new Set();
     for (const u of Object.values(state.users || {})) if (u?.email) internal.add(u.email.toLowerCase());
     if (state.session?.email) internal.add(state.session.email.toLowerCase());
@@ -1591,12 +1595,14 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
     const consider = (raw) => {
       if (!raw || typeof raw !== 'string') return;
       const lower = raw.trim().toLowerCase();
-      if (!lower || seen.has(lower) || linkedEmails.has(lower) || internal.has(lower)) return;
+      if (!lower || seen.has(lower) || internal.has(lower)) return;
       if (ownDomain && lower.endsWith('@' + ownDomain)) return;
       seen.add(lower);
       out.push(raw.trim());
     };
-    for (const m of messages) {
+    // Newest message first: whoever the latest exchange was with is the best
+    // guess at who a deal made from this thread belongs to.
+    for (const m of [...messages].reverse()) {
       if (m.direction === 'inbound') {
         consider(m.fromEmail);
       } else {
@@ -1605,7 +1611,15 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
       for (const raw of (Array.isArray(m.ccEmails) ? m.ccEmails : [])) consider(raw);
     }
     return out;
-  }, [messages, linkedEmails, state.users, state.session, state.gmailAccount]);
+  }, [messages, state.users, state.session, state.gmailAccount]);
+
+  // The ones worth prompting to add as a contact on this deal. Outbound Cc's
+  // count: Cc'ing a client's colleague is exactly how a new stakeholder joins a
+  // deal, and they'd otherwise never be offered.
+  const unknownParticipants = useMemo(() => {
+    if (!linkedEmails) return [];
+    return externalParticipants.filter((e) => !linkedEmails.has(e.toLowerCase()));
+  }, [externalParticipants, linkedEmails]);
 
   // Both single emails and threads now expand inline (a single email used to
   // open the standalone modal — you can still reach it via the row's
@@ -1622,8 +1636,8 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
         expandable
         expanded={expanded}
         dealTitle={dealTitle}
-        onLinkAnother={onLinkAnother ? () => onLinkAnother({ threadId, gmailMessageId: latest.gmailMessageId, subject: latest.subject }) : null}
-        onCreateNewDeal={onCreateNewDeal ? () => onCreateNewDeal({ threadId, gmailMessageId: latest.gmailMessageId, subject: latest.subject }) : null}
+        onLinkAnother={onLinkAnother ? () => onLinkAnother({ threadId, gmailMessageId: latest.gmailMessageId, subject: latest.subject, participants: externalParticipants }) : null}
+        onCreateNewDeal={onCreateNewDeal ? () => onCreateNewDeal({ threadId, gmailMessageId: latest.gmailMessageId, subject: latest.subject, participants: externalParticipants }) : null}
         onUnlink={onUnlink ? () => onUnlink({ threadId, gmailMessageId: latest.gmailMessageId, subject: latest.subject }) : null}
       />
       {unknownParticipants.length > 0 && (
@@ -1961,6 +1975,8 @@ export function NewDealFromEmailFlow({ target, onClose, onCreated }) {
   return (
     <NewDealModal
       initialTitle={initialTitle}
+      // Whoever's on the thread is almost always the deal's primary contact.
+      suggestContactEmails={target?.participants || []}
       onClose={onClose}
       onCreated={async (deal) => {
         if (!deal?.id) {
@@ -3216,7 +3232,6 @@ function EditDealModal({ deal, onClose }) {
   const secondaryContacts = state.dealDetail?.[deal.id]?.secondaryContacts || [];
 
   const companies = Object.values(state.companies || {});
-  const contacts = Object.values(state.contacts || {});
   const users = Object.values(state.users || {});
 
   const createContact = async () => {
@@ -3325,10 +3340,7 @@ function EditDealModal({ deal, onClose }) {
           <span>Primary contact</span>
           {!addingContact ? (
             <>
-              <select className="input" value={primaryContactId} onChange={(e) => setPrimaryContactId(e.target.value)}>
-                <option value="">—</option>
-                {contacts.map(c => <option key={c.id} value={c.id}>{c.name || c.email}</option>)}
-              </select>
+              <ContactSearchPicker value={primaryContactId} onChange={setPrimaryContactId} />
               <button type="button" onClick={() => { setAddingContact(true); setNewContactCompanyId(companyId || ''); setNewCompanyName(''); setContactErr(''); }} className="btn-ghost" style={{ alignSelf: 'flex-start', fontSize: 12, marginTop: 2 }}>+ New contact</button>
             </>
           ) : (
