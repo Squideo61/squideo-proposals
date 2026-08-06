@@ -92,6 +92,40 @@ describe('lineItemsForProject', () => {
     expect(lines[1].discountRate).toBeUndefined();
   });
 
+  // Blanket extras discount: selectedExtras[].price is already net, but when the
+  // pre-discount figure was recorded the invoice bills off THAT with Xero's
+  // discount column, so the invoice mirrors the proposal the client accepted.
+  it('shows the blanket extras discount in the Xero discount column', () => {
+    const signed = {
+      extrasDiscountApplied: { rate: 0.15, value: 15, label: 'Bundle offer' },
+      selectedExtras: [{ label: 'Subtitles', price: 170, listUnitPrice: 200, quantity: 1 }],
+    };
+    const line = lineItemsForProject(proposal, signed, null)[1];
+    expect(line.unitAmount).toBe(200);   // full price...
+    expect(line.discountRate).toBe(15);  // ...less 15% = the 170 that was agreed
+  });
+
+  it('bills the flat net price when the two figures do not reconcile', () => {
+    // A hand-adjusted line: 170 is not 15% off 250, so don't restate it as one.
+    const signed = {
+      extrasDiscountApplied: { rate: 0.15 },
+      selectedExtras: [{ label: 'Subtitles', price: 170, listUnitPrice: 250, quantity: 1 }],
+    };
+    const line = lineItemsForProject(proposal, signed, null)[1];
+    expect(line.unitAmount).toBe(170);
+    expect(line.discountRate).toBeUndefined();
+  });
+
+  it('bills the net price for proposals signed before listUnitPrice was recorded', () => {
+    const signed = {
+      extrasDiscountApplied: { rate: 0.15 },
+      selectedExtras: [{ label: 'Subtitles', price: 170, quantity: 1 }],
+    };
+    const line = lineItemsForProject(proposal, signed, null)[1];
+    expect(line.unitAmount).toBe(170);
+    expect(line.discountRate).toBeUndefined();
+  });
+
   it('uses DiscountAmount for a fixed-£ discount', () => {
     const signed = { discountApplied: { type: 'amount', value: 150, label: 'Promo', amount: 150 } };
     const line = lineItemsForProject(proposal, signed, null)[0];

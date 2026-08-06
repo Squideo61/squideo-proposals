@@ -939,6 +939,19 @@ export function StoreProvider({ children }) {
         }).catch(() => {});
       }, 800);
     },
+    // Duplicate a proposal from the row as STORED, server-side, rather than from
+    // this cache — see POST /api/proposals/:id/duplicate. The copy exists in the
+    // database before the builder opens, so there's no window where a duplicate
+    // is half-saved, and nothing local can water down what gets copied.
+    // Resolves with the new proposal's id.
+    duplicateProposal(id) {
+      return api.post('/api/proposals/' + encodeURIComponent(id) + '/duplicate', {})
+        .then((resp) => {
+          if (!resp || !resp.id) throw new Error('Duplicate failed');
+          setState(s => ({ ...s, proposals: { ...s.proposals, [resp.id]: resp.proposal || {} } }));
+          return resp.id;
+        });
+    },
     // Toggle a proposal's archived flag. PUT replaces the whole data blob, so
     // we send the full proposal (minus client-only metadata) with archived set,
     // optimistically updating state and reverting on failure.

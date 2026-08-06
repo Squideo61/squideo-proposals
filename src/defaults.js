@@ -88,6 +88,29 @@ export function extraUnitPrice(extra, minutes) {
   return base + (mins - 1) * (Number(e.perExtraMinute) || 0);
 }
 
+// A blanket discount across EVERY optional extra, stored on the proposal as
+// `extrasDiscount: { value: 15, label: '' }`. Separate from `discount`, which
+// only ever touches the project base price. Percentage-only on purpose: a flat
+// "£50 off" would be a rounding error on a £2,000 full translation and free
+// money on a £40 thumbnail. Absent / 0 means every extra is at full price.
+// Returns a 0–1 rate.
+export function extrasDiscountRate(data) {
+  const v = Number(data?.extrasDiscount?.value) || 0;
+  if (!(v > 0)) return 0;
+  return Math.min(v, 100) / 100;
+}
+
+// What the client actually pays for one of an extra: the list unit price (see
+// extraUnitPrice) with the proposal's blanket extras discount taken off.
+// Rounded to the penny here so the figure shown, the figure signed, and the
+// figure the checkout re-derives server-side are byte-identical.
+export function extraNetUnitPrice(extra, minutes, rate) {
+  const list = extraUnitPrice(extra, minutes);
+  const r = Number(rate) || 0;
+  if (!(r > 0)) return list;
+  return Math.round(list * (1 - r) * 100) / 100;
+}
+
 // Blueprint for the "Content Credit" proposal template — a one-off bulk credit
 // purchase aimed at larger organisations with a fixed budget to allocate (e.g.
 // an NHS body with a £10k budget who enquired about a single 3-min video, but
@@ -229,10 +252,15 @@ export const DEFAULT_PROPOSAL = {
   showNotableExamples: false,
   notableExamples: [],
   vatRate: 0.20,
-  // Simple manual discount on the project base price (extras stay full price).
-  // Applies only on the standard flow — ignored when the client opts into the
-  // Partner Programme. value <= 0 means no discount. type: 'percent' | 'amount'.
+  // Simple manual discount on the project base price (the optional extras have
+  // their own blanket discount below). Applies only on the standard flow —
+  // ignored when the client opts into the Partner Programme. value <= 0 means
+  // no discount. type: 'percent' | 'amount'.
   discount: { type: 'percent', value: 0, label: '' },
+  // Blanket % off every optional extra — see extrasDiscountRate. Independent of
+  // `discount` and of the Partner Programme: an extras offer stands whichever
+  // route the client takes. value <= 0 means every extra is at full price.
+  extrasDiscount: { value: 0, label: '' },
   validityDays: 28,
   paymentOptions: ['5050', 'full'],
   paymentOptionDescs: {}

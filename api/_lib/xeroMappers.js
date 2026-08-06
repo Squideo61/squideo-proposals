@@ -54,16 +54,29 @@ export function lineItemsForProject(proposal, signed, proposalNumber) {
   const lines = [projectLine];
 
   const chosen = Array.isArray(signed?.selectedExtras) ? signed.selectedExtras : [];
+  // Blanket extras discount, agreed at sign time. extra.price is already net, so
+  // the invoice bills the right amount either way — but when the pre-discount
+  // figure was recorded we bill off THAT with Xero's Discount column, so the
+  // client's invoice shows the same saving their proposal did. Falls back to the
+  // flat net price if the two don't reconcile to the penny.
+  const extrasRate = Number(signed?.extrasDiscountApplied?.rate) || 0;
   for (const extra of chosen) {
     const baseDesc = extra.label || extra.id;
     const description = extra.languages ? `${baseDesc} — ${extra.languages}` : baseDesc;
-    lines.push({
+    const net = Number(extra.price) || 0;
+    const listUnit = Number(extra.listUnitPrice) || 0;
+    const showsDiscount = extrasRate > 0
+      && listUnit > net
+      && Math.abs(Math.round(listUnit * (1 - extrasRate) * 100) / 100 - net) < 0.005;
+    const line = {
       description,
       quantity: Math.max(1, Number(extra.quantity) || 1),
-      unitAmount: Number(extra.price) || 0,
+      unitAmount: showsDiscount ? listUnit : net,
       taxType,
       accountCode: SALES_ACCOUNT,
-    });
+    };
+    if (showsDiscount) line.discountRate = Math.round(extrasRate * 1000) / 10; // e.g. 15 = 15%
+    lines.push(line);
   }
   return lines;
 }

@@ -18,6 +18,9 @@ const PUBLIC_SIGNATURE_FIELDS = [
   'paymentOption', 'total', 'partnerSelected', 'partnerCredits',
   'partnerTotal', 'amountBreakdown',
   'selectedExtras', 'selectedVideoOption',
+  // The discounts locked in at signing — without these the client's own copy of
+  // a signed proposal reverts to full prices.
+  'discountApplied', 'extrasDiscountApplied',
   // The drawn/uploaded signature image (PNG data URL) shown on the signed
   // confirmation + PDF.
   'signatureImage',

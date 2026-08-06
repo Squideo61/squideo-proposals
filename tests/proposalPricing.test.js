@@ -159,6 +159,70 @@ describe('computeProposalCheckout', () => {
     expect(r.amountGross).toBe(5400);
   });
 
+  // Blanket extras discount: a single % off every optional extra, set on the
+  // proposal. The client is shown the reduced prices, so the checkout floor has
+  // to be computed the same way — otherwise a correct payment reads as an
+  // under-payment and gets rejected.
+  it('takes the blanket extras discount off every selected extra', () => {
+    const prop = { ...baseProposal, extrasDiscount: { value: 15 } };
+    const sig = { paymentOption: 'full', selectedExtras: [{ id: 'voiceover' }, { id: 'subtitles' }] };
+    const r = computeProposalCheckout(prop, sig);
+    // extras 125 + 125 = 250, less 15% = 212.50; (5000 + 212.5) * 1.2 = 6255
+    expect(r.amountGross).toBe(6255);
+  });
+
+  it('leaves the base price alone — the extras discount is extras-only', () => {
+    const prop = { ...baseProposal, extrasDiscount: { value: 50 } };
+    const r = computeProposalCheckout(prop, { paymentOption: 'full' });
+    expect(r.amountGross).toBe(6000); // 5000 * 1.2, untouched
+  });
+
+  it('discounts the per-minute scaled price, not the headline one', () => {
+    const prop = { ...perMinProposal, extrasDiscount: { value: 10 } };
+    const sig = { paymentOption: 'full', selectedExtras: [{ id: 'voiceover' }] };
+    const r = computeProposalCheckout(prop, sig);
+    // voiceover on 8 min = 125 + 7*30 = 335, less 10% = 301.50
+    // (5000 + 301.5) * 1.2 = 6361.80
+    expect(r.amountGross).toBe(6361.8);
+  });
+
+  it('applies the extras discount per unit, then multiplies by quantity', () => {
+    const prop = { ...perMinProposal, extrasDiscount: { value: 20 } };
+    const sig = { paymentOption: 'full', selectedExtras: [{ id: 'translatedsubs', quantity: 3 }] };
+    const r = computeProposalCheckout(prop, sig);
+    // unit 200 + 7*30 = 410, less 20% = 328; x3 = 984; (5000 + 984) * 1.2 = 7180.80
+    expect(r.amountGross).toBe(7180.8);
+  });
+
+  it('stacks with the base discount and with the partner programme', () => {
+    const prop = {
+      ...baseProposal,
+      discount: { type: 'percent', value: 10 },
+      extrasDiscount: { value: 25 },
+    };
+    const sig = { paymentOption: 'full', selectedExtras: [{ id: 'voiceover' }] };
+    const r = computeProposalCheckout(prop, sig);
+    // base 5000 - 10% = 4500; extra 125 - 25% = 93.75; (4593.75) * 1.2 = 5512.50
+    expect(r.amountGross).toBe(5512.5);
+  });
+
+  it('ignores a zero, absent or negative extras discount', () => {
+    const sig = { paymentOption: 'full', selectedExtras: [{ id: 'voiceover' }] };
+    const full = computeProposalCheckout(baseProposal, sig).amountGross;
+    expect(computeProposalCheckout({ ...baseProposal, extrasDiscount: { value: 0 } }, sig).amountGross).toBe(full);
+    expect(computeProposalCheckout({ ...baseProposal, extrasDiscount: { value: -20 } }, sig).amountGross).toBe(full);
+  });
+
+  it('ignores an extras discount invented in the signature', () => {
+    const sig = {
+      paymentOption: 'full',
+      selectedExtras: [{ id: 'voiceover', price: 1 }],
+      extrasDiscountApplied: { rate: 0.9 }, // tampered — the proposal has none
+    };
+    const r = computeProposalCheckout(baseProposal, sig);
+    expect(r.amountGross).toBe(6150); // (5000 + 125) * 1.2, undiscounted
+  });
+
   it('uses the selected video option price matched by id', () => {
     const prop = {
       ...baseProposal,

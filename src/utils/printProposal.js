@@ -1,4 +1,4 @@
-import { SQUIDEO_LOGO, extraHasVariants, extraHasQuantity, extraUnitPrice, applyInclusionTokens } from '../defaults.js';
+import { SQUIDEO_LOGO, extraHasVariants, extraHasQuantity, extraUnitPrice, extraNetUnitPrice, extrasDiscountRate, applyInclusionTokens } from '../defaults.js';
 import { CONFIG, DEFAULT_PHOTOS } from '../theme.js';
 import { formatGBP, computeBaseDiscount } from '../utils.js';
 import { printButtonHTML, writeDoc } from './printWindow.js';
@@ -101,7 +101,23 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
   const printMinutes = (data.videoOptions || []).length > 0
     ? Number(signed?.selectedVideoOption?.minutes ?? data.videoOptions[0]?.minutes) || 0
     : Number(data.partnerProgramme?.quotedMinutes) || 0;
-  const getUnit = (e) => extraUnitPrice(e, printMinutes);
+  // Blanket % off every extra — locked into the signature once signed, so a
+  // reprint of a signed proposal always shows the rate that was agreed.
+  const printExtrasRate = signed?.extrasDiscountApplied
+    ? (Number(signed.extrasDiscountApplied.rate) || 0)
+    : extrasDiscountRate(data);
+  const printExtrasLabel = (
+    (signed?.extrasDiscountApplied?.label ?? data.extrasDiscount?.label) || ''
+  ).trim();
+  const signedExtraUnit = new Map(
+    (signed?.selectedExtras || [])
+      .filter((e) => e?.id && Number.isFinite(Number(e.price)))
+      .map((e) => [e.id, Number(e.price)])
+  );
+  const getListUnit = (e) => extraUnitPrice(e, printMinutes);
+  const getUnit = (e) => (
+    signedExtraUnit.has(e.id) ? signedExtraUnit.get(e.id) : extraNetUnitPrice(e, printMinutes, printExtrasRate)
+  );
   const extrasTotal = data.optionalExtras.reduce((s, e) => {
     if (!selectedExtras[e.id]) return s;
     return s + getUnit(e) * getQty(e);
@@ -189,6 +205,15 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
       : `<div style="width:14px;height:14px;border:2px solid #C7CFD8;border-radius:3px;flex-shrink:0;background:${checked ? '#2BB8E6' : 'white'};"></div>`;
     const qty = getQty(e);
     const unit = getUnit(e);
+    const listUnit = getListUnit(e);
+    // Gated on the rate so a legacy signature's unscaled agreed price can't
+    // render as a discount that was never offered (mirrors ClientView).
+    const discounted = printExtrasRate > 0 && listUnit > unit + 0.005;
+    // Full price struck through beside the discounted one, mirroring ClientView.
+    const struck = (n) => (discounted
+      ? `<s style="color:#6B7785;font-weight:500;margin-right:5px;">${formatGBP(n)}</s>`
+      : '');
+    const net = (n) => `<span style="${discounted ? 'color:#15803D;' : ''}">${formatGBP(n)}</span>`;
     const languages = selectedExtrasMeta[e.id]?.languages || '';
     const showVariantSummary = extraHasQuantity(e) && checked;
     const labelExtra = showVariantSummary && qty > 1 ? ` <span style="color:#6B7785;font-weight:500;">× ${qty}</span>` : '';
@@ -197,10 +222,10 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
       : '';
     const priceCell = showVariantSummary
       ? `<div style="text-align:right;white-space:nowrap;">
-           <div style="font-weight:600;">${formatGBP(unit * qty)}</div>
+           <div style="font-weight:600;">${struck(listUnit * qty)}${net(unit * qty)}</div>
            <div style="font-size:11px;color:#6B7785;font-weight:500;">${formatGBP(unit)} × ${qty}</div>
          </div>`
-      : `<div style="font-weight:600;white-space:nowrap;">${formatGBP(unit)}</div>`;
+      : `<div style="font-weight:600;white-space:nowrap;">${struck(listUnit)}${net(unit)}</div>`;
     return `
       <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid #E5E9EE;font-size:13px;">
         ${box}
@@ -478,6 +503,7 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
   <!-- Optional extras (hidden when the proposal opts out, unless extras were already selected) -->
   ${(((signable && !data.hideOptionalExtras) || extrasToShow.length > 0)) ? `
   <h2 class="page-title">${signable ? 'Optional Extras' : 'Selected Optional Extras'}</h2>
+  ${printExtrasRate > 0 ? `<p style="font-size:13px;font-weight:600;color:#9D174D;background:#FDF2F8;border:1px solid #FBCFE8;border-radius:8px;padding:9px 13px;margin:0 0 10px;">${printExtrasLabel ? esc(printExtrasLabel) + ' — ' : ''}${Math.round(printExtrasRate * 1000) / 10}% off every optional extra.</p>` : ''}
   <div style="border:1px solid #E5E9EE;border-radius:10px;padding:4px 16px;margin-bottom:16px;">
     ${extrasRows}
   </div>` : ''}

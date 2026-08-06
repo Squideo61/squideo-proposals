@@ -57,6 +57,23 @@ export function extraUnitPrice(extra, minutes) {
   return base + (mins - 1) * (Number(e.perExtraMinute) || 0);
 }
 
+// Mirror of extrasDiscountRate in src/defaults.js: a blanket % off every
+// optional extra, read from the PROPOSAL (never the signature). Signed
+// proposals are frozen, so this is always the rate the client was shown.
+export function extrasDiscountRate(data) {
+  const v = Number(data?.extrasDiscount?.value) || 0;
+  if (!(v > 0)) return 0;
+  return Math.min(v, 100) / 100;
+}
+
+// Mirror of extraNetUnitPrice in src/defaults.js.
+export function extraNetUnitPrice(extra, minutes, rate) {
+  const list = extraUnitPrice(extra, minutes);
+  const r = Number(rate) || 0;
+  if (!(r > 0)) return list;
+  return Math.round(list * (1 - r) * 100) / 100;
+}
+
 // The video option the client selected (matched back to the proposal), else the
 // first option. Shared by computeProposalCheckout and the voiceover pricing.
 function selectedVideoOption(data, sig) {
@@ -92,7 +109,11 @@ export function voiceoverProposalContext(proposalData, signatureData) {
   const minutes = proposalContentMinutes(data, sig);
   const extras = Array.isArray(data.optionalExtras) ? data.optionalExtras : [];
   const voExtra = extras.find((e) => e && e.id === 'voiceover') || null;
-  const humanPrice = voExtra ? round2(extraUnitPrice(voExtra, minutes)) : null;
+  // The exact figure the proposal showed — per-minute scaled, then net of any
+  // blanket extras discount.
+  const humanPrice = voExtra
+    ? round2(extraNetUnitPrice(voExtra, minutes, extrasDiscountRate(data)))
+    : null;
 
   const selectedExtras = Array.isArray(sig.selectedExtras) ? sig.selectedExtras : [];
   const purchased = selectedExtras.find((e) => e && e.id === 'voiceover') || null;
@@ -154,13 +175,18 @@ export function computeProposalCheckout(proposalData, signatureData) {
   // the PROPOSAL (never the signature) so a tampered figure can't cut the price.
   const contentMinutes = proposalContentMinutes(data, sig);
 
+  // Blanket extras discount, also from the proposal — the client saw every extra
+  // at this reduced price, so the checkout floor must be computed the same way
+  // or a correct payment would be rejected as an under-payment.
+  const extrasRate = extrasDiscountRate(data);
+
   let extrasTotal = 0;
   for (const selRaw of selectedExtras) {
     const e = extrasById.get(selRaw?.id);
     if (!e) continue; // a selection not present in the proposal can't be charged
     if (e.includeAsStandard) continue; // included in the package — never charged
     const qty = extraHasQuantity(e) ? Math.max(1, Number(selRaw.quantity) || 1) : 1;
-    extrasTotal += extraUnitPrice(e, contentMinutes) * qty;
+    extrasTotal += extraNetUnitPrice(e, contentMinutes, extrasRate) * qty;
   }
 
   const partnerSelected = sig.partnerSelected === true;

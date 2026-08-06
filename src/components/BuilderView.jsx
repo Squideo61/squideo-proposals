@@ -7,7 +7,7 @@ import { Field, Modal, Section } from './ui.jsx';
 import { LogoUploader } from './LogoUploader.jsx';
 import { TeamMemberEditor } from './TeamMemberEditor.jsx';
 import { ExtrasBankManager } from './ExtrasBankManager.jsx';
-import { extraHasVariants, extraUnitPrice, resolveExtraPricing, DEFAULT_PROPOSAL, VARIANT_ELIGIBLE_IDS } from '../defaults.js';
+import { extraHasVariants, extraUnitPrice, extraNetUnitPrice, extrasDiscountRate, resolveExtraPricing, DEFAULT_PROPOSAL, VARIANT_ELIGIBLE_IDS } from '../defaults.js';
 import { InclusionsBankManager } from './InclusionsBankManager.jsx';
 import { ClientLinkPanel } from './crm/ClientLinkPanel.jsx';
 
@@ -248,9 +248,72 @@ function DiscountEditor({ basePrice, discount, onChange, isMobile }) {
       {value > 0 && basePrice > 0 && (
         <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 4 }}>
           Base {formatGBP(basePrice)} → <strong style={{ color: '#15803d' }}>{formatGBP(basePrice - amount)}</strong>
-          {' '}({isPct ? `${value}% off` : `${formatGBP(amount)} off`}). Optional extras stay full price; ignored if the client opts into the Partner Programme.
+          {' '}({isPct ? `${value}% off` : `${formatGBP(amount)} off`}). Optional extras have their own discount (in the Optional Extras section); ignored if the client opts into the Partner Programme.
         </div>
       )}
+    </div>
+  );
+}
+
+// Blanket % off every optional extra. Unlike the base-price discount above this
+// one survives the Partner Programme — an extras offer is a separate promise to
+// the client — and it's shown per extra on the proposal (full price struck
+// through), not as a single line at the bottom, so the saving reads as an offer
+// rather than as an accounting adjustment.
+function ExtrasDiscountEditor({ extrasDiscount, onChange, sampleExtra, contentMinutes, isMobile }) {
+  const d = extrasDiscount || { value: 0, label: '' };
+  const value = Number(d.value) || 0;
+  const [open, setOpen] = useState(value > 0);
+  const rate = value > 0 ? Math.min(value, 100) / 100 : 0;
+
+  if (!open) {
+    return (
+      <button type="button" className="btn-ghost" style={{ marginBottom: 12 }} onClick={() => setOpen(true)}>
+        <Plus size={14} /> Discount all extras
+      </button>
+    );
+  }
+
+  // Worked example off the first paid extra, so the effect is concrete before
+  // anything is sent.
+  const listUnit = sampleExtra ? extraUnitPrice(sampleExtra, contentMinutes) : 0;
+  const netUnit = sampleExtra ? extraNetUnitPrice(sampleExtra, contentMinutes, rate) : 0;
+
+  return (
+    <div style={{ border: '1px solid #FBCFE8', background: '#FDF2F8', borderRadius: 8, padding: '12px 14px', marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <div style={{ fontSize: 13, fontWeight: 600 }}>Discount on all optional extras</div>
+        <button
+          type="button"
+          className="btn-ghost"
+          style={{ color: '#B91C1C', fontSize: 12, padding: '2px 8px' }}
+          onClick={() => { onChange({ ...d, value: 0 }); setOpen(false); }}
+        >
+          <X size={13} /> Remove
+        </button>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '160px 1fr', gap: 12 }}>
+        <Field label="Percentage off (%)">
+          <PriceInput min="0" max="100" step="1" className="input" value={value} onChange={(n) => onChange({ ...d, value: n })} />
+        </Field>
+        <Field label="Label shown on the proposal (optional)">
+          <input className="input" value={d.label || ''} placeholder="e.g. Bundle offer" onChange={(e) => onChange({ ...d, label: e.target.value })} />
+        </Field>
+      </div>
+      <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 4, lineHeight: 1.5 }}>
+        {value > 0 ? (
+          <>
+            Every extra below shows its full price struck through at{' '}
+            <strong style={{ color: '#9D174D' }}>{value}% off</strong>
+            {sampleExtra && listUnit > 0 && (
+              <> — e.g. {sampleExtra.label} {formatGBP(listUnit)} → <strong style={{ color: '#15803d' }}>{formatGBP(netUnit)}</strong></>
+            )}
+            . Applies whether or not they take the Partner Programme, and it&rsquo;s locked in when they sign.
+          </>
+        ) : (
+          <>Set a percentage to take it off every extra at once.</>
+        )}
+      </div>
     </div>
   );
 }
@@ -1526,6 +1589,13 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
             Your extras below are kept but won&apos;t be shown to the client. Untick to show the section again.
           </div>
         )}
+        <ExtrasDiscountEditor
+          extrasDiscount={data.extrasDiscount}
+          onChange={(next) => update({ extrasDiscount: next })}
+          sampleExtra={data.optionalExtras.find((e) => !e.includeAsStandard) || null}
+          contentMinutes={contentMinutes}
+          isMobile={isMobile}
+        />
         {data.optionalExtras.map((extra, i) => (
           <div
             key={extra.id}
@@ -1590,6 +1660,14 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
               const eff = resolveExtraPricing(extra) || extra;
               const perMin = eff.priceModel === 'perExtraMinute';
               const mins = Math.max(1, Number(contentMinutes) || 1);
+              // With a blanket extras discount on, the "→ £x at n mins" preview
+              // must show what the client actually pays, with the struck-through
+              // list price beside it — otherwise the builder quotes one figure
+              // and the proposal another.
+              const rate = extrasDiscountRate(data);
+              const listUnit = extraUnitPrice(eff, mins);
+              const netUnit = extraNetUnitPrice(eff, mins, rate);
+              const discounted = rate > 0 && !extra.includeAsStandard;
               return (
                 <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
                   <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: BRAND.muted, cursor: 'pointer' }}>
@@ -1613,9 +1691,19 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
                       />
                       <span>per additional minute</span>
                       <span style={{ color: BRAND.ink, fontWeight: 600 }}>
-                        → {formatGBP(extraUnitPrice(eff, mins))} at {mins} min{mins === 1 ? '' : 's'}
+                        → {discounted && <s style={{ color: BRAND.muted, fontWeight: 500, marginRight: 4 }}>{formatGBP(listUnit)}</s>}
+                        <span style={discounted ? { color: '#15803d' } : undefined}>{formatGBP(netUnit)}</span>
+                        {' '}at {mins} min{mins === 1 ? '' : 's'}
                       </span>
                     </div>
+                  )}
+                  {/* Fixed-price extras have no scaling line, so the discounted
+                      figure needs saying here or it's invisible until preview. */}
+                  {discounted && !perMin && (
+                    <span style={{ fontSize: 12, color: BRAND.ink, fontWeight: 600 }}>
+                      → <s style={{ color: BRAND.muted, fontWeight: 500, marginRight: 4 }}>{formatGBP(listUnit)}</s>
+                      <span style={{ color: '#15803d' }}>{formatGBP(netUnit)}</span>
+                    </span>
                   )}
                   <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: BRAND.muted, cursor: 'pointer' }}>
                     <input

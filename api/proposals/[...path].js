@@ -3,6 +3,7 @@
 //   GET    /api/proposals/:id             — public single read
 //   PUT    /api/proposals/:id             — save + auto-create-deal (auth)
 //   DELETE /api/proposals/:id             — delete (auth)
+import crypto from 'crypto';
 import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
 import { getRole } from '../_lib/userRoles.js';
@@ -17,6 +18,14 @@ function proposalLabel(data) {
   return d.proposalTitle || d.contactBusinessName || d.clientName || null;
 }
 
+// dd/mm/yyyy — the `date` field's format everywhere else in the app (the
+// browser writes it with toLocaleDateString('en-GB')). Built by hand rather
+// than via toLocaleDateString so it can't drift with the runtime's locale data.
+function formatDateGB(d) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()}`;
+}
+
 // Allowlist of fields the public client view (ClientView + ThankYouView +
 // SignedBlock + printProposal) actually consumes. The full `data` JSONB on
 // `proposals` is auth-only — anything not enumerated here must not leak to the
@@ -27,6 +36,7 @@ const PUBLIC_PROPOSAL_FIELDS = [
   'preparedBy', 'preparedByTitle', 'preparedByEmail',
   'showIntro', 'introHeading', 'intro', 'team', 'requirement', 'requirementSummary', 'projectVision',
   'basePrice', 'videoOptions', 'baseInclusions', 'optionalExtras',
+  'hideOptionalExtras', 'extrasDiscount', 'discount',
   'partnerProgramme',
   'processVideoUrl', 'showProcessVideo',
   'notableExamples', 'showNotableExamples',
@@ -54,6 +64,7 @@ export default async function handler(req, res) {
   const segs = urlPath.split('/').filter(Boolean).slice(2); // strip 'api', 'proposals'
   const first = segs[0] || null;
   const id = first === '_root' ? null : first;
+  const sub = segs[1] || null; // sub-action, e.g. /api/proposals/:id/duplicate
 
   // --- Collection routes (no id) ---
   if (!id) {
@@ -65,7 +76,7 @@ export default async function handler(req, res) {
 
   // --- Item routes (with id) ---
 
-  if (req.method === 'GET') {
+  if (req.method === 'GET' && !sub) {
     // Public — clients read their proposal without auth.
     const rows = await sql`
       SELECT data, number_year, number_seq, deal_id
@@ -82,6 +93,73 @@ export default async function handler(req, res) {
 
   const user = await requireAuth(req, res);
   if (!user) return;
+
+  // POST /api/proposals/:id/duplicate — copy of the STORED proposal.
+  //
+  // Duplication used to happen in the browser, off the cached list, and the copy
+  // was only written by the builder's debounced auto-save. That let a stale or
+  // partially-loaded cache decide what got copied (and left the new row unsaved
+  // for a beat). Copying server-side from the row itself means what you see
+  // stored is exactly what the duplicate gets — every extra, price and pricing
+  // model included.
+  if (sub === 'duplicate') {
+    if (req.method !== 'POST') return res.status(405).end();
+    const rows = await sql`SELECT data, deal_id FROM proposals WHERE id = ${id}`;
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+
+    const copy = JSON.parse(JSON.stringify(rows[0].data || {}));
+    // Everything belonging to the ORIGINAL's lifecycle rather than its content.
+    // The underscore keys are list-view metadata the browser hangs off the
+    // proposal object; they leaked into the copy's stored data under the old
+    // client-side duplicate, so a duplicate of a signed proposal carried a
+    // phantom signature and payment blob around with it.
+    for (const k of [
+      'id', 'name', '_number', '_views', '_createdAt', '_dealId',
+      '_signature', '_payment', '_paidAmount',
+      '_hasXeroInvoice', '_xeroInvoiceId', '_hasXeroQuote',
+    ]) delete copy[k];
+    // A duplicate is new work: it starts unarchived, dated today, prepared by
+    // whoever pressed the button.
+    copy.archived = false;
+    copy.preparedBy = user.name || copy.preparedBy || null;
+    copy.preparedByEmail = user.email || copy.preparedByEmail || null;
+    copy.date = formatDateGB(new Date());
+    copy.createdAt = Date.now();
+
+    const newId = 'id_' + Date.now() + '_' + crypto.randomBytes(9).toString('hex');
+    const y = new Date().getFullYear();
+    await sql`
+      INSERT INTO proposals (id, data, updated_at, number_year, number_seq, deal_id)
+      VALUES (
+        ${newId}, ${JSON.stringify(copy)}, NOW(), ${y},
+        COALESCE((SELECT MAX(number_seq) + 1 FROM proposals WHERE number_year = ${y}), 1),
+        ${rows[0].deal_id || null}
+      )
+    `;
+    const meta = await sql`SELECT number_year, number_seq, deal_id, created_at FROM proposals WHERE id = ${newId}`;
+    const m = meta[0];
+    logStaffActivity({
+      actorEmail: user.email,
+      action: 'proposals.duplicate',
+      entity: 'proposals',
+      entityId: newId,
+      entityLabel: proposalLabel(copy),
+      summary: 'duplicated a proposal',
+    }).catch(() => {});
+    return res.status(200).json({
+      id: newId,
+      proposal: {
+        ...copy,
+        _number: m && m.number_year && m.number_seq ? { year: m.number_year, seq: m.number_seq } : null,
+        _dealId: m?.deal_id || null,
+        _createdAt: m?.created_at || null,
+        _views: { opens: 0, duration: 0, lastActiveAt: null },
+        _paidAmount: 0,
+        _signature: null,
+        _payment: null,
+      },
+    });
+  }
 
   if (req.method === 'PUT') {
     const body = req.body || {};

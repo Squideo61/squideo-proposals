@@ -389,25 +389,16 @@ function AppShell() {
     actions.deleteProposal(id);
   };
 
+  // Copied server-side from the stored proposal, so the duplicate is exactly
+  // what's on file — every extra, price and pricing model — rather than whatever
+  // this browser happens to be holding.
   const duplicateProposal = (id) => {
-    const source = state.proposals[id];
-    if (!source) return;
-    const newId = makeId();
-    const copy = JSON.parse(JSON.stringify(source));
-    delete copy.id;
-    delete copy._number;
-    delete copy._views;
-    delete copy._createdAt;
-    const data = {
-      ...copy,
-      preparedBy: user.name || copy.preparedBy || 'Adam Shelton',
-      preparedByEmail: user.email || copy.preparedByEmail || null,
-      date: new Date().toLocaleDateString('en-GB'),
-      createdAt: Date.now(),
-    };
-    actions.saveProposal(newId, data);
-    navigate('builder', newId);
-    showMsg('Proposal duplicated');
+    actions.duplicateProposal(id)
+      .then((newId) => {
+        navigate('builder', newId);
+        showMsg('Proposal duplicated');
+      })
+      .catch(() => showMsg('Could not duplicate this proposal'));
   };
 
   const deleteTemplate = (id) => {

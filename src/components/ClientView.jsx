@@ -5,7 +5,7 @@ import {
   Play, RefreshCw, Rocket, Share2, Smartphone, Sparkles, Users
 } from 'lucide-react';
 import { BRAND, CONFIG, DEFAULT_PHOTOS } from '../theme.js';
-import { SQUIDEO_LOGO, NEXT_STEPS, extraHasVariants, extraHasQuantity, extraUnitPrice, resolveExtraPricing, applyInclusionTokens } from '../defaults.js';
+import { SQUIDEO_LOGO, NEXT_STEPS, extraHasVariants, extraHasQuantity, extraUnitPrice, extraNetUnitPrice, extrasDiscountRate, resolveExtraPricing, applyInclusionTokens } from '../defaults.js';
 import { useStore } from '../store.jsx';
 import { formatGBP, sendNotification, useIsMobile, computeBaseDiscount } from '../utils.js';
 import { openPrintWindow, openReceiptWindow, printOptionsForSigned } from '../utils/printProposal.js';
@@ -417,14 +417,31 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
     ? Number(videoOptions[selectedVideoOptionIdx]?.minutes) || 0
     : Number(data.partnerProgramme?.quotedMinutes) || 0;
 
+  // Blanket % off every optional extra. Locked into the signature at sign time so
+  // a later change to the proposal can't restate what was agreed.
+  const extrasRate = signed?.extrasDiscountApplied
+    ? (Number(signed.extrasDiscountApplied.rate) || 0)
+    : extrasDiscountRate(data);
+  const extrasDiscountLabel = (
+    (signed?.extrasDiscountApplied?.label ?? data.extrasDiscount?.label) || ''
+  ).trim();
+
   // A signed proposal bills the unit price agreed at signing, so later changes to
   // the proposal's extras (or to the pricing catalogue) can't move a signed total.
+  // listUnitPrice is the pre-discount figure the client saw struck through.
   const signedExtraPrice = new Map();
+  const signedExtraListPrice = new Map();
   for (const e of (signed?.selectedExtras || [])) {
-    if (e?.id && Number.isFinite(Number(e.price))) signedExtraPrice.set(e.id, Number(e.price));
+    if (!e?.id) continue;
+    if (Number.isFinite(Number(e.price))) signedExtraPrice.set(e.id, Number(e.price));
+    if (Number.isFinite(Number(e.listUnitPrice))) signedExtraListPrice.set(e.id, Number(e.listUnitPrice));
   }
   const unitPriceFor = (e) => (
-    signedExtraPrice.has(e.id) ? signedExtraPrice.get(e.id) : extraUnitPrice(e, contentMinutes)
+    signedExtraPrice.has(e.id) ? signedExtraPrice.get(e.id) : extraNetUnitPrice(e, contentMinutes, extrasRate)
+  );
+  // Full price before the blanket discount — what gets struck through.
+  const listPriceFor = (e) => (
+    signedExtraListPrice.has(e.id) ? signedExtraListPrice.get(e.id) : extraUnitPrice(e, contentMinutes)
   );
 
   const extrasTotal = data.optionalExtras.reduce((s, e) => {
@@ -533,8 +550,18 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
       selectedExtras: data.optionalExtras
         .filter((e) => selectedExtras[e.id])
         .map((e) => {
-          const unit = extraUnitPrice(e, contentMinutes);
-          const base = { ...e, price: unit, listPrice: Number(e.price) || 0, contentMinutes };
+          // `price` is what's billed: scaled for minutes AND net of the blanket
+          // extras discount. listUnitPrice keeps the pre-discount scaled figure
+          // (what the client saw struck through) for the invoice's discount
+          // column; listPrice keeps the unscaled catalogue figure.
+          const unit = extraNetUnitPrice(e, contentMinutes, extrasRate);
+          const base = {
+            ...e,
+            price: unit,
+            listUnitPrice: extraUnitPrice(e, contentMinutes),
+            listPrice: Number(e.price) || 0,
+            contentMinutes,
+          };
           return extraHasQuantity(e)
             ? {
                 ...base,
@@ -574,6 +601,16 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
         // language for a single upfront credit purchase.
         oneoff: isOneoff,
       } : null,
+      // Lock the agreed blanket extras discount the same way. Unlike the base
+      // discount this one applies on the Partner route too, so it's recorded
+      // whichever way the client went.
+      ...(extrasRate > 0 ? {
+        extrasDiscountApplied: {
+          rate: extrasRate,
+          value: Number(data.extrasDiscount?.value) || 0,
+          label: (data.extrasDiscount?.label || '').trim(),
+        },
+      } : {}),
       // Lock the agreed manual discount so later edits to data.discount don't
       // change a signed/invoiced proposal (mirrors amountBreakdown for Partner).
       ...(!partnerSelected && manualDiscount > 0 ? {
@@ -1126,6 +1163,12 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
         return (
         <>
         <PageTitle>Optional Extras</PageTitle>
+        {extrasRate > 0 && (
+          <p style={{ fontSize: 13.5, lineHeight: 1.6, color: '#9D174D', background: '#FDF2F8', border: '1px solid #FBCFE8', borderRadius: 8, padding: '10px 14px', margin: '0 0 12px', fontWeight: 600 }}>
+            {extrasDiscountLabel ? extrasDiscountLabel + ' — ' : ''}
+            {formatPct(extrasRate)}% off every optional extra below.
+          </p>
+        )}
         {isCreditOnly && (
           <p style={{ fontSize: 13, lineHeight: 1.6, color: '#15803D', background: '#F0FDF4', border: '1px solid #A7F3D0', borderRadius: 8, padding: '10px 14px', margin: '0 0 12px' }}>
             Any unused content credit can be put towards any of the extras below, at any time.
@@ -1139,8 +1182,14 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
             const qtyOn = extraHasQuantity(extra);
             const qty = qtyOn ? Math.max(1, Number(meta.quantity) || 1) : 1;
             const showVariants = qtyOn && isSelected;
-            // Unit price scales with the minutes of content the proposal covers.
+            // Unit price scales with the minutes of content the proposal covers,
+            // then the blanket extras discount comes off.
             const unit = unitPriceFor(extra);
+            const listUnit = listPriceFor(extra);
+            // Gated on the rate, not just on the two figures differing: a legacy
+            // signature stores an unscaled agreed price, which would otherwise
+            // read as a discount it never had.
+            const discounted = extrasRate > 0 && listUnit > unit + 0.005;
             const scaled = resolveExtraPricing(extra)?.priceModel === 'perExtraMinute' && contentMinutes > 1;
             return (
               <div key={extra.id} style={{ borderBottom: i < paidExtras.length - 1 ? '1px solid ' + BRAND.border : 'none', background: isSelected ? '#F0F9FF' : 'white' }}>
@@ -1151,7 +1200,10 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
                     {extra.description && <div style={{ fontSize: 12, color: BRAND.muted, lineHeight: 1.5, marginTop: 4 }}>{extra.description}</div>}
                   </div>
                   <span style={{ fontSize: 14, fontWeight: 600, flexShrink: 0, textAlign: 'right' }}>
-                    {formatGBP(unit * qty)}
+                    {discounted && (
+                      <s style={{ color: BRAND.muted, fontWeight: 500, marginRight: 6 }}>{formatGBP(listUnit * qty)}</s>
+                    )}
+                    <span style={discounted ? { color: '#15803D' } : undefined}>{formatGBP(unit * qty)}</span>
                     {(qtyOn || scaled) && (
                       <div style={{ fontSize: 11, color: BRAND.muted, fontWeight: 500 }}>
                         {qtyOn && isSelected
