@@ -450,9 +450,13 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
     const qty = extraHasQuantity(e) ? Math.max(1, Number(getMeta(e.id).quantity) || 1) : 1;
     return s + unitPriceFor(e) * qty;
   }, 0);
-  // Simple manual discount on the base price — standard flow only. When the
-  // client opts into the Partner Programme its own discount takes over and this
-  // is ignored. Once signed, the agreed amount is locked in signed.discountApplied.
+  // Simple manual discount on the base price. It STANDS whichever route the
+  // client takes: the Partner Programme used to replace it, which could leave a
+  // discounted project costing more after opting in than before. The programme
+  // now discounts the minutes being added instead of re-discounting a project
+  // that's already been discounted (see partnerDiscount below). Once signed, the
+  // agreed amount is locked in signed.discountApplied.
+  //
   // Is the project already free before any Partner Programme? Either the base
   // price is £0 or a 100% manual discount wipes it out. When so, opting into the
   // Partner Programme must NOT reintroduce the full price and shave its own % off
@@ -460,7 +464,12 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
   // (Otherwise a free project would paradoxically start costing money on opt-in.)
   const manualDiscountAmount = computeBaseDiscount(effectiveBasePrice, data.discount);
   const projectFullyDiscounted = effectiveBasePrice <= 0 || manualDiscountAmount >= effectiveBasePrice - 0.005;
-  const manualDiscount = (partnerSelected && !projectFullyDiscounted)
+  // A signature taken before that change locked in a partner discount ON THE
+  // PROJECT — those terms are settled, so they keep the pricing they were
+  // agreed under. Only the shape of the locked breakdown is read here, never an
+  // amount from it.
+  const legacyPartnerProjectDiscount = Number(signed?.amountBreakdown?.discountRate) > 0;
+  const manualDiscount = (legacyPartnerProjectDiscount && !projectFullyDiscounted)
     ? 0
     : (signed?.discountApplied?.amount ?? manualDiscountAmount);
   const netBasePrice = effectiveBasePrice - manualDiscount;
@@ -505,10 +514,16 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
   const partnerSubtotal = partnerRatePerMin * partnerCredits;
   const partnerVat = partnerSubtotal * data.vatRate;
   const partnerTotal = partnerSubtotal + partnerVat;
-  // No further partner discount on a project that's already free. In credit-only
-  // mode the quoted work is never discounted at all — the tier rate applies only
-  // to the extra minutes bought here (already baked into partnerRatePerMin).
-  const partnerDiscount = (projectFullyDiscounted || isCreditOnly) ? 0 : subtotal * effectiveDiscount;
+  // No further partner discount on a project that's already free, nor on one
+  // that's already been discounted by hand — a project gets ONE discount, and
+  // the one the salesperson set wins. The tier rate still applies to the minutes
+  // being added (it's baked into partnerRatePerMin), which is the whole point of
+  // the programme. In credit-only mode the quoted work is never discounted at
+  // all, by the same logic.
+  const projectAlreadyDiscounted = manualDiscount > 0.005;
+  const partnerDiscount = (projectFullyDiscounted || isCreditOnly || projectAlreadyDiscounted)
+    ? 0
+    : subtotal * effectiveDiscount;
   const discountedSubtotal = subtotal - partnerDiscount;
   // Savings split: what comes off the quoted work, and what's saved on the extra
   // minutes bought here. In credit-only mode the first is always zero.
@@ -586,10 +601,12 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
         partnerTotal,
         partnerCredits,
         // discountRate is what downstream (Xero lineItemsForDiscountedProject)
-        // shaves off the PROJECT lines. In credit-only mode the quoted work is
-        // never discounted, so this must be 0 — the tier rate lives on the added
-        // credit minutes only and is recorded separately as creditDiscountRate.
-        discountRate: isCreditOnly ? 0 : effectiveDiscount,
+        // shaves off the PROJECT lines. In credit-only mode — and on a project
+        // already discounted by hand — the quoted work isn't discounted by the
+        // programme, so this must be 0 or the invoice would double-discount it.
+        // The tier rate lives on the added credit minutes and is recorded
+        // separately as creditDiscountRate.
+        discountRate: (isCreditOnly || projectAlreadyDiscounted) ? 0 : effectiveDiscount,
         creditDiscountRate: effectiveDiscount,
         creditOnly: isCreditOnly,
         // Minutes quoted in the main section. In credit-only mode these are also
@@ -613,7 +630,9 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
       } : {}),
       // Lock the agreed manual discount so later edits to data.discount don't
       // change a signed/invoiced proposal (mirrors amountBreakdown for Partner).
-      ...(!partnerSelected && manualDiscount > 0 ? {
+      // Recorded on the Partner route too now that opting in keeps it — the
+      // invoice reads the project's discount from here.
+      ...(manualDiscount > 0 ? {
         discountApplied: {
           type: data.discount?.type || 'percent',
           value: Number(data.discount?.value) || 0,
@@ -1256,8 +1275,11 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
         {/* Credit-only proposals add credit inline at the total instead — the
             standalone opt-in panel is the Partner Programme shape, not this one. */}
         {data.partnerProgramme.enabled && !isCreditOnly && (
-          <div style={{ position: 'relative', marginTop: partnerDiscount > 0 && !isMobile ? 24 : 16, marginBottom: 16, background: '#FFFAEB', border: '1px solid #C9A227', borderRadius: 12, padding: isMobile ? 12 : 16 }}>
-            {partnerDiscount > 0 && (
+          <div style={{ position: 'relative', marginTop: savingPerMin > 0 && !isMobile ? 24 : 16, marginBottom: 16, background: '#FFFAEB', border: '1px solid #C9A227', borderRadius: 12, padding: isMobile ? 12 : 16 }}>
+            {/* Keyed off the per-minute saving, not the project discount: on an
+                already-discounted project there's no project win, but "save up
+                to X% on the minutes you bank" is still exactly the offer. */}
+            {savingPerMin > 0 && (
               // Desktop floats the "save" badge over the top-right corner. On a
               // phone that badge wraps to 2-3 lines and covers the logo/heading,
               // so it sits inline as a full-width pill above the header instead.
@@ -1328,7 +1350,9 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
                           <strong style={{ color: '#92400E' }}>{isOneoff ? 'Secure additional content now and save twice,' : 'Subscribe now and save twice,'}</strong>{' '}
                           {showProjectWin
                             ? <>we&apos;ll discount <strong>{formatGBP(partnerDiscount)} ({pct}%)</strong> off <em>this</em> project <strong>and</strong> lock every {isOneoff ? 'minute you bank' : 'monthly minute'} at the same discounted rate for future videos.</>
-                            : <>we&apos;ll lock every {isOneoff ? 'minute you bank' : 'monthly minute'} at a discounted rate for future videos.</>}
+                            : projectAlreadyDiscounted
+                              ? <>your project already has <strong>{formatGBP(manualDiscount)}</strong> off, so this locks every {isOneoff ? 'minute you bank' : 'monthly minute'} at a discounted rate for future videos on top.</>
+                              : <>we&apos;ll lock every {isOneoff ? 'minute you bank' : 'monthly minute'} at a discounted rate for future videos.</>}
                         </>
                       )}
                       {partnerExtraPerCredit > 0 && !atMax && <> Add more and {showProjectWin ? 'both discounts grow' : 'your discount grows'}, up to <strong>{maxPct}% off</strong>.</>}

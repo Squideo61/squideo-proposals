@@ -193,12 +193,14 @@ export function computeProposalCheckout(proposalData, signatureData) {
   const partnerCredits = Math.max(1, Number(sig.partnerCredits) || 1);
 
   // --- Standard (non-partner) totals ---
-  // A project that's already free (base £0 or 100% manual discount) stays free on
-  // the Partner Programme — keep its discount instead of dropping it for a smaller
-  // partner %. Mirrors ClientView so the validated total matches what the client saw.
+  // The manual discount applies whichever route the client took: opting into the
+  // Partner Programme no longer replaces it — the programme discounts the added
+  // minutes instead of re-discounting an already-discounted project. Mirrors
+  // ClientView so the validated total matches what the client saw. Recomputed
+  // from the PROPOSAL, never read off the signature.
   const manualDiscountAmount = computeBaseDiscount(effectiveBasePrice, data.discount);
   const projectFullyDiscounted = effectiveBasePrice <= 0 || manualDiscountAmount >= effectiveBasePrice - 0.005;
-  const manualDiscount = (partnerSelected && !projectFullyDiscounted) ? 0 : manualDiscountAmount;
+  const manualDiscount = manualDiscountAmount;
   const netBasePrice = effectiveBasePrice - manualDiscount;
   const subtotal = netBasePrice + extrasTotal;        // ex VAT
   const total = subtotal * (1 + vatRate);             // gross
@@ -220,8 +222,22 @@ export function computeProposalCheckout(proposalData, signatureData) {
   // and discount ONLY the extra minutes added on the proposal, so the project
   // subtotal never gets a partner discount here. Mirrors ClientView.
   const isCreditOnly = pp.mode === 'oneoff' && !!pp.creditOnly;
-  const partnerDiscount     = (projectFullyDiscounted || isCreditOnly) ? 0 : subtotal * effectiveDiscount;
-  const discountedSubtotal  = subtotal - partnerDiscount;          // project ex VAT
+  // A project already discounted by hand doesn't get the programme's discount
+  // on top — same rule as credit-only, and the same rule the client was shown.
+  const projectAlreadyDiscounted = manualDiscount > 0.005;
+  const partnerDiscount     = (projectFullyDiscounted || isCreditOnly || projectAlreadyDiscounted)
+    ? 0
+    : subtotal * effectiveDiscount;
+  let discountedSubtotal    = subtotal - partnerDiscount;          // project ex VAT
+  // Proposals signed BEFORE that rule were priced the other way round: the
+  // manual discount was dropped and the partner % came off the full project.
+  // Both figures derive entirely from the proposal — nothing the client sends
+  // moves either — so the floor honours whichever is lower rather than
+  // rejecting a payment that matches what was actually agreed.
+  if (partnerSelected && projectAlreadyDiscounted && !isCreditOnly && !projectFullyDiscounted) {
+    const legacySubtotal = (effectiveBasePrice + extrasTotal) * (1 - effectiveDiscount);
+    discountedSubtotal = Math.min(discountedSubtotal, legacySubtotal);
+  }
   const discountedTotal     = discountedSubtotal * (1 + vatRate);  // gross
 
   // One-off Content Credit is a single upfront purchase (not a recurring

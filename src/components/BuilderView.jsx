@@ -248,7 +248,8 @@ function DiscountEditor({ basePrice, discount, onChange, isMobile }) {
       {value > 0 && basePrice > 0 && (
         <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 4 }}>
           Base {formatGBP(basePrice)} → <strong style={{ color: '#15803d' }}>{formatGBP(basePrice - amount)}</strong>
-          {' '}({isPct ? `${value}% off` : `${formatGBP(amount)} off`}). Optional extras have their own discount (in the Optional Extras section); ignored if the client opts into the Partner Programme.
+          {' '}({isPct ? `${value}% off` : `${formatGBP(amount)} off`}). Optional extras have their own discount (in the Optional Extras section).
+          {' '}It stands if the client opts into the Partner Programme — the programme then discounts the minutes they add rather than this project a second time.
         </div>
       )}
     </div>

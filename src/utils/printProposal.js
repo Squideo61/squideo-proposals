@@ -122,14 +122,18 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
     if (!selectedExtras[e.id]) return s;
     return s + getUnit(e) * getQty(e);
   }, 0);
-  // Simple manual discount on the base price — standard flow only. Ignored when
-  // the client is on the Partner Programme. Locked into signed.discountApplied.
-  // A project that's already free (base £0 or a 100% manual discount) stays free
-  // on the Partner Programme — the programme then only adds its monthly sub, and
-  // we don't reintroduce the full price to shave a smaller partner % off it.
+  // Simple manual discount on the base price. Stands on the Partner route too —
+  // the programme discounts the minutes being added rather than re-discounting
+  // an already-discounted project (mirrors ClientView). Locked into
+  // signed.discountApplied. A project that's already free (base £0 or a 100%
+  // manual discount) stays free on the Partner Programme — the programme then
+  // only adds its monthly sub, and we don't reintroduce the full price to shave
+  // a smaller partner % off it.
   const manualDiscountAmount = computeBaseDiscount(data.basePrice, data.discount);
   const projectFullyDiscounted = (Number(data.basePrice) || 0) <= 0 || manualDiscountAmount >= (Number(data.basePrice) || 0) - 0.005;
-  const manualDiscount = (partnerSelected && !projectFullyDiscounted)
+  // Signed before the rule changed → keep the terms that were agreed then.
+  const legacyPartnerProjectDiscount = Number(signed?.amountBreakdown?.discountRate) > 0;
+  const manualDiscount = (legacyPartnerProjectDiscount && !projectFullyDiscounted)
     ? 0
     : (signed?.discountApplied?.amount ?? manualDiscountAmount);
   const netBasePrice = data.basePrice - manualDiscount;
@@ -159,7 +163,12 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
   // only to the extra minutes added on the proposal. (Signed ones already carry a
   // locked discountRate of 0; this also covers unsigned previews.)
   const isCreditOnly = data.partnerProgramme?.mode === 'oneoff' && !!data.partnerProgramme?.creditOnly;
-  const partnerDiscount = (projectFullyDiscounted || isCreditOnly) ? 0 : subtotal * discountRate;
+  // A project gets one discount: a manual one blocks the programme's, which
+  // then applies to the added minutes only (mirrors ClientView).
+  const projectAlreadyDiscounted = manualDiscount > 0.005;
+  const partnerDiscount = (projectFullyDiscounted || isCreditOnly || projectAlreadyDiscounted)
+    ? 0
+    : subtotal * discountRate;
   const discountedSubtotal = subtotal - partnerDiscount;
   const discountedVat = discountedSubtotal * data.vatRate;
   const discountedTotal = discountedSubtotal + discountedVat;

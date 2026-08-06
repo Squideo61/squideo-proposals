@@ -223,6 +223,62 @@ describe('computeProposalCheckout', () => {
     expect(r.amountGross).toBe(6150); // (5000 + 125) * 1.2, undiscounted
   });
 
+  // A project gets ONE discount. When the salesperson has already discounted the
+  // project by hand, opting into the Partner Programme discounts the minutes
+  // being added — not the project a second time. (Before this, opting in
+  // replaced the manual discount, which could leave a discounted project costing
+  // MORE after opting in than before.)
+  it('does not stack the partner discount on a manually discounted project', () => {
+    const prop = { ...baseProposal, discount: { type: 'percent', value: 20 } };
+    const sig = { paymentOption: 'full', partnerSelected: true, partnerCredits: 1 };
+    const r = computeProposalCheckout(prop, sig);
+    // project 5000 - 20% = 4000 (NOT 4000*0.9, and not 5000*0.9)
+    expect(r.projectExVat).toBe(4000);
+    // the credit minute still gets the tier rate: 1250 * 0.9 = 1125
+    expect(r.partnerExVat).toBe(1125);
+    expect(r.amountGross).toBe(6150); // (4000 + 1125) * 1.2
+  });
+
+  it('keeps the manual discount even though the client opted in', () => {
+    const prop = { ...baseProposal, discount: { type: 'amount', value: 1000 } };
+    const sig = { paymentOption: 'full', partnerSelected: true, partnerCredits: 1 };
+    expect(computeProposalCheckout(prop, sig).projectExVat).toBe(4000);
+  });
+
+  it('still discounts the project when there is no manual discount', () => {
+    const sig = { paymentOption: 'full', partnerSelected: true, partnerCredits: 1 };
+    expect(computeProposalCheckout(baseProposal, sig).projectExVat).toBe(4500); // 5000 * 0.9
+  });
+
+  // Proposals signed before the rule changed were priced the old way. The floor
+  // takes whichever of the two staff-priced figures is lower, so those payments
+  // aren't rejected — a small manual discount used to be REPLACED by a larger
+  // partner one, making the old total the lower of the two.
+  it('accepts a payment priced under the old stacking rule', () => {
+    const prop = { ...baseProposal, discount: { type: 'percent', value: 5 } };
+    const sig = { paymentOption: 'full', partnerSelected: true, partnerCredits: 1 };
+    const r = computeProposalCheckout(prop, sig);
+    // new rule: 5000 - 5% = 4750. old rule: 5000 * 0.9 = 4500. Floor is 4500.
+    expect(r.projectExVat).toBe(4500);
+    expect(r.amountGross).toBe(6750); // (4500 + 1125) * 1.2
+  });
+
+  it('the legacy floor never lets a partner payment come in under either rule', () => {
+    // Manual 20% beats the 10% partner rate, so the new rule is already the
+    // lower figure and the allowance changes nothing.
+    const prop = { ...baseProposal, discount: { type: 'percent', value: 20 } };
+    const sig = { paymentOption: 'full', partnerSelected: true, partnerCredits: 1 };
+    expect(computeProposalCheckout(prop, sig).projectExVat).toBe(4000);
+  });
+
+  it('leaves a free project free rather than reintroducing a price to discount', () => {
+    const prop = { ...baseProposal, discount: { type: 'percent', value: 100 } };
+    const sig = { paymentOption: 'full', partnerSelected: true, partnerCredits: 1 };
+    const r = computeProposalCheckout(prop, sig);
+    expect(r.projectExVat).toBe(0);
+    expect(r.partnerExVat).toBe(1125); // the credit is still bought
+  });
+
   it('uses the selected video option price matched by id', () => {
     const prop = {
       ...baseProposal,
