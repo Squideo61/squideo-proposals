@@ -35,9 +35,14 @@ export default async function handler(req, res) {
     const json = await upstream.json();
     // Cache at the edge for a day — video metadata rarely changes.
     res.setHeader('Cache-Control', 'public, max-age=3600, s-maxage=86400, stale-while-revalidate=86400');
+    // width/height are the film's true dimensions. A player sized to anything
+    // else letterboxes it in black, so anyone embedding one wants these.
+    const dim = (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : null);
     return res.status(200).json({
       title: json?.title ? String(json.title) : null,
       thumbnail: json?.thumbnail_url ? String(json.thumbnail_url) : null,
+      width: dim(json?.width),
+      height: dim(json?.height),
     });
   } catch {
     return res.status(200).json({ title: null, thumbnail: null });

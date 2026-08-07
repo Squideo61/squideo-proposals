@@ -15,8 +15,26 @@ describe('videoEmbed', () => {
 
   describe('Vimeo — where Squideo actually hosts', () => {
     it('turns a share link into the player URL', () => {
-      expect(videoEmbed('https://vimeo.com/625502459'))
-        .toEqual({ kind: 'frame', src: 'https://player.vimeo.com/video/625502459' });
+      expect(videoEmbed('https://vimeo.com/625502459')).toEqual({
+        kind: 'frame',
+        src: 'https://player.vimeo.com/video/625502459',
+        oembedUrl: 'https://vimeo.com/625502459',
+      });
+    });
+    // The player box is sized from the film's real dimensions (fetched via our
+    // oEmbed proxy) so a non-16:9 film isn't letterboxed in black. That lookup
+    // needs the ORIGINAL url: an unlisted film's metadata is only readable with
+    // its privacy hash, and stripping it would silently fall back to 16:9.
+    it('keeps the privacy hash so an unlisted film can still be measured', () => {
+      const e = videoEmbed('https://vimeo.com/625502459/a1b2c3d4e5');
+      expect(e.oembedUrl).toBe('https://vimeo.com/625502459/a1b2c3d4e5');
+      expect(e.src).toBe('https://player.vimeo.com/video/625502459');
+    });
+    it('builds a canonical lookup url when handed the /video/ form', () => {
+      // player.vimeo.com and vimeo.com/video/... are not accepted by the oEmbed
+      // proxy, which only takes vimeo.com/<id> — so we rebuild one.
+      expect(videoEmbed('https://vimeo.com/video/625502459').oembedUrl)
+        .toBe('https://vimeo.com/625502459');
     });
     it('handles the /video/ form', () => {
       expect(videoEmbed('https://vimeo.com/video/625502459').src)

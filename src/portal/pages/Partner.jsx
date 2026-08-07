@@ -67,12 +67,59 @@ export function videoEmbed(url) {
   if (!url) return null;
   const yt = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([A-Za-z0-9_-]{11})/);
   if (yt) return { kind: 'frame', src: 'https://www.youtube.com/embed/' + yt[1] };
-  const vimeo = url.match(/vimeo\.com\/(?:video\/)?(\d+)/);
-  if (vimeo) return { kind: 'frame', src: 'https://player.vimeo.com/video/' + vimeo[1] };
+  // The trailing group is an unlisted film's privacy hash (vimeo.com/ID/HASH).
+  // oembedUrl is rebuilt canonically rather than passed through: the proxy only
+  // accepts vimeo.com/<id>, so a /video/ form or a ?share= suffix would come
+  // back empty and silently drop the player to a 16:9 guess. The hash is kept,
+  // because without it an unlisted film's metadata isn't readable at all.
+  const vimeo = url.match(/vimeo\.com\/(?:video\/)?(\d+)(?:\/([A-Za-z0-9]+))?/);
+  if (vimeo) {
+    return {
+      kind: 'frame',
+      src: 'https://player.vimeo.com/video/' + vimeo[1],
+      oembedUrl: 'https://vimeo.com/' + vimeo[1] + (vimeo[2] ? '/' + vimeo[2] : ''),
+    };
+  }
   const loom = url.match(/loom\.com\/(?:share|embed)\/([A-Za-z0-9]+)/);
   if (loom) return { kind: 'frame', src: 'https://www.loom.com/embed/' + loom[1] };
   if (PLAYABLE_MEDIA.test(url)) return { kind: 'file', src: url };
   return { kind: 'unsupported', src: url };
+}
+
+// An embedded player has to be given a height, and guessing 16:9 is what put
+// black bars above and below a film that isn't. Vimeo's oEmbed knows the real
+// dimensions, so we ask (through our own proxy — the CSP blocks vimeo.com
+// directly) and shape the box to the answer. 16:9 until it replies, and if it
+// never does; that's the right guess, just not always the right one.
+const DEFAULT_RATIO = 9 / 16;
+
+function FrameVideo({ embed, title }) {
+  const [ratio, setRatio] = useState(DEFAULT_RATIO);
+
+  useEffect(() => {
+    if (!embed.oembedUrl) return undefined;
+    let alive = true;
+    fetch('/api/vimeo-oembed?url=' + encodeURIComponent(embed.oembedUrl))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!alive || !d?.width || !d?.height) return;
+        setRatio(d.height / d.width);
+      })
+      .catch(() => { /* the 16:9 default stands */ });
+    return () => { alive = false; };
+  }, [embed.oembedUrl]);
+
+  return (
+    <div style={{ position: 'relative', width: '100%', paddingTop: `${ratio * 100}%`, background: '#000' }}>
+      <iframe
+        src={embed.src}
+        title={title || 'Partner Programme'}
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+        allowFullScreen
+        style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0 }}
+      />
+    </div>
+  );
 }
 
 function VideoBlock({ video }) {
@@ -96,26 +143,23 @@ function VideoBlock({ video }) {
     );
   }
   return (
-    <Card style={{ padding: 0, overflow: 'hidden' }}>
-      <div style={{ position: 'relative', width: '100%', paddingTop: '56.25%', background: '#000' }}>
-        {embed.kind === 'frame' ? (
-          <iframe
-            src={embed.src}
-            title={video.title || 'Partner Programme'}
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
-            allowFullScreen
-            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0 }}
-          />
-        ) : (
-          <video
-            src={embed.src}
-            controls
-            playsInline
-            preload="metadata"
-            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', background: '#000' }}
-          />
-        )}
-      </div>
+    // Capped and centred rather than running the full content width. It's a
+    // supporting explainer on a page that's mostly reading, and at 1080px wide
+    // it was the loudest thing here by a distance.
+    <Card style={{ padding: 0, overflow: 'hidden', maxWidth: 620, margin: '0 auto', width: '100%' }}>
+      {embed.kind === 'frame' ? (
+        <FrameVideo embed={embed} title={video.title} />
+      ) : (
+        // No fixed-ratio box and no black backdrop: the element sizes itself to
+        // the file, so a film that isn't 16:9 can't be letterboxed into one.
+        <video
+          src={embed.src}
+          controls
+          playsInline
+          preload="metadata"
+          style={{ display: 'block', width: '100%', height: 'auto' }}
+        />
+      )}
       {video.title && (
         <div style={{ padding: '11px 16px', fontSize: 13.5, fontWeight: 700, color: BRAND.ink }}>
           {video.title}
