@@ -348,8 +348,19 @@ export function PortalDealCard({ dealId, dealTitle = null }) {
             companyId={data?.companyId}
             onError={flash}
             invite={{ dealId, email: inviteContact?.email || null, name: inviteContact?.name || null }}
+            disabledReason={data && !data.companyId
+              ? 'This deal isn’t linked to a company yet, and a portal belongs to an organisation. Set the company on this deal and you can preview it — no invite needed.'
+              : null}
           />
-          <button className="btn-ghost" style={{ fontSize: 12 }} disabled={!data} onClick={() => setShowInvite(true)} title="Squideo sends the invite email — you confirm the wording first">
+          <button
+            className="btn-ghost"
+            style={{ fontSize: 12 }}
+            disabled={!data || !data.companyId}
+            onClick={() => setShowInvite(true)}
+            title={data && !data.companyId
+              ? 'Link this deal to a company first — an invite gives someone access to that organisation’s portal.'
+              : 'Squideo sends the invite email — you confirm the wording first'}
+          >
             <Send size={12} style={{ verticalAlign: -1, marginRight: 4 }} />CRM portal invite
           </button>
           <button className="btn-ghost" style={{ fontSize: 12 }} onClick={() => setShowCustom(true)}>
@@ -393,19 +404,26 @@ export function PortalDealCard({ dealId, dealTitle = null }) {
             const pending = cands.filter((c) => !c.hasAccess && c.invitePending);
             const has = withAccess.length > 0;
             const pend = !has && pending.length > 0;
-            const dot = has ? '#16A34A' : pend ? '#B45309' : BRAND.muted;
-            const bg = has ? '#F0FDF4' : pend ? '#FFFBEB' : BRAND.paper;
-            const bd = has ? '#BBF7D0' : pend ? '#FDE68A' : BRAND.border;
-            const label = has
-              ? `${withAccess.length} ${withAccess.length === 1 ? 'contact has' : 'contacts have'} portal access`
-              : pend
-                ? `Invite sent — awaiting sign-up (${pending.length})`
-                : 'No one has been invited to the portal yet';
+            // No company = no portal at all: the portal, its members, library and
+            // credits all belong to an organisation. Say that instead of "no one
+            // has been invited yet", which implies an invite is the missing step
+            // when linking a company is (and previewing never needed an invite).
+            const orgless = !data.companyId;
+            const dot = orgless ? '#B45309' : has ? '#16A34A' : pend ? '#B45309' : BRAND.muted;
+            const bg = orgless ? '#FFFBEB' : has ? '#F0FDF4' : pend ? '#FFFBEB' : BRAND.paper;
+            const bd = orgless ? '#FDE68A' : has ? '#BBF7D0' : pend ? '#FDE68A' : BRAND.border;
+            const label = orgless
+              ? 'No company on this deal — link one to open or invite anyone to a portal'
+              : has
+                ? `${withAccess.length} ${withAccess.length === 1 ? 'contact has' : 'contacts have'} portal access`
+                : pend
+                  ? `Invite sent — awaiting sign-up (${pending.length})`
+                  : 'No one has been invited yet — you can still preview it with “View client portal”';
             return (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, padding: '7px 10px', borderRadius: 8, background: bg, border: '1px solid ' + bd }}>
                 <span style={{ width: 8, height: 8, borderRadius: '50%', background: dot, flexShrink: 0 }} />
                 <span style={{ fontSize: 12, fontWeight: 600, color: BRAND.ink }}>{label}</span>
-                {!has && (
+                {!has && !orgless && (
                   <button className="btn-link" style={{ marginLeft: 'auto', fontSize: 11.5, fontWeight: 700 }} disabled={!data} onClick={() => setShowInvite(true)}>
                     {pend ? 'Manage invites' : 'Send invite'}
                   </button>

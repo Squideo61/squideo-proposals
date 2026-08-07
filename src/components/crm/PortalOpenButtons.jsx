@@ -21,9 +21,22 @@ export async function openPortalAs(companyId, { manage = false } = {}) {
 // into an email you're writing yourself. Only the deal card can offer it (an
 // invite is per-person and per-deal); the company and contact pages keep the
 // team link, which is the useful one there.
-export function PortalOpenButtons({ companyId, onError, onNotice, size = 12, label = true, invite = null }) {
+//
+// `disabledReason` — a portal belongs to an ORGANISATION, so with no company
+// there's nothing to open. Callers that can explain why (the deal card: no
+// company linked to the deal yet) pass the reason and get a disabled button
+// that says it. Without one the buttons just don't render, which reads as
+// "portals need an invite first" and isn't true — a preview never has.
+export function PortalOpenButtons({ companyId, onError, onNotice, size = 12, label = true, invite = null, disabledReason = null }) {
   const [busy, setBusy] = useState(false);
-  if (!companyId) return null;
+  if (!companyId) {
+    if (!disabledReason) return null;
+    return (
+      <button className="btn-ghost" style={{ fontSize: size }} disabled title={disabledReason}>
+        <Eye size={size} style={{ verticalAlign: -1, marginRight: label ? 4 : 0 }} />{label ? 'View client portal' : ''}
+      </button>
+    );
+  }
 
   const go = async (manage) => {
     setBusy(true);
