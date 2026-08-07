@@ -163,6 +163,14 @@ export const NOTIFICATIONS = [
     channel: 'finance',
   },
   {
+    key: 'portal.sample_project',
+    label: 'Prospect tried the sample project',
+    description: 'Someone who hasn\'t bought yet finalised a stage of the sample project in their portal — they\'ve just used our review tools on a made-up job. One alert per person per stage, and never for a Squideo address. Defaults to the bell only, like the other lead signals.',
+    audience: 'broadcast',
+    group: 'Leads',
+    channel: 'finance',
+  },
+  {
     key: 'quote_request.qualified',
     label: 'Quote request qualified',
     description: 'A teammate qualifies a quote request into a deal.',

@@ -197,7 +197,14 @@ const ACTIVITY_LABELS = {
   'course.completed': 'Finished the whole crash course',
   'brief.signup': 'Came in through the brief builder',
   'brief.submitted': 'Sent us a completed brief',
+  'demo.commented': 'Left a comment in the sample project',
+  'demo.finalised': 'Finished a stage of the sample project',
 };
+
+// demo.* rows carry which half of the tour they were in, and that's the whole
+// interest of the row — "finished the sample storyboard" says something
+// "finished a stage" doesn't.
+const DEMO_STAGE_LABEL = { storyboard: 'storyboard', video: 'video review' };
 
 // The crash course reports itself once per video, when the video is finished.
 //
@@ -244,6 +251,7 @@ const VIEW_LABELS = {
   settings: 'Opened settings',
   review: 'Opened a video review',
   storyboard: 'Opened a storyboard review',
+  demo: 'Tried the sample project',
 };
 
 // One row of portal_activity in words. Shared by every reader so the wording of
@@ -256,6 +264,14 @@ const DOWNLOAD_KIND = {
 export function describeActivity(eventKey, detail, { courseTitle = null } = {}) {
   const d = detail && typeof detail === 'object' ? detail : {};
   if (eventKey === 'view') return VIEW_LABELS[d.view] || 'Opened the portal';
+  if (eventKey === 'demo.finalised') {
+    const stage = DEMO_STAGE_LABEL[d.stage];
+    return stage ? `Finished the sample ${stage}` : ACTIVITY_LABELS['demo.finalised'];
+  }
+  if (eventKey === 'demo.commented') {
+    const stage = DEMO_STAGE_LABEL[d.stage];
+    return stage ? `Commented on the sample ${stage}` : ACTIVITY_LABELS['demo.commented'];
+  }
   if (eventKey === 'course.completed_video' && courseTitle) return `Watched ${courseTitle}`;
   if (eventKey === 'download') {
     // Rows written before downloads recorded a name say "a file" and mean it —

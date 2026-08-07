@@ -11,10 +11,10 @@
 //
 // Routing: #/demo → overview, #/demo/storyboard, #/demo/video.
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft, RotateCcw, Info, Images, PlayCircle, Check, ChevronRight, Sparkles,
-  MessageSquarePlus, Lock, Clock,
+  MessageSquarePlus, Lock, Clock, CheckCircle2, Bell, X as XIcon,
 } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { usePortal } from '../PortalContext.jsx';
@@ -360,6 +360,111 @@ function StageHint({ children }) {
   );
 }
 
+// What happens after the green button — shown the moment they finalise.
+//
+// Up to here the tour has demonstrated our tools. This is the only screen that
+// demonstrates our SERVICE, and it's the one that has to be true: by the time
+// it renders, a notification really has gone to the team and one really has
+// landed in their own bell. Saying "your producer has been told" while nothing
+// happened would be the single worst thing this whole feature could do.
+//
+// Not dismissable by backdrop click — same rule as every other dialog here.
+function WhatHappensNext({ stage, comments, nextStage, onClose }) {
+  const what = stage === 'storyboard' ? 'storyboard' : 'video';
+  return (
+    <>
+      <div style={{ position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(15,42,61,.55)' }} />
+      <div style={{
+        position: 'fixed', inset: 0, zIndex: 61, display: 'grid', placeItems: 'center',
+        padding: 20, pointerEvents: 'none',
+      }}>
+        <div style={{
+          pointerEvents: 'auto', width: '100%', maxWidth: 480, background: '#fff',
+          borderRadius: 16, padding: '26px 26px 22px', boxShadow: '0 20px 60px rgba(15,42,61,.3)',
+          maxHeight: '86vh', overflowY: 'auto', position: 'relative',
+        }}>
+          <button
+            type="button" aria-label="Close" onClick={onClose}
+            style={{
+              position: 'absolute', top: 12, right: 12, background: 'none', border: 'none',
+              padding: 8, cursor: 'pointer', color: BRAND.muted, display: 'flex',
+            }}
+          ><XIcon size={18} /></button>
+
+          <div style={{
+            width: 48, height: 48, borderRadius: 13, background: '#EDFBF2', color: '#15803D',
+            display: 'grid', placeItems: 'center', marginBottom: 14,
+          }}>
+            <CheckCircle2 size={26} />
+          </div>
+
+          <h2 style={{ margin: '0 0 8px', fontSize: 20, fontWeight: 800, color: BRAND.ink, lineHeight: 1.3 }}>
+            {comments > 0
+              ? `Your ${comments} note${comments === 1 ? '' : 's'} ${comments === 1 ? 'is' : 'are'} in.`
+              : `${what === 'storyboard' ? 'Storyboard' : 'Video'} signed off.`}
+          </h2>
+          <p style={{ margin: '0 0 18px', fontSize: 13.5, lineHeight: 1.6, color: BRAND.muted }}>
+            On a real project, that button is where we take over. Here's exactly what happens
+            in the minutes after you press it.
+          </p>
+
+          <ol style={{ margin: '0 0 18px', padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 13 }}>
+            {[
+              ['Your producer knows immediately', 'Not when someone next opens an inbox — the alert goes straight to the person running your project.'],
+              ['Every comment becomes a task', 'Each note lands on our production board and gets ticked off individually, so nothing is quietly skipped.'],
+              ['The next draft answers all of them', 'It comes back to this same page, with the previous version still there to compare against.'],
+            ].map(([title, body], i) => (
+              <li key={title} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                <span style={{
+                  width: 22, height: 22, borderRadius: '50%', flexShrink: 0, marginTop: 1,
+                  background: BRAND.blue, color: '#fff', display: 'grid', placeItems: 'center',
+                  fontSize: 11, fontWeight: 800,
+                }}>{i + 1}</span>
+                <span>
+                  <strong style={{ fontSize: 13.5, color: BRAND.ink }}>{title}</strong>
+                  <span style={{ display: 'block', fontSize: 12.5, lineHeight: 1.55, color: BRAND.muted, marginTop: 2 }}>{body}</span>
+                </span>
+              </li>
+            ))}
+          </ol>
+
+          {/* The proof, not a claim: there is a real unread notification sitting
+              in their bell by the time they read this. */}
+          <div style={{
+            display: 'flex', gap: 9, alignItems: 'flex-start', padding: '11px 13px',
+            borderRadius: 10, background: '#F3F9FC', border: '1px solid #CFE6F2',
+            fontSize: 12.5, lineHeight: 1.55, color: '#41627A', marginBottom: 18,
+          }}>
+            <Bell size={15} style={{ flexShrink: 0, marginTop: 1, color: BRAND.blue }} />
+            <div>
+              We've just put the matching notification in your bell, top right — that's the
+              one you'd get for real.
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap' }}>
+            {nextStage ? (
+              <a
+                className="btn" href={`#/demo/${nextStage.key}`} onClick={onClose}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 7, textDecoration: 'none' }}
+              >
+                Try the {nextStage.label.toLowerCase()} <ChevronRight size={15} />
+              </a>
+            ) : (
+              <a className="btn" href="#/brief" onClick={onClose} style={{ textDecoration: 'none' }}>
+                Start a brief
+              </a>
+            )}
+            <button type="button" className="btn-ghost" onClick={onClose}>
+              Keep looking around
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 function NotSetUp({ what }) {
   return (
     <div style={{ padding: 40, textAlign: 'center', color: BRAND.muted, fontSize: 14 }}>
@@ -372,10 +477,15 @@ function NotSetUp({ what }) {
 // ── Page ────────────────────────────────────────────────────────────────────
 
 export default function DemoProject({ stage = null }) {
-  const { user, showToast } = usePortal();
+  const { user, showToast, companyId, refreshNotifications } = usePortal();
   const [config, setConfig] = useState(null);
   const [videoData, setVideoData] = useState(null);
   const [sbData, setSbData] = useState(null);
+  const [celebrating, setCelebrating] = useState(null); // { stage, comments } | null
+  // What we've already told the server about, this page load. The endpoint
+  // de-duplicates properly (per person, per stage, forever); this just stops a
+  // comment-per-keystroke's worth of chatter from one sitting.
+  const reported = useRef(new Set());
   // Bumped by "start over": remounts the review surfaces (which hold their own
   // comment state) and re-reads progress for the overview ticks.
   const [nonce, setNonce] = useState(0);
@@ -407,9 +517,49 @@ export default function DemoProject({ stage = null }) {
 
   const progress = useMemo(() => demoProgress(), [nonce, videoData, sbData, stage]);
 
+  // Report what they actually did. Fire-and-forget in both directions: the tour
+  // must not stall on a network call, and a prospect must never see an error
+  // from telemetry they didn't ask for.
+  const report = (event, forStage, comments) => {
+    const mark = `${event}:${forStage}`;
+    if (reported.current.has(mark)) return Promise.resolve();
+    reported.current.add(mark);
+    return portalApi.post('demo-event', { event, stage: forStage, comments, companyId })
+      .catch(() => {});
+  };
+
+  // Finalising is the moment worth reacting to — and by the time the panel is
+  // on screen the notification it promises has actually been written, which is
+  // why the panel waits on the request rather than racing it.
+  const finalisedAt = stage === 'storyboard'
+    ? sbData?.storyboards?.[0]?.approvedAt || null
+    : videoData?.videos?.[0]?.approvedAt || null;
+
+  useEffect(() => {
+    if (!stage || !finalisedAt) return;
+    const mine = stage === 'storyboard' ? progress.storyboard.comments : progress.video.comments;
+    const already = reported.current.has(`finalised:${stage}`);
+    report('finalised', stage, mine).then(() => {
+      // Pull the bell straight away rather than waiting up to 25s for the next
+      // poll — the panel points at it, so it has to be there.
+      refreshNotifications?.().catch(() => {});
+    });
+    if (!already) setCelebrating({ stage, comments: mine });
+  }, [stage, finalisedAt]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Their first comment in a stage, reported once. Weaker than a finalise, but
+  // it's the difference between "opened the demo" and "used the demo", and it's
+  // the row that makes the activity feed worth reading.
+  const commentCount = stage === 'storyboard' ? progress.storyboard.comments : progress.video.comments;
+  useEffect(() => {
+    if (stage && commentCount > 0) report('commented', stage, commentCount);
+  }, [stage, commentCount > 0]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const startOver = () => {
     resetDemo();
     setNonce((n) => n + 1);
+    reported.current = new Set();
+    setCelebrating(null);
     showToast('Sample project reset');
   };
 
@@ -477,6 +627,17 @@ export default function DemoProject({ stage = null }) {
         <div style={{ flex: 1, minHeight: 0, background: BRAND.paper, color: BRAND.ink }}>
           {surface}
         </div>
+      )}
+      {celebrating && (
+        <WhatHappensNext
+          stage={celebrating.stage}
+          comments={celebrating.comments}
+          // Only offer the other stage if it's configured AND they haven't
+          // done it — "try the thing you just did" is a worse ask than the brief.
+          nextStage={STAGES.find((s) => s.key !== celebrating.stage
+            && s.ready(config) && !progress[s.key].tried) || null}
+          onClose={() => setCelebrating(null)}
+        />
       )}
     </div>
   );

@@ -9,6 +9,10 @@
 // could see.
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
+// activity.js talks to the database at import time; the labelling it exports
+// doesn't, and that's what's under test here.
+vi.mock('../api/_lib/db.js', () => ({ default: vi.fn(async () => []), batchWrite: vi.fn() }));
+
 // A minimal sessionStorage — the demo store is the only browser API in play.
 class MemoryStorage {
   constructor() { this.map = new Map(); }
@@ -22,6 +26,7 @@ const { buildDemoData, buildDemoStoryboardData } = await import('../src/portal/d
 const { createDemoRevApi } = await import('../src/portal/demo/demoRevApi.js');
 const { createDemoSbApi } = await import('../src/portal/demo/demoSbApi.js');
 const { resetDemo, demoProgress } = await import('../src/portal/demo/store.js');
+const { describeActivity } = await import('../api/_lib/portal/activity.js');
 
 const CONFIG = {
   title: 'Sample project',
@@ -160,6 +165,31 @@ describe('start over', () => {
     expect(demoProgress()).toMatchObject({ video: { tried: false }, storyboard: { tried: false } });
     expect(sb.load().comments.every((c) => !c.mine)).toBe(true);
     expect(rev.load().comments.every((c) => !c.mine)).toBe(true);
+  });
+});
+
+// The activity feed is the whole point of reporting demo events — a row that
+// reads "Finished a stage of the sample project" tells whoever's reading it
+// nothing worth ringing someone about.
+describe('how demo events read in the staff activity feed', () => {
+  it('names which half of the tour they finished', () => {
+    expect(describeActivity('demo.finalised', { stage: 'storyboard' })).toBe('Finished the sample storyboard');
+    expect(describeActivity('demo.finalised', { stage: 'video' })).toBe('Finished the sample video review');
+  });
+
+  it('names the stage for a comment too', () => {
+    expect(describeActivity('demo.commented', { stage: 'storyboard' })).toBe('Commented on the sample storyboard');
+    expect(describeActivity('demo.commented', { stage: 'video' })).toBe('Commented on the sample video review');
+  });
+
+  it('falls back to something readable if the stage is missing or unknown', () => {
+    expect(describeActivity('demo.finalised', {})).toBe('Finished a stage of the sample project');
+    expect(describeActivity('demo.finalised', { stage: 'nonsense' })).toBe('Finished a stage of the sample project');
+    expect(describeActivity('demo.commented', null)).toBe('Left a comment in the sample project');
+  });
+
+  it('labels the page view as trying it, not just opening it', () => {
+    expect(describeActivity('view', { view: 'demo' })).toBe('Tried the sample project');
   });
 });
 

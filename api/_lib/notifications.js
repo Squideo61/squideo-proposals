@@ -363,6 +363,29 @@ export async function ensureCourseSignupNotificationDefault() {
   }
 }
 
+// A prospect finishing a stage of the sample project is the same kind of event
+// as a course signup — a stranger raising their hand — so it inherits the same
+// audience and the same bell-only channel. It's a much warmer signal than a
+// signup (they've just used the tools), but a noisier default would be the
+// fastest way to get the whole Leads group muted.
+let sampleProjectDefaultReady = false;
+export async function ensureSampleProjectNotificationDefault() {
+  if (sampleProjectDefaultReady) return;
+  try {
+    await sql`UPDATE roles SET notification_defaults = jsonb_set(
+      notification_defaults, '{portal.sample_project}',
+      COALESCE(notification_defaults->'course.signup',
+               notification_defaults->'quote_request.new', 'false'::jsonb), true)
+      WHERE NOT (notification_defaults ? 'portal.sample_project')`;
+    await sql`UPDATE roles SET notification_channel_defaults = jsonb_set(
+      notification_channel_defaults, '{portal.sample_project}', '"in_app"'::jsonb, true)
+      WHERE NOT (notification_channel_defaults ? 'portal.sample_project')`;
+    sampleProjectDefaultReady = true;
+  } catch (err) {
+    console.warn('[notifications] ensureSampleProjectNotificationDefault failed', err.message);
+  }
+}
+
 export async function ensurePortalNotificationDefaults() {
   if (portalDefaultsReady) return;
   try {

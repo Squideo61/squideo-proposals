@@ -45,7 +45,9 @@ import {
   resolveRecipients,
   persistInApp,
   ensurePortalNotificationDefaults,
+  ensureSampleProjectNotificationDefault,
 } from './_lib/notifications.js';
+import { internalEmails, isInternalEmail } from './_lib/internalAccounts.js';
 import { signQuoteRequestActionToken } from './_lib/auth.js';
 import { getRoleForUser } from './_lib/userRoles.js';
 import { hasPermission } from './_lib/permissions.js';
@@ -548,6 +550,7 @@ export default async function handler(req, res) {
       case 'course-progress': return courseProgressRoute(req, res, user);
       case 'brief': return briefRoute(req, res, user);
       case 'demo-project': return demoProjectRoute(req, res, user);
+      case 'demo-event': return demoEventRoute(req, res, user);
       case 'overview': return overviewRoute(req, res, user);
       case 'project': return projectRoute(req, res, user);
       case 'library': return libraryRoute(req, res, user);
@@ -598,7 +601,7 @@ export default async function handler(req, res) {
 const TRACKED_VIEWS = new Set([
   'home', 'project', 'library', 'documents', 'extras', 'voiceover', 'kickoff',
   'script', 'request', 'video-credit', 'partner', 'team', 'settings', 'review', 'storyboard',
-  'brief',
+  'brief', 'demo',
 ]);
 
 async function trackRoute(req, res, user) {
@@ -2815,6 +2818,104 @@ async function demoProjectRoute(req, res, user) {
       storyboardTitle: cfg.storyboardTitle || null,
     },
   });
+}
+
+const DEMO_STAGES = { storyboard: 'storyboard', video: 'video review' };
+
+// What the visitor did in the sample project.
+//
+// The tour is a fixture, so none of it leaves a trace anywhere else — which
+// meant the single most qualifying thing a prospect can do (use our review
+// tools on a job, all the way to sign-off) was invisible to the people who
+// would want to ring them. This is the only server call the tour makes, and
+// it records rather than stores: an activity row and, on a first finalise,
+// one alert to the team and one into the client's own bell.
+//
+// Always 200 — a lead signal failing must never break the thing generating it.
+async function demoEventRoute(req, res, user) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  const ok = () => res.status(200).json({ ok: true });
+  // A staff preview session has no puid: someone checking the tour over isn't
+  // a lead, and shouldn't leave one behind.
+  if (!user.puid) return ok();
+
+  const body = await readJsonBody(req);
+  const event = trimOrNull(body.event);
+  const stage = trimOrNull(body.stage);
+  if (!DEMO_STAGES[stage] || !['commented', 'finalised'].includes(event)) return ok();
+  const comments = Number.isFinite(Number(body.comments))
+    ? Math.max(0, Math.min(999, Math.round(Number(body.comments)))) : 0;
+  const companyId = user.companyIds.includes(String(body.companyId)) ? String(body.companyId) : null;
+
+  // One alert per person per stage, forever. They can reset and finalise the
+  // sample as many times as they like — the second one tells us nothing the
+  // first didn't, and a demo that can buzz the team on a loop is a demo the
+  // team turns off.
+  const [seen] = await sql`
+    SELECT id FROM portal_activity
+     WHERE portal_user_id = ${user.puid}
+       AND event_key = ${'demo.' + event}
+       AND detail->>'stage' = ${stage}
+     LIMIT 1
+  `.catch(() => []);
+
+  await logPortalActivity({
+    req, portalUserId: user.puid, companyId,
+    eventKey: 'demo.' + event, detail: { stage, comments },
+  });
+  if (seen || event !== 'finalised') return ok();
+
+  const who = user.name || user.email;
+  const stageLabel = DEMO_STAGES[stage];
+
+  // Their own bell. The tour has just claimed we're told the moment they hit
+  // that button — this is the proof, arriving in the same feed a real project
+  // would use. Labelled "Sample project" so it can't be mistaken for one.
+  await notifyPortalUser({
+    portalUserId: user.puid,
+    companyId,
+    key: 'demo.finalised',
+    title: `Sample project · ${stageLabel} finalised`,
+    body: comments > 0
+      ? `Your ${comments} comment${comments === 1 ? '' : 's'} would be with your producer by now. This is the notification you'd get on a real project.`
+      : `On a real project your producer is told the moment you press that button. This is the notification you'd get.`,
+    link: '#/demo',
+  }).catch(() => {});
+
+  // And the team. Skipped for our own addresses — testing the tour shouldn't
+  // buzz everyone's phone.
+  try {
+    const ours = await internalEmails().catch(() => []);
+    if (isInternalEmail(user.email, ours)) return ok();
+
+    const [co] = companyId
+      ? await sql`SELECT name FROM companies WHERE id = ${companyId}`.catch(() => [])
+      : [];
+    await ensureSampleProjectNotificationDefault();
+    await sendNotification('portal.sample_project', {
+      subject: `🎬 ${who} finished the sample ${stageLabel}`,
+      text: [
+        `${who} (${user.email}) has just used our review tools end to end on the sample project.`,
+        co?.name ? `Company: ${co.name}` : null,
+        comments > 0 ? `They left ${comments} comment${comments === 1 ? '' : 's'} before signing it off.` : 'They signed it off without leaving comments.',
+        '',
+        'They know how the process works and have seen the quality. Worth a call.',
+      ].filter(Boolean).join('\n'),
+      inApp: {
+        title: `Sample ${stageLabel} finished — ${who}`,
+        // The line a phone shows on the lock screen: who, where, how engaged.
+        body: [co?.name, comments > 0 ? `${comments} comment${comments === 1 ? '' : 's'}` : null]
+          .filter(Boolean).join(' · ') || user.email,
+        link: companyId ? `#/company/${companyId}` : '#/marketing/course',
+      },
+      // Deliberately NOT inAppOnly: the bell-only default is set on the role
+      // above, so anyone who'd rather have this by email can say so and be
+      // listened to. Forcing the channel here would quietly override them.
+    });
+  } catch (err) {
+    console.warn('[portal] sample-project notify failed', err.message);
+  }
+  return ok();
 }
 
 // ═════════════════════════ the brief ═════════════════════════
