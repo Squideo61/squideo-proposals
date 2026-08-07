@@ -185,16 +185,19 @@ export function CourseTab() {
   );
 }
 
-// The sample project's video. The demo itself is a fixture in the portal
-// bundle; the only thing that lives in the database is this URL, so Ben's
-// explainer can be re-recorded and swapped without a deploy.
+// The sample project's files. The demo itself is a fixture in the portal
+// bundle; the only thing that lives in the database is these URLs, so Ben's
+// explainer can be re-recorded and the sample storyboard swapped without a
+// deploy. Each stage of the tour appears only once its file exists, so the
+// storyboard half can go live before the video half or the other way round.
 //
 // Uploads go to the SAME public blob store as the course videos (the CSP
 // already allows media from it) via the course upload-token endpoint, so
 // there's no second token route to keep in step.
-function SampleProject() {
-  const { state, actions, showMsg } = useStore();
-  const cfg = state.demoProject || {};
+// One upload slot: the status strip plus its upload / replace / remove buttons.
+// Three of these now (the video and two storyboard drafts), which is exactly
+// when copy-pasting the same 40 lines a third time stops being acceptable.
+function AssetSlot({ url, accept, contentType, label, liveText, emptyText, optional, onUploaded, onRemove, showMsg }) {
   const fileRef = useRef(null);
   const [pct, setPct] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -211,12 +214,11 @@ function SampleProject() {
       const blob = await upload(`course/sample-project/${Date.now()}-${safeName}`, file, {
         access: 'public',
         handleUploadUrl: `${BASE}/upload-token`,
-        contentType: file.type || 'video/mp4',
+        contentType: file.type || contentType,
         multipart: true,
         onUploadProgress: (ev) => setPct(Math.round(ev.percentage)),
       });
-      await actions.saveDemoProject({ ...cfg, videoUrl: blob.url });
-      showMsg('Sample project video updated');
+      await onUploaded(blob.url);
     } catch (err) {
       showMsg(err.message || 'Upload failed', 'error');
     } finally {
@@ -225,6 +227,56 @@ function SampleProject() {
     }
   };
 
+  // An optional slot that's empty is neutral, not a warning — the tour works
+  // without it, so amber would be crying wolf.
+  const tone = url ? 'live' : optional ? 'neutral' : 'missing';
+  const colours = {
+    live: { bg: '#EDFBF2', border: '#9BE0B7', text: '#15803D' },
+    missing: { bg: '#FFF8EB', border: '#F5C26B', text: '#B45309' },
+    neutral: { bg: '#F6F9FB', border: BRAND.border, text: BRAND.muted },
+  }[tone];
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', marginBottom: 10,
+      borderRadius: 10, background: colours.bg, border: '1px solid ' + colours.border,
+    }}>
+      <div style={{ flex: 1, fontSize: 13, lineHeight: 1.5, color: colours.text }}>
+        <strong>{label}</strong>{' — '}{url ? liveText : emptyText}
+      </div>
+      {busy ? (
+        <span style={{ fontSize: 12.5, color: BRAND.muted, flexShrink: 0 }}>
+          <Loader2 size={13} className="spin" /> {pct != null ? `${pct}%` : 'Uploading…'}
+        </span>
+      ) : (
+        <>
+          {url && (
+            <>
+              <a
+                href={url} target="_blank" rel="noreferrer"
+                style={{ fontSize: 12.5, color: BRAND.blue, textDecoration: 'none', fontWeight: 600, flexShrink: 0 }}
+              >
+                View
+              </a>
+              <button className="btn-ghost" onClick={onRemove} style={{ fontSize: 12.5, flexShrink: 0 }}>
+                <Trash2 size={13} /> Remove
+              </button>
+            </>
+          )}
+          <button className="btn" onClick={() => fileRef.current?.click()} style={{ fontSize: 12.5, flexShrink: 0 }}>
+            <Upload size={13} /> {url ? 'Replace' : 'Upload'}
+          </button>
+        </>
+      )}
+      <input ref={fileRef} type="file" accept={accept} hidden onChange={pick} />
+    </div>
+  );
+}
+
+function SampleProject() {
+  const { state, actions, showMsg } = useStore();
+  const cfg = state.demoProject || {};
+
   const saveField = async (key, value) => {
     const next = { ...cfg, [key]: value || null };
     if (JSON.stringify(next) === JSON.stringify(cfg)) return;
@@ -232,10 +284,10 @@ function SampleProject() {
     catch (err) { showMsg(err.message, 'error'); }
   };
 
-  const remove = async () => {
+  const setAsset = (key, msg) => async (url) => {
     try {
-      await actions.saveDemoProject({ ...cfg, videoUrl: null });
-      showMsg('Sample video removed — the tour will say it isn\'t set up yet');
+      await actions.saveDemoProject({ ...cfg, [key]: url });
+      showMsg(msg);
     } catch (err) { showMsg(err.message, 'error'); }
   };
 
@@ -245,46 +297,57 @@ function SampleProject() {
         <PlayCircle size={16} color={BRAND.blue} /> Sample project
       </h3>
       <p style={{ margin: '0 0 14px', fontSize: 12.5, color: BRAND.muted, lineHeight: 1.55 }}>
-        The guided tour at <code>/portal#/demo</code>. Prospects drive the real review
-        player — leaving timestamped comments, switching versions, approving — against
-        this one video. Nothing they do is saved anywhere, and it resets when they close
-        the tab.
+        The guided tour at <code>/portal#/demo</code>. Prospects drive the two review
+        surfaces for real — pinning notes to storyboard slides, leaving timestamped
+        comments on the cut, switching drafts, approving. Each stage switches itself on
+        as soon as its file is uploaded. Nothing they do is saved anywhere, and it
+        resets when they close the tab.
       </p>
 
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', marginBottom: 14,
-        borderRadius: 10,
-        background: cfg.videoUrl ? '#EDFBF2' : '#FFF8EB',
-        border: '1px solid ' + (cfg.videoUrl ? '#9BE0B7' : '#F5C26B'),
-      }}>
-        <div style={{ flex: 1, fontSize: 13, lineHeight: 1.5, color: cfg.videoUrl ? '#15803D' : '#B45309' }}>
-          <strong>{cfg.videoUrl ? 'Live' : 'Not set up'}</strong>
-          {' — '}
-          {cfg.videoUrl
-            ? 'the tour is playing this video.'
-            : "the tour tells visitors it isn't ready yet. Upload Ben's explainer to switch it on."}
-        </div>
-        {busy ? (
-          <span style={{ fontSize: 12.5, color: BRAND.muted, flexShrink: 0 }}>
-            <Loader2 size={13} className="spin" /> {pct != null ? `${pct}%` : 'Uploading…'}
-          </span>
-        ) : (
-          <>
-            {cfg.videoUrl && (
-              <button className="btn-ghost" onClick={remove} style={{ fontSize: 12.5, flexShrink: 0 }}>
-                <Trash2 size={13} /> Remove
-              </button>
-            )}
-            <button className="btn" onClick={() => fileRef.current?.click()} style={{ fontSize: 12.5, flexShrink: 0 }}>
-              <Upload size={13} /> {cfg.videoUrl ? 'Replace' : 'Upload video'}
-            </button>
-          </>
-        )}
-        <input ref={fileRef} type="file" accept="video/*" hidden onChange={pick} />
+      <div style={{ fontSize: 11.5, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.4, color: BRAND.muted, margin: '0 0 8px' }}>
+        Stage 1 · Storyboard sign-off
       </div>
+      <AssetSlot
+        url={cfg.storyboardPdfUrl}
+        accept="application/pdf"
+        contentType="application/pdf"
+        label={cfg.storyboardPdfUrl ? 'Live' : 'Not set up'}
+        liveText="the storyboard stage is running on this PDF."
+        emptyText="the storyboard stage is hidden. Upload a storyboard PDF (two or more slides) to switch it on."
+        onUploaded={setAsset('storyboardPdfUrl', 'Sample storyboard updated')}
+        showMsg={showMsg}
+        onRemove={() => setAsset('storyboardPdfUrl', 'Sample storyboard removed — that stage is hidden again')(null)}
+      />
+      <AssetSlot
+        url={cfg.storyboardPdfUrlV1}
+        accept="application/pdf"
+        contentType="application/pdf"
+        optional
+        label="Earlier draft (optional)"
+        liveText='"First draft" in the draft switcher shows this file.'
+        emptyText="both drafts show the same PDF. Upload an earlier version to make the switcher show a real change."
+        onUploaded={setAsset('storyboardPdfUrlV1', 'Earlier draft updated')}
+        showMsg={showMsg}
+        onRemove={() => setAsset('storyboardPdfUrlV1', 'Earlier draft removed')(null)}
+      />
 
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-        <label style={{ flex: '1 1 220px', fontSize: 12.5, color: BRAND.muted }}>
+      <div style={{ fontSize: 11.5, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.4, color: BRAND.muted, margin: '16px 0 8px' }}>
+        Stage 2 · Video review
+      </div>
+      <AssetSlot
+        url={cfg.videoUrl}
+        accept="video/*"
+        contentType="video/mp4"
+        label={cfg.videoUrl ? 'Live' : 'Not set up'}
+        liveText="the video stage is playing this file."
+        emptyText="the video stage is hidden. Upload Ben's explainer to switch it on."
+        onUploaded={setAsset('videoUrl', 'Sample project video updated')}
+        showMsg={showMsg}
+        onRemove={() => setAsset('videoUrl', "Sample video removed — that stage is hidden again")(null)}
+      />
+
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 16 }}>
+        <label style={{ flex: '1 1 200px', fontSize: 12.5, color: BRAND.muted }}>
           Project name (what the tour is called)
           <input
             className="input" defaultValue={cfg.title || ''}
@@ -293,7 +356,16 @@ function SampleProject() {
             style={{ width: '100%', marginTop: 4 }}
           />
         </label>
-        <label style={{ flex: '1 1 220px', fontSize: 12.5, color: BRAND.muted }}>
+        <label style={{ flex: '1 1 200px', fontSize: 12.5, color: BRAND.muted }}>
+          Storyboard name (shown in the header)
+          <input
+            className="input" defaultValue={cfg.storyboardTitle || ''}
+            placeholder="Explainer — storyboard"
+            onBlur={(e) => saveField('storyboardTitle', e.target.value.trim())}
+            style={{ width: '100%', marginTop: 4 }}
+          />
+        </label>
+        <label style={{ flex: '1 1 200px', fontSize: 12.5, color: BRAND.muted }}>
           Video name (shown above the player)
           <input
             className="input" defaultValue={cfg.videoTitle || ''}
@@ -304,7 +376,7 @@ function SampleProject() {
         </label>
       </div>
 
-      {cfg.videoUrl && (
+      {(cfg.videoUrl || cfg.storyboardPdfUrl) && (
         <a
           href="/portal#/demo" target="_blank" rel="noreferrer"
           style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 12, fontSize: 12.5, color: BRAND.blue, textDecoration: 'none', fontWeight: 600 }}

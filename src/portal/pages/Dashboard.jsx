@@ -6,7 +6,7 @@ import { usePortal } from '../PortalContext.jsx';
 import {
   Card, CourtBanner, PhaseTimeline, StatusPill, EmptyState, SectionHeading, ProjectTasks,
 } from '../components.jsx';
-import { Film, FolderOpen, Sparkles, Handshake, ChevronRight, Video, FileText, Wallet } from 'lucide-react';
+import { Film, FolderOpen, Sparkles, Handshake, ChevronRight, Video, FileText, Wallet, PlayCircle } from 'lucide-react';
 
 function BriefDraftCard({ draft }) {
   const when = draft.updatedAt ? new Date(draft.updatedAt) : null;
@@ -36,6 +36,42 @@ function BriefDraftCard({ draft }) {
       </div>
       <a className="btn" href="#/brief" style={{ textDecoration: 'none', whiteSpace: 'nowrap' }}>
         Pick up where you left off
+      </a>
+    </div>
+  );
+}
+
+// The sample project, offered to prospects on the page they land on.
+//
+// It was previously a button inside an empty state — which meant the single
+// most persuasive thing in the portal was only visible to someone who had
+// already scrolled past "you have no projects". Anyone who hasn't bought yet
+// should be shown it before anything else on this page.
+function SampleProjectCard() {
+  return (
+    <div style={{
+      background: 'linear-gradient(135deg, #0F2A3D 0%, #17435F 100%)', borderRadius: 12,
+      padding: '18px 20px', display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap',
+    }}>
+      <PlayCircle size={26} style={{ color: '#7FD3F0', flexShrink: 0 }} />
+      <div style={{ flex: '1 1 260px', minWidth: 0 }}>
+        <div style={{ fontSize: 16, fontWeight: 800, color: '#fff' }}>
+          Try a project before you start one
+        </div>
+        <div style={{ fontSize: 13, color: '#B9D6E4', marginTop: 4, lineHeight: 1.55 }}>
+          Sign off a storyboard and review a cut in our real tools, on a project we made up.
+          Takes two minutes and nothing you do reaches anyone.
+        </div>
+      </div>
+      <a
+        href="#/demo"
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 7, whiteSpace: 'nowrap',
+          padding: '9px 16px', borderRadius: 8, textDecoration: 'none',
+          fontSize: 13.5, fontWeight: 700, color: '#0F2A3D', background: BRAND.blue,
+        }}
+      >
+        Open the sample project <ChevronRight size={15} />
       </a>
     </div>
   );
@@ -168,7 +204,7 @@ function timeOfDayGreeting() {
 }
 
 export default function Dashboard() {
-  const { user, preview, overview, overviewLoading, companyId, refreshOverview } = usePortal();
+  const { user, preview, overview, overviewLoading, companyId, refreshOverview, isProspect } = usePortal();
   // Refetch whenever the client lands on Home so task / next-step / phase state
   // reflects anything that changed elsewhere (uploaded brand files, booked the
   // kick-off, or their project just moved to Completed after final payment)
@@ -215,6 +251,8 @@ export default function Dashboard() {
           brief is already a warmer lead than a form that was never opened. */}
       {overview?.briefDraft && <BriefDraftCard draft={overview.briefDraft} />}
 
+      {isProspect && <SampleProjectCard />}
+
       {/* Credit, offered at the moment it starts making sense: they have a
           project, so a style exists to repeat, and they haven't bought any yet.
           Deliberately quiet and carries no number — the rate lives one click
@@ -253,7 +291,9 @@ export default function Dashboard() {
               body="When a proposal is signed your project appears here with live status, review links and downloads. In the meantime, the crash course is all yours."
               action={
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
-                  <a className="btn" href="#/demo">Take the sample project tour</a>
+                  {/* Prospects already have the sample project offered above
+                      in its own card — repeating it here just splits the eye. */}
+                  {!isProspect && <a className="btn" href="#/demo">Take the sample project tour</a>}
                   <a className="btn-ghost" href="#/course">Watch the crash course</a>
                   <a className="btn-ghost" href="#/request">Request a video</a>
                 </div>

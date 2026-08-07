@@ -82,6 +82,11 @@ const NAV = [
   // The rail is sized to fit it on one line — see SIDEBAR_W.
   { view: 'course', label: 'Planning crash course', shortLabel: 'Course', hash: '#/course', Icon: GraduationCap, mobilePrimary: true },
   { view: 'brief', label: 'Brief Builder', shortLabel: 'Brief', hash: '#/brief', Icon: FileText, mobilePrimary: true },
+  // Prospects only (see visibleNav). Sits directly under the brief because
+  // that's the order the funnel runs in — read the course, describe the job,
+  // then see what working with us actually feels like. Buried in an empty
+  // state it was the best thing in the portal that nobody found.
+  { view: 'demo', label: 'Sample project', shortLabel: 'Sample', hash: '#/demo', Icon: Sparkles, prospectOnly: true },
   { view: 'home', label: 'Current projects', shortLabel: 'Projects', hash: '#/', Icon: Home, mobilePrimary: true },
   { view: 'library', label: 'Your Video Library', shortLabel: 'Library', hash: '#/library', Icon: Film, mobilePrimary: true },
   { view: 'video-credit', label: 'Video credit', hash: '#/video-credit', Icon: Wallet },
@@ -111,7 +116,13 @@ function visibleNav(company) {
   // (an older session payload) falls through to visible rather than hiding a
   // paying client's own balance.
   const hideCredit = company?.creditVisible === false;
-  return NAV.filter((n) => !(hideCredit && n.view === 'video-credit'));
+  // The sample project is aimed squarely at someone who hasn't bought yet. A
+  // paying client has the real thing one click away, so a permanent "sample"
+  // section in their rail is clutter at best and patronising at worst — the
+  // route stays reachable for them, it just isn't advertised.
+  const isProspect = company?.prospect === true;
+  return NAV.filter((n) => !(hideCredit && n.view === 'video-credit'))
+    .filter((n) => !(n.prospectOnly && !isProspect));
 }
 
 // Header actions. The primary is the blue call-to-action; secondaries are
@@ -396,7 +407,7 @@ function AuthedApp() {
     case 'storyboard': page = <Storyboard token={route.param} />; break;
     case 'course': page = <Course slug={route.param} />; break;
     case 'brief': page = <Brief />; break;
-    case 'demo': page = <DemoProject />; break;
+    case 'demo': page = <DemoProject stage={route.param} />; break;
     case 'library': page = <Library />; break;
     case 'documents': page = <Documents />; break;
     case 'extras': page = <Extras dealId={route.param} />; break;
@@ -416,7 +427,11 @@ function AuthedApp() {
   // the player narrow while its height stayed tall, letterboxing the video with
   // huge dark bands. Render them full-bleed and let them fill the space under
   // the nav instead.
-  const fullBleed = route.view === 'review' || route.view === 'storyboard' || route.view === 'demo';
+  // The sample project's OVERVIEW is an ordinary portal page and scrolls; only
+  // its two review stages (#/demo/storyboard, #/demo/video) take over the
+  // screen. Full-bleeding the overview too would clip it at the viewport.
+  const fullBleed = route.view === 'review' || route.view === 'storyboard'
+    || (route.view === 'demo' && !!route.param);
 
   return (
     // On review routes the shell is pinned to exactly the viewport height (and

@@ -15,10 +15,12 @@
 // put a fake company in Finance, the pipeline and the staff activity feed.
 // Nothing here touches the database at all.
 //
-// The video itself is configured in Admin → Crash course, so Ben's explainer
-// can be re-recorded without a deploy.
+// The video and the storyboard PDF are both configured in Admin → Crash course,
+// so Ben's explainer can be re-recorded and the sample storyboard swapped
+// without a deploy.
 
 export const DEMO_TOKEN = 'demo-sample-project';
+export const DEMO_SB_TOKEN = 'demo-sample-storyboard';
 
 const now = Date.now();
 const ago = (mins) => new Date(now - mins * 60000).toISOString();
@@ -88,3 +90,74 @@ export function buildDemoData(config = {}) {
 }
 
 export const DEMO_SEED_COMMENT_IDS = SEED_COMMENTS.map((c) => c.id);
+
+// ── The sample storyboard ───────────────────────────────────────────────────
+// Same idea, same reasons, shaped like /api/storyboards/public instead.
+//
+// Storyboard comments are per-slide and render flat (no threading in that
+// surface), so the "reply" here is simply Ben's note landing after Priya's on
+// the same slide — which is exactly how a real thread reads there.
+const SB_SEED_COMMENTS = [
+  {
+    id: 'demo-s1', versionId: 'demo-sb-v2', parentId: null,
+    pageNumber: 1, anchorX: 0.36, anchorY: 0.44,
+    body: 'This is the frame that sells it. Could the product sit a touch higher so the strapline has room to breathe?',
+    authorName: 'Priya Shah', authorEmail: null, createdAt: ago(260),
+    attachmentUrl: null, attachmentName: null, attachmentType: null, mine: false,
+  },
+  {
+    id: 'demo-s2', versionId: 'demo-sb-v2', parentId: null,
+    pageNumber: 1, anchorX: null, anchorY: null,
+    body: "Noted — we'll lift it and re-balance the text in the next draft.",
+    authorName: 'Ben Underwood', authorEmail: null, createdAt: ago(244),
+    attachmentUrl: null, attachmentName: null, attachmentType: null, mine: false,
+  },
+  {
+    id: 'demo-s3', versionId: 'demo-sb-v2', parentId: null,
+    pageNumber: 2, anchorX: 0.6, anchorY: 0.52,
+    body: 'Can we show the dashboard here rather than the logo? It makes the benefit obvious.',
+    authorName: 'Priya Shah', authorEmail: null, createdAt: ago(200),
+    attachmentUrl: null, attachmentName: null, attachmentType: null, mine: false,
+  },
+];
+
+// `pageCount: null` on purpose — StoryboardRevision reads the real slide count
+// out of the PDF when it isn't stored, so swapping the file in Admin can never
+// leave the rail claiming a slide that doesn't exist.
+export function buildDemoStoryboardData(config = {}) {
+  const pdfUrl = config.storyboardPdfUrl || null;
+  // An optional earlier draft. When there's only one file both versions point
+  // at it: the switcher still demonstrates the idea, and the alternative —
+  // hiding the switcher entirely — loses half of what makes a review a review.
+  const earlierPdfUrl = config.storyboardPdfUrlV1 || pdfUrl;
+  return {
+    title: config.title || 'Sample project — how this works',
+    clientName: 'Your company',
+    callUrl: null,
+    storyboards: [
+      {
+        id: 'demo-sb-1',
+        title: config.storyboardTitle || 'Explainer — storyboard',
+        approvedAt: null,
+        approvedBy: null,
+        feedbackSubmittedAt: null,
+        versions: [
+          {
+            id: 'demo-sb-v2', storyboardId: 'demo-sb-1', versionNumber: 2,
+            label: 'With your first notes applied', mimeType: 'application/pdf',
+            pageCount: null, pdfUrl, createdAt: ago(300),
+          },
+          {
+            id: 'demo-sb-v1', storyboardId: 'demo-sb-1', versionNumber: 1,
+            label: 'First draft', mimeType: 'application/pdf',
+            pageCount: null, pdfUrl: earlierPdfUrl, createdAt: ago(2880),
+          },
+        ],
+      },
+    ],
+    comments: SB_SEED_COMMENTS.map((c) => ({ ...c })),
+    activeViewers: [],
+  };
+}
+
+export const DEMO_SB_SEED_COMMENT_IDS = SB_SEED_COMMENTS.map((c) => c.id);

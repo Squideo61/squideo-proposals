@@ -2808,6 +2808,11 @@ async function demoProjectRoute(req, res, user) {
       posterUrl: cfg.posterUrl || null,
       title: cfg.title || null,
       videoTitle: cfg.videoTitle || null,
+      // The storyboard stage of the tour. Two PDFs so the draft switcher shows
+      // a real difference; with only one, both drafts point at it.
+      storyboardPdfUrl: cfg.storyboardPdfUrl || null,
+      storyboardPdfUrlV1: cfg.storyboardPdfUrlV1 || null,
+      storyboardTitle: cfg.storyboardTitle || null,
     },
   });
 }

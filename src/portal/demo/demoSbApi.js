@@ -1,31 +1,28 @@
-// The sample project's data layer: the same method signatures as the real
-// `revApi` in Review.jsx, backed by memory plus sessionStorage instead of the
-// network. VideoRevision can't tell the difference, which is the point — a
-// prospect is driving the real review surface, not a facsimile of it.
+// The sample storyboard's data layer — the storyboard twin of demoRevApi.js.
 //
-// The storage itself lives in store.js, shared with the sample storyboard so
-// "start over" can clear both stages at once.
+// Same method signatures as the real `sbApi` in Storyboard.jsx, backed by
+// memory plus sessionStorage instead of the network, so StoryboardRevision
+// can't tell the difference. A prospect pinning a note to slide 2 is driving
+// the real sign-off surface, not a facsimile of it.
 
-import { buildDemoData, DEMO_SEED_COMMENT_IDS } from './fixtures.js';
-import { makeDemoStore, REVIEW_KEY } from './store.js';
+import { buildDemoStoryboardData, DEMO_SB_SEED_COMMENT_IDS } from './fixtures.js';
+import { makeDemoStore, STORYBOARD_KEY } from './store.js';
 
-const store = makeDemoStore(REVIEW_KEY);
-const readStore = store.read;
-const writeStore = store.write;
+const store = makeDemoStore(STORYBOARD_KEY);
 const rid = () => 'demo-' + Math.random().toString(36).slice(2, 10);
 
 // Returns { api, load } — `load` builds the current payload, `api` mutates it.
 // `onChange` is called after every mutation so the page can re-render, mirroring
 // how the real page re-polls after a write.
-export function createDemoRevApi({ config, identity, onChange }) {
+export function createDemoSbApi({ config, identity, onChange }) {
   const me = () => ({
     name: identity?.name || 'You',
     email: (identity?.email || 'you@example.com').toLowerCase(),
   });
 
   const load = () => {
-    const base = buildDemoData(config);
-    const s = readStore();
+    const base = buildDemoStoryboardData(config);
+    const s = store.read();
     const added = Array.isArray(s.comments) ? s.comments : [];
     const removed = new Set(Array.isArray(s.removed) ? s.removed : []);
     const edits = s.edits || {};
@@ -37,12 +34,12 @@ export function createDemoRevApi({ config, identity, onChange }) {
       // appear — without it the demo silently hides half the interface.
       .map((c) => ({ ...c, mine: !!c.authorEmail && c.authorEmail === me().email }));
 
-    const video = base.videos[0];
+    const sb = base.storyboards[0];
     if (s.approvedAt) {
-      video.approvedAt = s.approvedAt;
-      video.approvedBy = s.approvedBy || me().name;
+      sb.approvedAt = s.approvedAt;
+      sb.approvedBy = s.approvedBy || me().name;
+      sb.feedbackSubmittedAt = s.feedbackSubmittedAt || s.approvedAt;
     }
-    if (s.feedbackSubmittedAt) video.feedbackSubmittedAt = s.feedbackSubmittedAt;
 
     return { ...base, comments };
   };
@@ -53,20 +50,20 @@ export function createDemoRevApi({ config, identity, onChange }) {
     // No-ops: nothing to record, and the presence list is deliberately empty
     // rather than faked. Inventing a colleague who is "also viewing" would be
     // the one thing here that's a lie rather than a sample.
-    recordRevisionViewer: async () => null,
-    recordRevisionView: async () => {},
-    submitRevisionFeedback: async () => {
-      writeStore({ feedbackSubmittedAt: new Date().toISOString() });
+    recordStoryboardViewer: async () => null,
+    recordStoryboardView: async () => {},
+    submitStoryboardFeedback: async () => {
+      store.write({ feedbackSubmittedAt: new Date().toISOString() });
       touch();
       return { ok: true };
     },
 
-    postRevisionComment: async (_token, payload) => {
+    postStoryboardComment: async (_token, payload) => {
       const c = {
         id: rid(),
-        versionId: payload.versionId || 'demo-v2',
-        parentId: payload.parentId || null,
-        timecodeSeconds: payload.timecodeSeconds ?? null,
+        versionId: payload.versionId || 'demo-sb-v2',
+        parentId: null,
+        pageNumber: payload.pageNumber || 1,
         anchorX: payload.anchorX ?? null,
         anchorY: payload.anchorY ?? null,
         body: payload.body || '',
@@ -78,20 +75,20 @@ export function createDemoRevApi({ config, identity, onChange }) {
         attachmentType: payload.attachmentType || null,
         mine: true,
       };
-      writeStore({ comments: [...(readStore().comments || []), c] });
+      store.write({ comments: [...(store.read().comments || []), c] });
       touch();
       return c;
     },
 
-    editRevisionComment: async (_token, id, body) => {
-      writeStore({ edits: { ...(readStore().edits || {}), [id]: body } });
+    editStoryboardComment: async (_token, id, body) => {
+      store.write({ edits: { ...(store.read().edits || {}), [id]: body } });
       touch();
-      return { ok: true };
+      return { id, body };
     },
 
-    deleteRevisionComment: async (_token, id) => {
-      const s = readStore();
-      writeStore({
+    deleteStoryboardComment: async (_token, id) => {
+      const s = store.read();
+      store.write({
         removed: [...(s.removed || []), id],
         comments: (s.comments || []).filter((c) => c.id !== id),
       });
@@ -99,23 +96,24 @@ export function createDemoRevApi({ config, identity, onChange }) {
       return { ok: true };
     },
 
-    approveRevision: async (_token, _videoId, approvedBy) => {
-      writeStore({ approvedAt: new Date().toISOString(), approvedBy: approvedBy || me().name });
+    approveStoryboard: async (_token, _storyboardId, approvedBy) => {
+      const at = new Date().toISOString();
+      store.write({ approvedAt: at, approvedBy: approvedBy || me().name, feedbackSubmittedAt: at });
       touch();
-      return { ok: true };
+      return { approvedAt: at, feedbackSubmittedAt: at };
     },
 
     // Attachments resolve to a local object URL. It works for the length of the
     // tour and costs no storage — uploading a stranger's file to our blob store
     // from a demo would be a real cost and a real liability for a fake project.
-    uploadRevisionAsset: async (_token, file) => ({
+    uploadStoryboardAsset: async (_token, file) => ({
       url: URL.createObjectURL(file),
       name: file.name,
       type: file.type || null,
     }),
 
-    pollPublicRevision: async () => load(),
+    pollPublicStoryboard: async () => load(),
   };
 
-  return { api, load, seedIds: DEMO_SEED_COMMENT_IDS };
+  return { api, load, seedIds: DEMO_SB_SEED_COMMENT_IDS };
 }
