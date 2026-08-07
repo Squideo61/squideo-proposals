@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AlertTriangle, ArrowLeft, Building2, Calendar, CheckSquare, ChevronRight, Clock, CreditCard, Download, Edit2, ExternalLink, Eye, FileText, Flame, Folder, FolderPlus, Link2, Mail, MessageSquare, MoreVertical, Paperclip, Phone, Play, Plus, RefreshCw, Reply, ReplyAll, Rocket, Square, Trash2, Unlink, User, Video, Wallet, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Building2, Calendar, CheckSquare, ChevronDown, ChevronRight, Clock, CreditCard, Download, Edit2, ExternalLink, Eye, FileText, Flame, Folder, FolderPlus, Link2, Mail, MessageSquare, MoreVertical, Paperclip, Phone, Play, Plus, RefreshCw, Reply, ReplyAll, Rocket, Square, Trash2, Unlink, User, Video, Wallet, X } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
@@ -175,6 +175,9 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
   const [creatingTask, setCreatingTask] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
   const [scheduleOpen, setScheduleOpen] = useState(false);
+  // Done tasks are collapsed behind their heading — on an old deal there can be
+  // dozens of them, and they push the open work off the screen.
+  const [showDone, setShowDone] = useState(false);
   const [introBusy, setIntroBusy] = useState(false);
   // The composer itself is mounted at App level (see EmailComposerHost) so
   // it survives navigation. Opening it is now a store action.
@@ -315,9 +318,11 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
 
   // Milestone-flagged tasks (created from the production schedule) get their own
   // group and are kept out of the ordinary overdue/upcoming/done buckets — done
-  // milestones stay in the Milestones group (struck through) rather than jumping
-  // to Done.
+  // milestones stay in the Milestones group (struck through, behind the same
+  // show-done toggle) rather than jumping to Done.
   const milestoneTasks = tasks.filter(t => t.isMilestone);
+  const openMilestones = milestoneTasks.filter(t => !t.doneAt);
+  const doneMilestones = milestoneTasks.filter(t => !!t.doneAt);
   const overdueTasks  = tasks.filter(t => !t.isMilestone && isTaskOverdue(t));
   const upcomingTasks = tasks.filter(t => !t.isMilestone && !t.doneAt && !isTaskOverdue(t));
   const doneTasks     = tasks.filter(t => !t.isMilestone && !!t.doneAt);
@@ -830,9 +835,23 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
           {milestoneTasks.length > 0 && (
             <>
               <TaskSection label="Milestones" color={BRAND.blue} />
-              {milestoneTasks.map(t => (
+              {openMilestones.map(t => (
                 <TaskRow key={t.id} task={t} onToggle={() => actions.toggleTask(t.id)} onEdit={() => setEditingTask(t)} />
               ))}
+              {doneMilestones.length > 0 && (
+                <>
+                  <TaskSection
+                    label="Done milestones"
+                    color="#16A34A"
+                    count={doneMilestones.length}
+                    collapsed={!showDone}
+                    onToggle={() => setShowDone(v => !v)}
+                  />
+                  {showDone && doneMilestones.map(t => (
+                    <TaskRow key={t.id} task={t} onToggle={() => actions.toggleTask(t.id)} onEdit={() => setEditingTask(t)} />
+                  ))}
+                </>
+              )}
             </>
           )}
           {overdueTasks.length > 0 && (
@@ -853,8 +872,14 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
           )}
           {doneTasks.length > 0 && (
             <>
-              <TaskSection label="Done" color="#16A34A" />
-              {doneTasks.map(t => (
+              <TaskSection
+                label="Done"
+                color="#16A34A"
+                count={doneTasks.length}
+                collapsed={!showDone}
+                onToggle={() => setShowDone(v => !v)}
+              />
+              {showDone && doneTasks.map(t => (
                 <TaskRow key={t.id} task={t} onToggle={() => actions.toggleTask(t.id)} onEdit={() => setEditingTask(t)} />
               ))}
             </>
@@ -1162,11 +1187,29 @@ function TaskRow({ task, onToggle, onEdit }) {
   );
 }
 
-function TaskSection({ label, color }) {
+// A section heading in the Tasks card. Pass `count` + `collapsed`/`onToggle` to
+// make it a click-to-expand header — used by Done, which otherwise grows without
+// limit on a long-running deal and buries the tasks that still need doing.
+function TaskSection({ label, color, count, collapsed, onToggle }) {
+  const base = { fontSize: 11, fontWeight: 700, color, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 10, marginBottom: 2 };
+  if (!onToggle) return <div style={base}>{label}</div>;
   return (
-    <div style={{ fontSize: 11, fontWeight: 700, color, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 10, marginBottom: 2 }}>
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={!collapsed}
+      title={collapsed ? `Show ${label.toLowerCase()} tasks` : `Hide ${label.toLowerCase()} tasks`}
+      style={{
+        ...base,
+        display: 'flex', alignItems: 'center', gap: 4,
+        width: '100%', padding: '4px 0', background: 'transparent', border: 'none',
+        cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
+      }}
+    >
+      {collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
       {label}
-    </div>
+      {typeof count === 'number' && <span style={{ opacity: 0.75 }}>· {count}</span>}
+    </button>
   );
 }
 
