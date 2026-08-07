@@ -32,6 +32,10 @@ export function PortalProvider({ children }) {
   const [toast, setToast] = useState(null);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  // Outstanding client tasks, read live by the same poll. Not notifications:
+  // nothing is stored, and a task disappears the moment it's done rather than
+  // waiting to be clicked.
+  const [openTasks, setOpenTasks] = useState([]);
 
   const showToast = useCallback((msg) => {
     setToast(msg);
@@ -80,11 +84,17 @@ export function PortalProvider({ children }) {
     }
   }, [companyId]);
 
-  const refreshNotifications = useCallback(async () => {
+  // `withTasks` asks the server to derive the client's outstanding tasks too.
+  // Off for the 25s tick (deriving them is a dozen round-trips through the task
+  // engine); on for load, tab re-focus, and after anything that might have
+  // completed one. Without it the response omits `tasks` entirely and we keep
+  // the list we already have.
+  const refreshNotifications = useCallback(async ({ withTasks = false } = {}) => {
     try {
-      const data = await portalApi.get('notifications');
+      const data = await portalApi.get(`notifications${withTasks ? '?tasks=1' : ''}`);
       setNotifications(data.notifications || []);
       setUnreadCount(data.unread || 0);
+      if (Array.isArray(data.tasks)) setOpenTasks(data.tasks);
       return data;
     } catch {
       return null;
@@ -114,13 +124,15 @@ export function PortalProvider({ children }) {
   // Poll the notification feed while signed in (the portal is otherwise
   // poll-free; this one lightweight endpoint keeps the bell current).
   useEffect(() => {
-    if (!user) { setNotifications([]); setUnreadCount(0); return; }
-    refreshNotifications();
+    if (!user) { setNotifications([]); setUnreadCount(0); setOpenTasks([]); return; }
+    refreshNotifications({ withTasks: true });
     const t = window.setInterval(refreshNotifications, 25_000);
     // Also refresh the moment the client returns to the tab, so a notification
     // that landed while they were elsewhere shows up straight away rather than
     // after the next poll.
-    const onActive = () => { if (document.visibilityState !== 'hidden') refreshNotifications(); };
+    // Coming back to the tab is the moment something may have changed while
+    // they were away, so this is where the task list is worth re-deriving.
+    const onActive = () => { if (document.visibilityState !== 'hidden') refreshNotifications({ withTasks: true }); };
     window.addEventListener('focus', onActive);
     document.addEventListener('visibilitychange', onActive);
     return () => {
@@ -171,8 +183,8 @@ export function PortalProvider({ children }) {
     overview, overviewLoading, refreshOverview, refreshSession,
     preview, manageMode: preview?.manage === true, logout, toast, showToast,
     sampleAvailable,
-    notifications, unreadCount, refreshNotifications, markRead, markAllRead,
-  }), [booting, user, companyId, setActiveCompanyId, company, overview, overviewLoading, refreshOverview, refreshSession, preview, logout, toast, showToast, sampleAvailable, notifications, unreadCount, refreshNotifications, markRead, markAllRead]);
+    notifications, unreadCount, openTasks, refreshNotifications, markRead, markAllRead,
+  }), [booting, user, companyId, setActiveCompanyId, company, overview, overviewLoading, refreshOverview, refreshSession, preview, logout, toast, showToast, sampleAvailable, notifications, unreadCount, openTasks, refreshNotifications, markRead, markAllRead]);
 
   return <PortalContext.Provider value={value}>{children}</PortalContext.Provider>;
 }

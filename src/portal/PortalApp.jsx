@@ -406,7 +406,9 @@ function MobileTabBar({ view, company, sampleAvailable, sampleBadge }) {
 }
 
 function AuthedApp() {
-  const { toast, companyId, preview, user, company: activeCompany, sampleAvailable } = usePortal();
+  const {
+    toast, companyId, preview, user, company: activeCompany, sampleAvailable, refreshNotifications,
+  } = usePortal();
   const isMobile = useIsMobile();
   const [route, setRoute] = useState(parseHash);
   // The badge is a one-time "there's something here you haven't seen", so it
@@ -425,6 +427,18 @@ function AuthedApp() {
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
+
+  // Re-derive the bell's task list when they move between sections. The pages
+  // that COMPLETE a task (documents, script, kick-off, voiceover) are the ones
+  // they navigate away from afterwards, and a task they've just finished still
+  // sitting in the bell is precisely the staleness that keeping tasks out of
+  // the stored feed was meant to avoid. Skips the first run — the provider has
+  // already fetched them on mount.
+  const navigatedOnce = React.useRef(false);
+  useEffect(() => {
+    if (!navigatedOnce.current) { navigatedOnce.current = true; return; }
+    refreshNotifications?.({ withTasks: true }).catch(() => {});
+  }, [route.view]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Tell the team what the client is looking at. Silent and best-effort — this
   // must never interrupt them. Staff sessions are skipped outright so browsing

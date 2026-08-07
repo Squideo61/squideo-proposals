@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deriveProjectTasks, countOpenTasks } from '../api/_lib/portal/tasks.js';
+import { deriveProjectTasks, countOpenTasks, bellTaskRows } from '../api/_lib/portal/tasks.js';
 
 // The portal "Your tasks" checklist. Tasks unlock only once the PM has launched
 // them (sent the intro email → deal.client_tasks_launched_at) or the project is
@@ -173,5 +173,45 @@ describe('countOpenTasks', () => {
     });
     // PO todo; brand, script, voiceover and kickoff all done → 1 open
     expect(countOpenTasks(tasks)).toBe(1);
+  });
+});
+
+// The bell lists outstanding tasks one per line, derived on every read rather
+// than stored — so the rules about what makes the list, and where each row
+// goes when clicked, are the whole contract.
+describe('bellTaskRows', () => {
+  const deal = { id: 'd1', title: 'Brand Video' };
+  const todo = { key: 'brand', title: 'Upload your brand guidelines & logo', detail: 'Share your logo…', status: 'todo', cta: { label: 'Upload', href: '#/documents' } };
+  const done = { key: 'kickoff', title: 'Book your kick-off call', detail: 'Booked', status: 'done', cta: { label: 'View call', href: '#/kickoff/d1' } };
+
+  it('lists only what is still open', () => {
+    const rows = bellTaskRows([{ deal, tasks: [todo, done] }]);
+    expect(rows.map((r) => r.title)).toEqual(['Upload your brand guidelines & logo']);
+  });
+
+  it('carries the task straight to where it gets done', () => {
+    expect(bellTaskRows([{ deal, tasks: [todo] }])[0].link).toBe('#/documents');
+  });
+
+  it('sends an in-page action to the project that hosts the form', () => {
+    // The PO task's CTA is an action, not a link — the bell can only navigate,
+    // so it must land them on the page with the form rather than nowhere.
+    const po = { key: 'po', title: 'Send us your purchase order', status: 'todo', cta: { label: 'Submit PO', action: 'po-number' } };
+    expect(bellTaskRows([{ deal, tasks: [po] }])[0].link).toBe('#/project/d1');
+  });
+
+  it('keeps the same task on two projects as two rows', () => {
+    const other = { id: 'd2', title: 'Recruitment Video' };
+    const rows = bellTaskRows([{ deal, tasks: [todo] }, { deal: other, tasks: [todo] }]);
+    expect(rows).toHaveLength(2);
+    expect(new Set(rows.map((r) => r.key)).size).toBe(2);
+    expect(rows.map((r) => r.dealTitle)).toEqual(['Brand Video', 'Recruitment Video']);
+  });
+
+  it('survives the shapes an empty or half-loaded project produces', () => {
+    expect(bellTaskRows()).toEqual([]);
+    expect(bellTaskRows([{ deal, tasks: [] }])).toEqual([]);
+    expect(bellTaskRows([{ deal: null, tasks: [todo] }])).toEqual([]);
+    expect(bellTaskRows([{ deal }])).toEqual([]);
   });
 });

@@ -27,8 +27,6 @@ import { createRawToken, hashToken, signPortalPreviewToken } from '../_lib/porta
 import { sendTeamInvite, createPortalInvite, inviteUrlFor, INVITE_DAYS } from '../_lib/portal/onboarding.js';
 import { portalTeamInviteHtml, portalResetHtml, portalProjectTasksHtml, PORTAL_URL } from '../_lib/portal/emails.js';
 import { emailLogoUrl } from '../_lib/portal/logo.js';
-import { notifyPortalUser } from '../_lib/portal/notifications.js';
-import { computeDealTasks } from '../_lib/portal/taskContext.js';
 import {
   portalTimeline, dealSteps, companyStepsSummary, portalActivityFeed,
   portalPresence, portalEngagement, portalActiveUsers,
@@ -724,18 +722,12 @@ export default async function handler(req, res) {
         // teammates already on the portal) + a branded task email. Best-effort —
         // never let notification failure break link generation.
         try {
-          const ctx = await computeDealTasks(dealId);
-          const openCount = ctx?.openCount || 0;
-          await notifyPortalUser({
-            companyId: deal.company_id,
-            dealId,
-            key: 'portal.tasks_launched',
-            title: 'Your project is ready',
-            body: openCount
-              ? `You have ${openCount} task${openCount === 1 ? '' : 's'} to complete to get started.`
-              : 'Track your project and share what we need in the portal.',
-            link: `#/project/${dealId}`,
-          });
+          // No in-portal "you have N tasks" row is written here any more: the
+          // client's outstanding tasks are read live into the bell's own Tasks
+          // section, one per line, and a stored summary alongside them would
+          // both duplicate the list and go stale the moment one is completed.
+          // The branded task email below is the part that still fires, because
+          // that's what actually reaches someone who isn't in the portal yet.
 
           // The branded task email only sends when the team has authored the
           // task-email copy (settings.project_tasks_email) — an explicit opt-in

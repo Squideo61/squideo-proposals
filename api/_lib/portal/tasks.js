@@ -132,6 +132,38 @@ export function countOpenTasks(tasks = []) {
   return tasks.filter((t) => t.status === 'todo').length;
 }
 
+// The client's outstanding tasks across every live project, flattened into rows
+// the notification bell can list one per line.
+//
+// Only what's still open: the bell is "what's waiting on you", and a completed
+// task belongs on the project page as a tick, not in a feed. This is also why
+// the bell's tasks are derived on read rather than stored — the list simply
+// stops including a task once it's done, with nothing to clean up.
+//
+// `entries` is [{ deal, tasks }]. Keys are namespaced by deal so two projects
+// each wanting brand assets are two rows, not one that React drops.
+export function bellTaskRows(entries = []) {
+  const out = [];
+  for (const { deal, tasks } of entries) {
+    if (!deal) continue;
+    for (const t of tasks || []) {
+      if (t.status === 'done') continue;
+      out.push({
+        key: `${deal.id}:${t.key}`,
+        title: t.title,
+        detail: t.detail || null,
+        dealId: deal.id,
+        dealTitle: deal.title || null,
+        // The bell can only navigate. A task whose CTA is an in-page action
+        // (the PO number form) has no href of its own, so it points at the
+        // project page that hosts the form rather than nowhere.
+        link: t.cta?.href || `#/project/${deal.id}`,
+      });
+    }
+  }
+  return out;
+}
+
 // Pure cadence decision for the automatic reminder cron (kept DB-free so it's
 // unit-testable). We remind when: tasks have launched, there's still ≥1 open
 // task, we're under the reminder cap, and the cadence window has elapsed since

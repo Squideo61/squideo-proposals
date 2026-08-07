@@ -82,7 +82,7 @@ import {
 import { deriveNextStep } from './_lib/portal/nextStep.js';
 import { serialisePortalNotification } from './_lib/portal/notificationShape.js';
 import { notifyPortalUser } from './_lib/portal/notifications.js';
-import { deriveProjectTasks, countOpenTasks } from './_lib/portal/tasks.js';
+import { deriveProjectTasks, countOpenTasks, bellTaskRows } from './_lib/portal/tasks.js';
 import { voiceoverProposalContext } from './_lib/proposalPricing.js';
 import {
   computePortalOffers,
@@ -782,28 +782,69 @@ async function stampCourseCompletionIfDone(req, puid) {
 }
 
 // ═════════════════════════ notifications ═════════════════════════
-// The client's in-portal notification feed + unread badge. Rows are written by
-// notifyPortalUser (api/_lib/portal/notifications.js) at task launch and by the
-// reminder cron. Scoped strictly to the caller's own portal_user id.
+// The client's bell: two different things that used to be muddled into one.
+//
+//   TASKS are things they still have to DO — upload the brand guidelines, book
+//   the kick-off. They're read LIVE from the project every time, never stored,
+//   because a stored task row is a snapshot: the moment someone uploads a logo
+//   it's a lie sitting in the bell until they happen to click it. Live tasks
+//   simply stop being returned.
+//
+//   NOTIFICATIONS are things that HAPPENED — your video is ready to review,
+//   your storyboard was finalised. Those are events, they're stored, and they
+//   stay until read.
+//
+// One bundled "Your project is ready — you have 3 tasks" row used to stand in
+// for the first group. It's gone (and filtered out of the feed on the way past,
+// so the ones already written disappear rather than lingering behind the new
+// task list saying the same thing worse).
+//
+// Scoped strictly to the caller's own portal_user id.
+const RETIRED_NOTIFICATION_KEYS = ['portal.tasks_launched'];
+
 async function notificationsRoute(req, res, user) {
   // Preview sessions have no puid — nothing to show, nothing to mark.
-  if (!user.puid) return res.status(200).json({ notifications: [], unread: 0 });
+  if (!user.puid) return res.status(200).json({ notifications: [], unread: 0, tasks: [] });
 
   if (req.method === 'GET') {
-    const rows = await sql`
-      SELECT id, notification_key, title, body, link, created_at, read_at
-        FROM portal_notifications
-       WHERE portal_user_id = ${user.puid}
-       ORDER BY created_at DESC
-       LIMIT 50
-    `;
-    const [{ unread }] = await sql`
-      SELECT COUNT(*)::int AS unread FROM portal_notifications
-       WHERE portal_user_id = ${user.puid} AND read_at IS NULL
-    `;
+    // Tasks are only computed when asked for (?tasks=1). Deriving them costs
+    // the best part of a dozen round-trips through the task engine, and this
+    // endpoint is polled every 25 seconds by every open tab — so the client
+    // asks for them on load and when the tab is re-focused, and the ticking
+    // poll just refreshes the stored feed. Tasks change when somebody DOES
+    // something, which is exactly when those two moments happen.
+    const withTasks = req.query.tasks === '1';
+    // Piggy-backed on the same infrequent call for the same reason.
+    if (withTasks) await seedSampleTourNotification(user);
+
+    const [rows, [{ unread }], tasks] = await Promise.all([
+      sql`
+        SELECT id, notification_key, title, body, link, created_at, read_at
+          FROM portal_notifications
+         WHERE portal_user_id = ${user.puid}
+           AND NOT (notification_key = ANY(${RETIRED_NOTIFICATION_KEYS}))
+         ORDER BY created_at DESC
+         LIMIT 50
+      `,
+      sql`
+        SELECT COUNT(*)::int AS unread FROM portal_notifications
+         WHERE portal_user_id = ${user.puid} AND read_at IS NULL
+           AND NOT (notification_key = ANY(${RETIRED_NOTIFICATION_KEYS}))
+      `,
+      // Best-effort: the bell must still open if the task engine trips over.
+      withTasks
+        ? openTasksForUser(user).catch((err) => {
+          console.warn('[portal] bell tasks failed', err.message);
+          return [];
+        })
+        : Promise.resolve(null),
+    ]);
     return res.status(200).json({
       notifications: rows.map(serialisePortalNotification),
       unread,
+      // Absent (rather than empty) when not asked for, so the client knows to
+      // keep the list it already has instead of blanking the section.
+      ...(withTasks ? { tasks } : {}),
     });
   }
 
@@ -826,6 +867,50 @@ async function notificationsRoute(req, res, user) {
   }
 
   return res.status(405).json({ error: 'Method not allowed' });
+}
+
+// Every task still open across the client's live projects, newest project
+// first, as flat rows the bell can list one per line. Same task engine the
+// dashboard and project page use, so the bell can't disagree with them.
+async function openTasksForUser(user) {
+  const deals = await sql`
+    SELECT * FROM deals
+     WHERE company_id = ANY(${user.companyIds}) AND stage IN ('signed', 'paid')
+     ORDER BY last_activity_at DESC NULLS LAST
+  `;
+  if (!deals.length) return [];
+  const states = await gatherDealStates(deals.map((d) => d.id));
+  return bellTaskRows(deals.map((deal) => ({ deal, tasks: tasksFor(deal, states) })));
+}
+
+// The one-off "have a look round the sample project" nudge.
+//
+// Self-seeding on read rather than written at signup, for two reasons: every
+// client who already had an account when this shipped should get it too (no
+// backfill), and it can't be sent before the sample actually has something in
+// it. Guarded on the key, so it lands exactly once per person, ever.
+async function seedSampleTourNotification(user) {
+  try {
+    const [seen] = await sql`
+      SELECT id FROM portal_notifications
+       WHERE portal_user_id = ${user.puid} AND notification_key = 'portal.sample_tour'
+       LIMIT 1
+    `;
+    if (seen) return;
+    const [cfg] = await sql`SELECT demo_project FROM settings WHERE id = 1`.catch(() => []);
+    const demo = cfg?.demo_project || {};
+    if (!demo.videoUrl && !demo.storyboardPdfUrl) return;
+    await notifyPortalUser({
+      portalUserId: user.puid,
+      companyId: user.companyIds[0] || null,
+      key: 'portal.sample_tour',
+      title: 'Have a look around before you need to',
+      body: 'We\'ve set up a sample project so you can try the review tools — sign off a storyboard, comment on a cut — on a made-up job. Two minutes, and nothing you do reaches anyone.',
+      link: '#/demo',
+    });
+  } catch (err) {
+    console.warn('[portal] sample tour seed failed', err.message);
+  }
 }
 
 // ═════════════════════════ self-serve signup ═════════════════════════
@@ -1053,15 +1138,9 @@ async function authRoutes(req, res) {
       if (openDeals.length) {
         const states = await gatherDealStates(openDeals.map((d) => d.id));
         for (const deal of openDeals) {
-          const openCount = countOpenTasks(tasksFor(deal, states));
-          if (openCount > 0) {
-            await notifyPortalUser({
-              portalUserId: user.id, companyId: inv.company_id, dealId: deal.id,
-              key: 'portal.tasks_launched', title: 'Your project is ready',
-              body: `You have ${openCount} task${openCount === 1 ? '' : 's'} to complete to get started on ${deal.title}.`,
-              link: `#/project/${deal.id}`,
-            });
-          }
+          // No "you have N tasks" row: outstanding tasks are read live into the
+          // bell's own Tasks section, one per line, so a stored summary of them
+          // would say the same thing worse and go stale the moment one is done.
           const sb = states.sbPending.get(deal.id);
           if (sb) await notifyPortalUser({
             portalUserId: user.id, companyId: inv.company_id, dealId: deal.id,
