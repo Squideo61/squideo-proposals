@@ -137,6 +137,7 @@ import {
   serialisePortalInvite,
   aggregateVideoStage,
 } from './_lib/portal/serialisers.js';
+import { clientSchedule } from './_lib/portal/schedule.js';
 
 export const config = {
   api: { bodyParser: false }, // raw body needed for uploads; JSON parsed manually
@@ -321,6 +322,7 @@ async function gatherDealStates(dealIds) {
     sql`
       SELECT v.id, v.deal_id, v.title, v.status, v.sort_order, v.video_number,
              v.production_phase, v.production_stage, v.video_length,
+             v.production_schedule,
              v.voiceover_artist_id, va.name AS voiceover_artist_name, va.category AS voiceover_category
         FROM project_videos v
         LEFT JOIN voiceover_artists va ON va.id = v.voiceover_artist_id
@@ -1510,6 +1512,10 @@ async function projectRoute(req, res, user) {
       tasks: tasksFor(deal, states),
       projectProduction: aggregateVideoStage(rawVideos),
       finalReleaseUnlocked,
+      // The project-wide timeline, shown only when no video carries its own —
+      // see ProjectSchedule in the portal. A multi-video project schedules per
+      // video; a single-video one is often scheduled from the deal page.
+      schedule: clientSchedule(deal.production_schedule),
       videos: rawVideos.map(serialisePortalVideo),
       proposal: prop ? { id: prop.id, signed: !!prop.signature } : null,
       reviews: states.revLinks.get(deal.id) || [],

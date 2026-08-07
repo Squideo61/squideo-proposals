@@ -161,3 +161,44 @@ export function buildDemoStoryboardData(config = {}) {
 }
 
 export const DEMO_SB_SEED_COMMENT_IDS = SB_SEED_COMMENTS.map((c) => c.id);
+
+// ── The sample project's schedule ───────────────────────────────────────────
+// Shaped like the output of clientSchedule() on the server, so the portal's
+// real ProjectSchedule renders it with no special cases — same as everything
+// else here.
+//
+// Dates are generated relative to today rather than written down, for one
+// reason: a demo timeline with hard-coded dates is out of date within a month
+// and then quietly argues the opposite of what it's there to prove. The offsets
+// are chosen to straddle today, so a visitor sees ticked-off history, a "next
+// up" marker, and dates still to come — which is what a timeline looks like on
+// a project that's actually running.
+const scheduleDay = (offsetDays) => {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  // Weekends would read as sloppy planning on a page arguing we're organised.
+  if (d.getDay() === 6) d.setDate(d.getDate() + 2);
+  if (d.getDay() === 0) d.setDate(d.getDate() + 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+const DEMO_MILESTONES = [
+  ['kick_off', 'Kick off', 'Project starts', 'both', -21],
+  ['script:deliveredBy', 'Script & Text Direction', 'With you', 'us', -16],
+  ['script:feedbackBy', 'Script & Text Direction', 'Your feedback due', 'you', -13],
+  ['storyboard:deliveredBy', 'Storyboard', 'With you', 'us', -6],
+  ['storyboard:feedbackBy', 'Storyboard', 'Your feedback due', 'you', 2],
+  ['storyboard:revisedBy', 'Storyboard', 'Revised version with you', 'us', 7],
+  ['video:deliveredBy', 'Video', 'With you', 'us', 17],
+  ['video:feedbackBy', 'Video', 'Your feedback due', 'you', 20],
+  ['video:revisedBy', 'Video', 'Revised version with you', 'us', 25],
+];
+
+export function buildDemoSchedule() {
+  return {
+    kickOff: scheduleDay(-21),
+    milestones: DEMO_MILESTONES.map(([key, label, event, who, offset]) => ({
+      key, label, event, who, date: scheduleDay(offset),
+    })),
+  };
+}

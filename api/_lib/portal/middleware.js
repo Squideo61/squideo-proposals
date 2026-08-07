@@ -192,6 +192,9 @@ export async function requireDealInOrg(res, dealId, companyIds) {
            d.po_number, d.drive_folder_id, d.revision_project_id, d.reference,
            d.client_tasks_launched_at, d.script_status, d.script_status_at,
            d.portal_extras_discount, d.delivery_deadline, d.created_at,
+           -- The project-wide schedule. Videos carry their own; this is what a
+           -- single-video project scheduled from the deal page has instead.
+           d.production_schedule,
            c.name AS company_name
       FROM deals d
       JOIN companies c ON c.id = d.company_id

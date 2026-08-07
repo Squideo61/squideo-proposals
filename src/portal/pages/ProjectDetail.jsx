@@ -6,7 +6,8 @@ import { BRAND } from '../../theme.js';
 import { portalApi, mediaUrl } from '../api.js';
 import { usePortal } from '../PortalContext.jsx';
 import {
-  Card, CourtBanner, PhaseTimeline, StatusPill, EmptyState, FileRow, SectionHeading, ProjectTasks, fmtDate,
+  Card, CourtBanner, PhaseTimeline, StatusPill, EmptyState, FileRow, SectionHeading, ProjectTasks,
+  ProjectSchedule, fmtDate,
 } from '../components.jsx';
 import { runCta } from './Dashboard.jsx';
 import {
@@ -84,6 +85,7 @@ export default function ProjectDetail({ dealId }) {
   }
 
   const showPoForm = project.nextStep?.cta?.action === 'po-number';
+  const scheduledVideos = (project.videos || []).filter((v) => v.schedule?.milestones?.length);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -124,6 +126,33 @@ export default function ProjectDetail({ dealId }) {
           </form>
         </Card>
       )}
+
+      {/* The schedule the team planned this against. Per video, because a
+          multi-video project runs them on separate timelines and one merged
+          list would be unreadable — with the deal's own schedule as the
+          project-wide fallback for a job planned from the deal page. Shown
+          only once dates actually exist; an empty timeline promises nothing
+          and looks like something is broken. */}
+      {scheduledVideos.length > 0 ? (
+        <Card>
+          <SectionHeading>Schedule</SectionHeading>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
+            {scheduledVideos.map((v) => (
+              <ProjectSchedule
+                key={v.id}
+                schedule={v.schedule}
+                // One video needs no heading — it would just repeat the card's.
+                title={scheduledVideos.length > 1 ? v.title : null}
+              />
+            ))}
+          </div>
+        </Card>
+      ) : project.schedule ? (
+        <Card>
+          <SectionHeading>Schedule</SectionHeading>
+          <ProjectSchedule schedule={project.schedule} title={null} />
+        </Card>
+      ) : null}
 
       {project.videos?.length > 0 && (
         <Card>

@@ -26,7 +26,8 @@ import { createDemoRevApi } from '../demo/demoRevApi.js';
 import { createDemoSbApi } from '../demo/demoSbApi.js';
 import { resetDemo, demoProgress } from '../demo/store.js';
 import { DEMO_STAGES } from '../demo/stages.js';
-import { DEMO_TOKEN, DEMO_SB_TOKEN } from '../demo/fixtures.js';
+import { DEMO_TOKEN, DEMO_SB_TOKEN, buildDemoSchedule } from '../demo/fixtures.js';
+import { ProjectSchedule } from '../components.jsx';
 
 // The stage list lives in demo/stages.js so the dashboard can render the sample
 // as a project card without importing this file (and with it, pdf.js). Icons
@@ -126,6 +127,9 @@ function StageCard({ stage, config, progress }) {
 }
 
 function Overview({ config, progress, onReset, isProspect }) {
+  // Built once per mount: the dates are relative to now, and recomputing them
+  // on every render would let a milestone flip past "today" mid-session.
+  const demoSchedule = useMemo(() => buildDemoSchedule(), []);
   const anyTried = progress.storyboard.tried || progress.video.tried;
   const readyStages = STAGES.filter((s) => s.ready(config));
   const bothTried = readyStages.length > 0 && readyStages.every((s) => progress[s.key].tried);
@@ -188,6 +192,21 @@ function Overview({ config, progress, onReset, isProspect }) {
         {STAGES.map((s) => (
           <StageCard key={s.key} stage={s} config={config} progress={progress[s.key]} />
         ))}
+      </div>
+
+      {/* The same schedule component a real project gets, on made-up dates that
+          straddle today. It's here because "when will I see something, and when
+          do you need me?" is the question behind most of the chasing on a video
+          project, and showing that we answer it up front does more work than
+          another paragraph claiming we're organised. */}
+      <div style={{ ...card, gap: 4 }}>
+        <div style={{ fontSize: 17, fontWeight: 800, color: BRAND.ink }}>You'd know every date up front</div>
+        <p style={{ margin: '0 0 14px', fontSize: 13.5, lineHeight: 1.6, color: BRAND.muted }}>
+          Every project gets a schedule like this one, on your own project page. Not just when
+          we deliver — <strong style={{ color: BRAND.ink }}>the dates we need you</strong>, marked
+          out, so nothing waits on a question nobody asked.
+        </p>
+        <ProjectSchedule schedule={demoSchedule} title={null} compact />
       </div>
 
       {/* Says "sample" without shouting. Amber would read as a warning; this is

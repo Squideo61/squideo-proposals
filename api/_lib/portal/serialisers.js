@@ -4,6 +4,7 @@
 // about another organisation. No SELECT * passthrough to portal responses.
 
 import { PHASE_BY_ID, VIDEO_STATUS_BY_ID, stageOrderIndex } from '../productionStages.js';
+import { clientSchedule } from './schedule.js';
 
 // Client-friendly pipeline labels; internal stages the portal never shows
 // (lead/lost) are filtered out before serialisation.
@@ -119,6 +120,12 @@ export function serialisePortalVideo(v) {
     voiceover: v.voiceover_artist_id
       ? { artistId: v.voiceover_artist_id, artistName: v.voiceover_artist_name || 'Selected artist', category: v.voiceover_category || null, locked: true }
       : null,
+    // The dates the team planned this video against, flattened for a client.
+    // Absent (rather than null) on queries that don't select the column, so a
+    // caller can tell "no schedule set" from "didn't ask".
+    ...(('production_schedule' in v)
+      ? { schedule: clientSchedule(v.production_schedule) }
+      : {}),
   };
 }
 

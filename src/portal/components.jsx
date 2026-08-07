@@ -155,6 +155,114 @@ export function PhaseTimeline({ production }) {
   );
 }
 
+// The production schedule, as a client reads it.
+//
+// Two things earn this its space. One: it answers "when do I see something?"
+// without anyone having to ask. Two — and this is the reason it's worth the
+// pixels — it makes the client's OWN deadlines visible. A project slips most
+// often because nobody told them their week was the critical path, so the
+// "Your feedback due" rows are marked out in amber and everything we owe them
+// sits in blue.
+//
+// Dates that have passed are ticked and dimmed; the next one still to come is
+// the only row that gets any weight. No progress percentages and no "on track"
+// claims — a plan is a plan, and dressing it as live status would be the first
+// thing to become a lie when something moves.
+export function ProjectSchedule({ schedule, title = 'Timeline', compact = false }) {
+  const milestones = schedule?.milestones || [];
+  if (!milestones.length) return null;
+
+  // Compared as YYYY-MM-DD strings against local today — no timezone maths on a
+  // value that was authored as a plain day in the first place.
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const nextIdx = milestones.findIndex((m) => m.date >= today);
+
+  return (
+    <div>
+      {title && (
+        <div style={{
+          fontSize: 11.5, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.4,
+          color: BRAND.muted, margin: '0 0 10px',
+        }}>
+          {title}
+        </div>
+      )}
+      <div style={{ display: 'flex', flexDirection: 'column' }}>
+        {milestones.map((m, i) => {
+          const past = m.date < today;
+          const next = i === nextIdx;
+          const yours = m.who === 'you';
+          const accent = yours ? '#B45309' : BRAND.blue;
+          const last = i === milestones.length - 1;
+          return (
+            <div key={m.key} style={{ display: 'flex', gap: 12, alignItems: 'stretch' }}>
+              {/* Rail: dot plus the line down to the next one. */}
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 16, flexShrink: 0 }}>
+                <span style={{
+                  width: 11, height: 11, borderRadius: '50%', marginTop: 5, flexShrink: 0,
+                  background: past ? '#CBD5E1' : accent,
+                  boxShadow: next ? `0 0 0 4px ${accent}22` : 'none',
+                }} />
+                {!last && <span style={{ flex: 1, width: 2, background: '#E5E9EE', minHeight: compact ? 14 : 18 }} />}
+              </div>
+
+              <div style={{ flex: 1, minWidth: 0, paddingBottom: last ? 0 : compact ? 12 : 16 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                  <span style={{
+                    fontSize: compact ? 13 : 13.5, fontWeight: next ? 800 : 700,
+                    color: past ? BRAND.muted : BRAND.ink,
+                  }}>
+                    {m.label}
+                  </span>
+                  {yours && !past && (
+                    <span style={{
+                      background: '#FEF3C7', color: '#B45309', border: '1px solid #FDE68A',
+                      borderRadius: 999, padding: '1px 8px', fontSize: 10.5, fontWeight: 800,
+                      textTransform: 'uppercase', letterSpacing: 0.3,
+                    }}>
+                      You
+                    </span>
+                  )}
+                  {next && (
+                    <span style={{ fontSize: 11, fontWeight: 700, color: accent }}>Next up</span>
+                  )}
+                </div>
+                <div style={{
+                  fontSize: compact ? 12 : 12.5, color: BRAND.muted, marginTop: 2,
+                  display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
+                }}>
+                  {past && <Check size={12} color="#16A34A" style={{ flexShrink: 0 }} />}
+                  <span>{m.event}</span>
+                  <span style={{ color: '#C3D3DC' }}>·</span>
+                  <span style={{ fontWeight: 600, color: past ? BRAND.muted : BRAND.ink }}>
+                    {fmtScheduleDate(m.date)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 10, lineHeight: 1.5 }}>
+        Planned dates — we'll let you know here if anything moves.
+      </div>
+    </div>
+  );
+}
+
+// "Tue 12 Aug", plus the year when it isn't this one. Parsed as parts rather
+// than `new Date('2026-08-12')`, which some browsers read as UTC midnight and
+// render as the day before for anyone west of London.
+function fmtScheduleDate(ymd) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd || '');
+  if (!m) return ymd || '';
+  const d = new Date(+m[1], +m[2] - 1, +m[3]);
+  const opts = { weekday: 'short', day: 'numeric', month: 'short' };
+  if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
+  return d.toLocaleDateString('en-GB', opts);
+}
+
 export function StatusPill({ label, color }) {
   return (
     <span style={{
