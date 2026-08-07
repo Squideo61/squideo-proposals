@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AlertTriangle, ArrowLeft, Building2, Calendar, CheckSquare, ChevronDown, ChevronRight, Clock, CreditCard, Download, Edit2, ExternalLink, Eye, FileText, Flame, Folder, FolderPlus, Link2, Mail, MessageSquare, MoreVertical, Paperclip, Phone, Play, Plus, RefreshCw, Reply, ReplyAll, Rocket, Square, Trash2, Unlink, User, Video, Wallet, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Building2, Calendar, CheckSquare, ChevronDown, ChevronRight, Clock, CreditCard, Download, Edit2, ExternalLink, Eye, FileText, Flame, Folder, FolderPlus, Forward, Link2, Mail, MessageSquare, MoreVertical, Paperclip, Phone, Play, Plus, RefreshCw, Reply, ReplyAll, Rocket, Square, Trash2, Unlink, User, Video, Wallet, X } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, formatRelativeTime, formatDuration, useIsMobile, formatProposalNumber, decodeHtmlEntities, fileSizeLabel } from '../../utils.js';
 import { sanitizeEmailBody } from '../../utils/emailImages.js';
-import { Badge, CallLink, Modal, RefBadge, FormRow } from '../ui.jsx';
+import { ActionMenu, Badge, CallLink, Modal, RefBadge, FormRow } from '../ui.jsx';
 import { EmailComposerModal } from './EmailComposer.jsx';
 import { referenceMonth } from '../../lib/reference.js';
 import { describeSaleStatus } from '../../lib/saleStatus.js';
@@ -35,7 +35,7 @@ import { ProductionProgressBar, aggregateProjectPhase } from './ProductionProgre
 import { TrackingEye } from './EmailTracking.jsx';
 import { ContactModal } from './ContactsView.jsx';
 import { LostReasonModal } from './LostReasonModal.jsx';
-import { ConversationView } from './EmailsView.jsx';
+import { ConversationView, buildForwardBody, forwardSubject, collectThreadAttachments } from './EmailsView.jsx';
 import { EmailAttachmentCard } from './EmailAttachment.jsx';
 import { XeroContactPicker } from './XeroContactPicker.jsx';
 import { ViewAnalyticsModal } from '../ViewAnalyticsModal.jsx';
@@ -1550,7 +1550,7 @@ function EmailActionsMenu({ anchor, onClose, onLinkAnother, onCreateNewDeal, onU
 // message oldest→newest with its body inlined (lazy-loaded). Single-message
 // threads keep the original click-to-modal behaviour.
 export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCompanyId, onOpenMessage, onLinkAnother, onCreateNewDeal, onUnlink }) {
-  const { state, actions } = useStore();
+  const { state, actions, showMsg } = useStore();
   const [expanded, setExpanded] = useState(false);
   // Inline reply (Gmail-style) — when true, the composer renders at the foot of
   // the expanded thread instead of popping the floating dock composer. Keeps the
@@ -1608,7 +1608,98 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
   // Reply-all draft = the plain reply plus every other participant on Cc.
   const replyAllDraft = () => ({ ...replyDraft(), cc: replyAllCc.join(', ') });
 
-  const startReply = (all = false) => { setReplyAll(all); setExpanded(true); setReplying(true); };
+  // ── Forwarding ───────────────────────────────────────────────────────────
+  // The seeded forward draft (null when nothing's being forwarded) and a
+  // counter that re-keys the composer, so forwarding one message while another
+  // forward is already open replaces the body instead of leaving the old one.
+  const [forwardDraft, setForwardDraft] = useState(null);
+  const [forwardSeq, setForwardSeq] = useState(0);
+  const [preparingForward, setPreparingForward] = useState(false);
+
+  const startReply = (all = false) => {
+    setForwardDraft(null);
+    setReplyAll(all);
+    setExpanded(true);
+    setReplying(true);
+  };
+
+  // Forward the whole conversation (or just `onlyIds`, from one message's menu).
+  // The deal payload carries no bodies — they're lazy-loaded per message — so we
+  // pull the conversation in one request from the same endpoint the full thread
+  // reader uses, then build the body and copy the attachments into the send
+  // store exactly like the inbox does. A failed attachment copy is never fatal:
+  // the forward still opens, with the files named so they can be added by hand.
+  const startForward = async (onlyIds = null) => {
+    if (preparingForward) return;
+    setPreparingForward(true);
+    try {
+      const full = await actions.loadDealThread(threadId);
+      const all = full?.messages || [];
+      const want = Array.isArray(onlyIds) ? new Set(onlyIds) : null;
+      const list = want ? all.filter(m => want.has(m.id)) : all;
+      if (!list.length) throw new Error('Nothing to forward');
+      const subj = (list.length === 1 && list[0].subject) || full?.subject || latest.subject || '(no subject)';
+      let attachments = [];
+      const wanted = collectThreadAttachments(list);
+      if (wanted.length) {
+        try {
+          const r = await actions.copyEmailAttachments(wanted);
+          attachments = r?.attachments || [];
+          const skipped = r?.skipped || [];
+          if (skipped.length) {
+            showMsg(`Couldn't attach ${skipped.map(s => s.filename).join(', ')} — add ${skipped.length === 1 ? 'it' : 'them'} by hand`);
+          }
+        } catch {
+          showMsg('Could not copy the attachments — attach them by hand');
+        }
+      }
+      setReplying(false);
+      setForwardDraft({
+        to: '', cc: '',
+        subject: forwardSubject(subj),
+        body: buildForwardBody(list, subj),
+        attachments,
+      });
+      setForwardSeq(n => n + 1);
+      setExpanded(true);
+    } catch (err) {
+      showMsg(err?.message || 'Could not prepare that forward');
+    } finally {
+      setPreparingForward(false);
+    }
+  };
+
+  const closeComposer = () => { setReplying(false); setForwardDraft(null); };
+
+  // Take ONE email off this deal. Unlike the row's thread-level unlink this is
+  // message-scoped: the rest of the conversation stays put. `alsoTrash` moves it
+  // to Gmail's Trash as well (recoverable there for 30 days) — that half is
+  // best-effort, since the email may live in a teammate's mailbox rather than
+  // the connected one.
+  const removeMessage = async (m, { alsoTrash = false } = {}) => {
+    const who = (m.direction === 'inbound' ? m.fromEmail : (m.toEmails?.[0] || '')) || 'this message';
+    const question = alsoTrash
+      ? `Delete this email from ${who}?\n\nIt comes off this deal and moves to Gmail's Trash, where it stays recoverable for 30 days. The rest of the conversation is untouched.`
+      : `Remove this email from ${who} from this deal?\n\nIt stays in your mailbox and on any other deal it's linked to. The rest of the conversation stays here.`;
+    if (!window.confirm(question)) return;
+    let trashFailed = false;
+    try {
+      if (alsoTrash) {
+        await actions.mailboxMessageAction('trash', [m.gmailMessageId]).catch(() => { trashFailed = true; });
+      }
+      await actions.unlinkEmail({
+        threadId, gmailMessageId: m.gmailMessageId, dealId, scope: 'message',
+      });
+      await actions.loadDealDetail(dealId);
+      showMsg(
+        !alsoTrash ? 'Email removed from this deal'
+          : trashFailed ? 'Removed from this deal — but it could not be moved to Gmail’s Trash'
+            : 'Email deleted'
+      );
+    } catch (err) {
+      showMsg(err?.message || 'Could not remove that email');
+    }
+  };
 
   // Real participants on this thread that aren't already linked to this deal —
   // the person who emailed us (inbound `fromEmail`), the people we emailed
@@ -1700,19 +1791,25 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
               defaultOpen={i === messages.length - 1}
               isLast={i === messages.length - 1}
               onOpenFull={() => onOpenMessage(m.gmailMessageId)}
+              onForward={() => startForward([m.gmailMessageId])}
+              onRemove={() => removeMessage(m)}
+              onDelete={() => removeMessage(m, { alsoTrash: true })}
             />
           ))}
-          {replying ? (
+          {(replying || forwardDraft) ? (
             <EmailComposerModal
+              // Re-key per forward so a second forward re-seeds the body rather
+              // than leaving the previous selection's on screen.
+              key={forwardDraft ? 'forward:' + forwardSeq : (replyAll ? 'replyAll' : 'reply')}
               inline
               deal={{ id: dealId, title: dealTitle }}
               contact={null}
-              initialDraft={replyAll ? replyAllDraft() : replyDraft()}
-              onClose={() => setReplying(false)}
-              onSent={() => { setReplying(false); actions.loadDealDetail(dealId); }}
+              initialDraft={forwardDraft || (replyAll ? replyAllDraft() : replyDraft())}
+              onClose={closeComposer}
+              onSent={() => { closeComposer(); actions.loadDealDetail(dealId); }}
             />
           ) : (
-            <div style={{ display: 'flex', gap: 8, alignSelf: 'flex-start' }}>
+            <div style={{ display: 'flex', gap: 8, alignSelf: 'flex-start', flexWrap: 'wrap' }}>
               <button onClick={() => startReply(false)} className="btn-ghost">
                 <Reply size={13} /> Reply
               </button>
@@ -1721,6 +1818,9 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
                   <ReplyAll size={13} /> Reply all
                 </button>
               )}
+              <button onClick={() => startForward()} disabled={preparingForward} className="btn-ghost">
+                <Forward size={13} /> {preparingForward ? 'Preparing…' : (isMulti ? `Forward all ${messages.length}` : 'Forward')}
+              </button>
             </div>
           )}
         </div>
@@ -1732,7 +1832,7 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
 // One message inside an expanded thread. Loads its body on mount (cached in
 // the store so re-opens are free), sanitises HTML, and falls back to plain
 // text. Click the header to open the standalone modal.
-function ExpandedMessage({ email, dealId = null, defaultOpen = false, isLast = false, onOpenFull }) {
+function ExpandedMessage({ email, dealId = null, defaultOpen = false, isLast = false, onOpenFull, onForward = null, onRemove = null, onDelete = null }) {
   const { state, actions } = useStore();
   const connected = !!(state.gmailAccount && state.gmailAccount.connected);
   const cached = state.emailBodies?.[email.gmailMessageId] || null;
@@ -1785,6 +1885,16 @@ function ExpandedMessage({ email, dealId = null, defaultOpen = false, isLast = f
   // as the message opens.
   const attachments = (data?.attachments?.length ? data.attachments : email.attachments) || [];
   const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
+
+  // Per-message actions, so one email can be forwarded or taken off the deal
+  // without the rest of the conversation going with it. Mirrors the same menu
+  // in the full thread reader. Rendered beside the header button, not inside
+  // it — a button can't legally contain a button.
+  const menuItems = [
+    onForward && { label: 'Forward this message', icon: Forward, onClick: onForward },
+    onRemove && { label: 'Remove from this deal', icon: Unlink, onClick: onRemove },
+    onDelete && { label: 'Delete this email', icon: Trash2, danger: true, onClick: onDelete },
+  ].filter(Boolean);
 
   return (
     <div style={{ background: '#FAFBFC', border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 12 }}>
@@ -1853,6 +1963,18 @@ function ExpandedMessage({ email, dealId = null, defaultOpen = false, isLast = f
         >
           <ExternalLink size={13} />
         </button>
+        {menuItems.length > 0 && (
+          <span style={{ flexShrink: 0, display: 'inline-flex' }}>
+            <ActionMenu
+              align="right"
+              triggerTitle="Message actions"
+              triggerClassName=""
+              trigger={<MoreVertical size={14} />}
+              triggerProps={{ style: { background: 'transparent', border: 'none', padding: 2, cursor: 'pointer', color: BRAND.muted, display: 'flex' } }}
+              items={menuItems}
+            />
+          </span>
+        )}
       </div>
       {open && (
         <div style={{ borderTop: '1px solid ' + BRAND.border, paddingTop: 8, fontSize: 13, lineHeight: 1.5, maxHeight: 320, overflowY: 'auto', wordBreak: 'break-word' }}>

@@ -145,6 +145,35 @@ export async function ensureThreadDealBlocksTable() {
   return threadDealBlocksTableEnsured;
 }
 
+// Self-heal for db/migrations/20260810_email_message_deal_blocks.sql — the
+// per-message twin of the block list above, written when a user removes ONE
+// email from a deal. Needed because a deal shows every message of a linked
+// thread, so dropping the message-scope link alone can't hide it. Read by the
+// deal-detail email query. Same module-level cache pattern as
+// ensureMessageDealsTable.
+let messageDealBlocksTableEnsured = null;
+export async function ensureMessageDealBlocksTable() {
+  if (messageDealBlocksTableEnsured) return messageDealBlocksTableEnsured;
+  messageDealBlocksTableEnsured = (async () => {
+    try {
+      await sql`
+        CREATE TABLE IF NOT EXISTS email_message_deal_blocks (
+          gmail_message_id TEXT NOT NULL,
+          deal_id TEXT NOT NULL REFERENCES deals(id) ON DELETE CASCADE,
+          blocked_by TEXT,
+          blocked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (gmail_message_id, deal_id)
+        )
+      `;
+      await sql`CREATE INDEX IF NOT EXISTS email_message_deal_blocks_deal_idx ON email_message_deal_blocks (deal_id)`;
+    } catch (err) {
+      messageDealBlocksTableEnsured = null;
+      console.warn('[email_message_deal_blocks] ensure failed', err.message);
+    }
+  })();
+  return messageDealBlocksTableEnsured;
+}
+
 // Self-heal for db/migrations/20260519_deal_contacts.sql — secondary contacts
 // per deal. Same module-level cache pattern as ensureMessageDealsTable.
 let dealContactsTableEnsured = null;

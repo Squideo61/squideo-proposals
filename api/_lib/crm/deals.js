@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { put, del, getDownloadUrl } from '@vercel/blob';
 import sql from '../db.js';
 import { isValidStage } from '../dealStage.js';
-import { makeId, trimOrNull, lowerOrNull, numberOrNull, ensureMessageDealsTable, ensureDealContactsTable, ensureDealReference, driveFilesEnabled } from './shared.js';
+import { makeId, trimOrNull, lowerOrNull, numberOrNull, ensureMessageDealsTable, ensureMessageDealBlocksTable, ensureDealContactsTable, ensureDealReference, driveFilesEnabled } from './shared.js';
 import { serialiseTask } from './tasks.js';
 import { serialiseComment, notifyCommentMentions } from './comments.js';
 import { serialiseContact } from './contacts.js';
@@ -1463,7 +1463,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     // a manual migration — self-heal so workspaces that skipped it still load
     // deals without 'relation does not exist'. Likewise deal_contacts and the
     // deal-file Drive columns (so the files query can select drive_file_id).
-    await Promise.all([ensureMessageDealsTable(), ensureDealContactsTable(), ensureDealFileDriveColumns(), ensureDealPo()]);
+    await Promise.all([ensureMessageDealsTable(), ensureMessageDealBlocksTable(), ensureDealContactsTable(), ensureDealFileDriveColumns(), ensureDealPo()]);
 
     // Mirror the deal's Drive folder into deal_files (handles files deleted or
     // added directly in Drive) before we read the list below. Best-effort.
@@ -1525,6 +1525,12 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         LEFT JOIN email_message_deals emd
                ON emd.gmail_message_id = em.gmail_message_id AND emd.deal_id = ${id}
         WHERE (etd.deal_id IS NOT NULL OR emd.deal_id IS NOT NULL)
+          -- A single email removed from this deal stays out even when its whole
+          -- conversation is attached (see email_message_deal_blocks).
+          AND NOT EXISTS (
+            SELECT 1 FROM email_message_deal_blocks emb
+             WHERE emb.gmail_message_id = em.gmail_message_id AND emb.deal_id = ${id}
+          )
           AND em.internal_only = FALSE
           -- Exclude the bodyless link placeholder rows that attachThreadToDeal
           -- writes (<threadId>:panel-stub); they aren't real emails and would

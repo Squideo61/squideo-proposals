@@ -221,6 +221,68 @@ function splitQuotedText(text) {
   return { main, quoted: lines.slice(idx).join('\n'), hasQuote: true };
 }
 
+// ── Forwarding ─────────────────────────────────────────────────────────────
+// Exported so the deal page's inline conversation forwards byte-for-byte the
+// same way the full thread reader does — one implementation, two surfaces.
+// Messages are in the thread shape (id/from/to/cc/subject/date/html/text).
+
+// One message rendered into the forwarded body. Uses the same quote-stripped
+// "main" part the reader shows, so a ten-reply thread forwards as ten messages
+// rather than ten copies of the one below it. Falls back to the whole body
+// whenever the split finds nothing to keep — never forward blank.
+function forwardedMessageHtml(m, fallbackSubject) {
+  const hasHtml = !!(m.html && m.html.trim());
+  let inner = '';
+  if (hasHtml) {
+    const { main } = splitQuotedHtml(m.html);
+    inner = quoteSourceHtml(isHtmlEmpty(main) ? m.html : main);
+  }
+  if (!inner) inner = m.text ? escapeText(m.text).replace(/\n/g, '<br>') : '';
+  const to = (m.to || []).join(', ');
+  const cc = (m.cc || []).join(', ');
+  return '---------- Forwarded message ----------<br>'
+    + `From: ${escapeText(m.from || m.fromEmail || '')}<br>`
+    + (m.date ? `Date: ${escapeText(formatDateLabel(m.date))}<br>` : '')
+    + `Subject: ${escapeText(m.subject || fallbackSubject || '')}<br>`
+    + (to ? `To: ${escapeText(to)}<br>` : '')
+    + (cc ? `Cc: ${escapeText(cc)}<br>` : '')
+    + '<br>' + inner;
+}
+
+// The forwarded body for a list of messages, oldest first — forwarding a thread
+// and sending only its last message loses the half of the story that explains
+// it. A single message can still be forwarded on its own from its own menu.
+export function buildForwardBody(msgs, fallbackSubject) {
+  return '<br><br>' + (msgs || []).map(m => forwardedMessageHtml(m, fallbackSubject)).join('<br><hr><br>');
+}
+
+// "Fwd: " prefix, applied once.
+export function forwardSubject(subject) {
+  const s = subject || '(no subject)';
+  return /^fwd:/i.test(s) ? s : 'Fwd: ' + s;
+}
+
+// Every attachment on the given messages, tagged with the message it came from
+// so the server can pull the bytes back out of Gmail.
+export function collectThreadAttachments(msgs) {
+  const out = [];
+  for (const m of (msgs || [])) {
+    const mid = m.gmailMessageId || m.id;
+    if (!mid) continue;
+    for (const a of (m.attachments || [])) {
+      if (!a?.attachmentId) continue;
+      out.push({
+        messageId: mid,
+        attachmentId: a.attachmentId,
+        filename: a.filename || 'attachment',
+        mimeType: a.mimeType || 'application/octet-stream',
+        size: a.size ?? a.sizeBytes ?? 0,
+      });
+    }
+  }
+  return out;
+}
+
 // Gmail's grey "•••" pill that toggles the quoted history.
 function QuoteToggle({ shown, onToggle }) {
   return (
@@ -1610,24 +1672,7 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
 
   // Every attachment on the conversation, tagged with the message it came from
   // so the server can pull the bytes back out of Gmail.
-  const threadAttachments = useMemo(() => {
-    const out = [];
-    for (const m of messages) {
-      const mid = m.gmailMessageId || m.id;
-      if (!mid) continue;
-      for (const a of (m.attachments || [])) {
-        if (!a?.attachmentId) continue;
-        out.push({
-          messageId: mid,
-          attachmentId: a.attachmentId,
-          filename: a.filename || 'attachment',
-          mimeType: a.mimeType || 'application/octet-stream',
-          size: a.size ?? a.sizeBytes ?? 0,
-        });
-      }
-    }
-    return out;
-  }, [messages]);
+  const threadAttachments = useMemo(() => collectThreadAttachments(messages), [messages]);
 
   // Files copied into the send store for the open forward (see startForward),
   // and which messages that forward covers — null means the whole conversation.
@@ -1639,35 +1684,6 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
   // would leave the previous body on screen.
   const [forwardSeq, setForwardSeq] = useState(0);
   const forwarding = forwardMsgs || messages;
-
-  // One message rendered into the forwarded body. Uses the same quote-stripped
-  // "main" part the reader shows, so a ten-reply thread forwards as ten
-  // messages rather than ten copies of the one below it. Falls back to the
-  // whole body whenever the split finds nothing to keep — never forward blank.
-  const forwardedMessageHtml = (m) => {
-    const hasHtml = !!(m.html && m.html.trim());
-    let inner = '';
-    if (hasHtml) {
-      const { main } = splitQuotedHtml(m.html);
-      inner = quoteSourceHtml(isHtmlEmpty(main) ? m.html : main);
-    }
-    if (!inner) inner = m.text ? escapeText(m.text).replace(/\n/g, '<br>') : '';
-    const to = (m.to || []).join(', ');
-    const cc = (m.cc || []).join(', ');
-    return '---------- Forwarded message ----------<br>'
-      + `From: ${escapeText(m.from || m.fromEmail || '')}<br>`
-      + (m.date ? `Date: ${escapeText(formatDateLabel(m.date))}<br>` : '')
-      + `Subject: ${escapeText(m.subject || subject)}<br>`
-      + (to ? `To: ${escapeText(to)}<br>` : '')
-      + (cc ? `Cc: ${escapeText(cc)}<br>` : '')
-      + '<br>' + inner;
-  };
-
-  // Forward the whole conversation by default, oldest first — forwarding a
-  // thread and sending only its last message loses the half of the story that
-  // explains it. A single message can still be forwarded on its own from that
-  // message's own menu.
-  const forwardBody = () => '<br><br>' + forwarding.map(forwardedMessageHtml).join('<br><hr><br>');
 
   // Copy the forwarded messages' attachments into the send store BEFORE opening
   // the composer, so they're already chips in the editor. Failure is never
@@ -1728,8 +1744,8 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
       const subj = (forwarding.length === 1 && forwarding[0].subject) || subject;
       return {
         to: '',
-        subject: /^fwd:/i.test(subj) ? subj : 'Fwd: ' + subj,
-        body: forwardBody(),
+        subject: forwardSubject(subj),
+        body: buildForwardBody(forwarding, subj),
         attachments: forwardAttachments,
       };
     }

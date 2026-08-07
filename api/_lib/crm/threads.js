@@ -1,5 +1,5 @@
 import sql from '../db.js';
-import { trimOrNull, lowerOrNull, ensureMessageDealsTable, ensureThreadDealBlocksTable } from './shared.js';
+import { trimOrNull, lowerOrNull, ensureMessageDealsTable, ensureThreadDealBlocksTable, ensureMessageDealBlocksTable } from './shared.js';
 import { getFreshAccessToken } from './gmail.js';
 import { ingestMessage } from '../gmailSync.js';
 
@@ -352,6 +352,7 @@ export async function threadsRoute(req, res, id, action, user) {
   if (action === 'link') {
     await ensureMessageDealsTable();
     await ensureThreadDealBlocksTable();
+    await ensureMessageDealBlocksTable();
     if (req.method === 'POST') {
       const body = req.body || {};
       const dealId = trimOrNull(body.dealId);
@@ -368,8 +369,17 @@ export async function threadsRoute(req, res, id, action, user) {
 
       if (scope === 'thread') {
         // Deliberately re-linking clears any prior "keep off this deal" block so
-        // the auto-linker is free to maintain the link again.
+        // the auto-linker is free to maintain the link again — including any
+        // single messages that were removed from this deal one at a time, since
+        // re-attaching the conversation means wanting all of it back.
         await sql`DELETE FROM email_thread_deal_blocks WHERE gmail_thread_id = ${id} AND deal_id = ${dealId}`;
+        await sql`
+          DELETE FROM email_message_deal_blocks
+          WHERE deal_id = ${dealId}
+            AND gmail_message_id IN (
+              SELECT gmail_message_id FROM email_messages WHERE gmail_thread_id = ${id}
+            )
+        `;
         await sql`
           INSERT INTO email_thread_deals (gmail_thread_id, deal_id, resolved_by)
           VALUES (${id}, ${dealId}, 'manual')
@@ -383,6 +393,12 @@ export async function threadsRoute(req, res, id, action, user) {
           WHERE gmail_message_id = ${gmailMessageId} AND gmail_thread_id = ${id}
         `)[0];
         if (!msgRow) return res.status(404).json({ error: 'Message not found in this thread' });
+        // Same rule as the thread branch: an explicit link clears the block a
+        // previous "remove from this deal" left behind.
+        await sql`
+          DELETE FROM email_message_deal_blocks
+          WHERE gmail_message_id = ${gmailMessageId} AND deal_id = ${dealId}
+        `;
         await sql`
           INSERT INTO email_message_deals (gmail_message_id, deal_id, linked_by_email)
           VALUES (${gmailMessageId}, ${dealId}, ${user.email || null})
@@ -444,6 +460,15 @@ export async function threadsRoute(req, res, id, action, user) {
         await sql`
           DELETE FROM email_message_deals
           WHERE gmail_message_id = ${gmailMessageId} AND deal_id = ${dealId}
+        `;
+        // Dropping the message-scope link isn't enough on its own: if the whole
+        // CONVERSATION is attached to this deal, the thread link still pulls
+        // this email back into the deal's list. Record the removal so the
+        // deal-detail read skips it regardless of how it got there.
+        await sql`
+          INSERT INTO email_message_deal_blocks (gmail_message_id, deal_id, blocked_by)
+          VALUES (${gmailMessageId}, ${dealId}, ${user.email || null})
+          ON CONFLICT (gmail_message_id, deal_id) DO NOTHING
         `;
       }
       // Log the detach on the deal timeline (mirror of the 'email_linked' event).
