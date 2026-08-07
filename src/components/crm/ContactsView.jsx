@@ -7,6 +7,7 @@ import { permissionsInclude } from '../../lib/permissions.js';
 import { api } from '../../api.js';
 import { Modal } from '../ui.jsx';
 import { XeroContactPicker } from './XeroContactPicker.jsx';
+import { CompanySearchPicker } from './CompanySearchPicker.jsx';
 import { TagChips, TagChip } from './TagChips.jsx';
 
 export function ContactsView({ onBack, onOpenContact, onOpenCompany, onManageXeroDuplicates }) {
@@ -434,7 +435,6 @@ export function ContactModal({ contact, onClose, dealContext = null }) {
   const [companyId, setCompanyId] = useState(contact?.companyId || '');
   const [notes, setNotes] = useState(contact?.notes || '');
   const [submitting, setSubmitting] = useState(false);
-  const companies = Object.values(state.companies || {});
 
   const submit = async (e) => {
     e.preventDefault();
@@ -482,12 +482,12 @@ export function ContactModal({ contact, onClose, dealContext = null }) {
         <Row label="Email"><input className="input" type="email" name="squideo-contact-email" autoComplete="off" value={email} onChange={(e) => setEmail(e.target.value)} /></Row>
         <Row label="Phone"><input className="input" type="tel" name="squideo-contact-phone" autoComplete="off" value={phone} onChange={(e) => setPhone(e.target.value)} /></Row>
         <Row label="Title"><input className="input" name="squideo-contact-title" autoComplete="off" value={title} onChange={(e) => setTitle(e.target.value)} /></Row>
-        <Row label="Company">
-          <select className="input" value={companyId} onChange={(e) => setCompanyId(e.target.value)}>
-            <option value="">None</option>
-            {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-        </Row>
+        {/* A div, not Row: Row is a <label>, and clicks on the picker's own
+            buttons would be forwarded to its input. */}
+        <div style={{ fontSize: 13, fontWeight: 500, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span>Company</span>
+          <CompanySearchPicker value={companyId} onChange={setCompanyId} emptyLabel="None" />
+        </div>
         <Row label="Notes"><textarea className="input" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} style={{ fontFamily: 'inherit', resize: 'vertical' }} /></Row>
         <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', marginTop: 8, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>

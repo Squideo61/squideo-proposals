@@ -20,6 +20,7 @@ import { PIPELINE_STAGES, NewDealModal } from './PipelineView.jsx';
 import { TaskFormModal, AssigneePicker } from './TaskFormModal.jsx';
 import { DealSearchPicker } from './DealSearchPicker.jsx';
 import { ContactSearchPicker } from './ContactSearchPicker.jsx';
+import { CompanySearchPicker } from './CompanySearchPicker.jsx';
 import { ScheduleCard, ScheduleModal } from './ScheduleModal.jsx';
 import { Card, Empty } from './Card.jsx';
 import { InvoicesPaymentsCard } from './InvoicesPaymentsCard.jsx';
@@ -3385,7 +3386,6 @@ function EditDealModal({ deal, onClose }) {
   const [newContactName, setNewContactName] = useState('');
   const [newContactEmail, setNewContactEmail] = useState('');
   const [newContactCompanyId, setNewContactCompanyId] = useState(deal.companyId || '');
-  const [newCompanyName, setNewCompanyName] = useState('');
   const [creatingContact, setCreatingContact] = useState(false);
   const [contactErr, setContactErr] = useState('');
 
@@ -3396,7 +3396,6 @@ function EditDealModal({ deal, onClose }) {
   const [creatingExtra, setCreatingExtra] = useState(null); // { email?, name? } prefill
   const secondaryContacts = state.dealDetail?.[deal.id]?.secondaryContacts || [];
 
-  const companies = Object.values(state.companies || {});
   const users = Object.values(state.users || {});
 
   const createContact = async () => {
@@ -3406,26 +3405,19 @@ function EditDealModal({ deal, onClose }) {
     setCreatingContact(true);
     setContactErr('');
     try {
-      // Resolve the company link. '' = None; '__new__' = create a company from
-      // the typed name first, then link the contact (and the deal, if it has no
-      // company yet) to it. Otherwise link to the chosen existing company.
-      let linkCompanyId = newContactCompanyId;
-      if (newContactCompanyId === '__new__') {
-        const cn = newCompanyName.trim();
-        if (!cn) { setContactErr('Enter a company name'); setCreatingContact(false); return; }
-        const co = await actions.createCompany({ name: cn });
-        if (!co?.id) throw new Error('Could not create company');
-        linkCompanyId = co.id;
-      }
+      // The organisation picker hands back a real id (creating the company
+      // itself when a new name is typed), so there's nothing to resolve here —
+      // '' just means the contact isn't attached to one.
+      const linkCompanyId = newContactCompanyId;
       const c = await actions.createContact({ name: name || null, email: email || null, companyId: linkCompanyId || null });
       if (c?.id) {
         setPrimaryContactId(c.id);
-        // If we created a company and the deal has none, link the deal to it too.
+        // If the contact brought an organisation and the deal has none, link the
+        // deal to it too.
         if (linkCompanyId && !companyId) setCompanyId(linkCompanyId);
         setAddingContact(false);
         setNewContactName('');
         setNewContactEmail('');
-        setNewCompanyName('');
       }
     } catch (e) {
       setContactErr(e?.message || 'Could not create contact');
@@ -3479,10 +3471,14 @@ function EditDealModal({ deal, onClose }) {
           <span>Organisation</span>
           {!linkingXero ? (
             <>
-              <select className="input" value={companyId} onChange={(e) => setCompanyId(e.target.value)}>
-                <option value="">—</option>
-                {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              {/* Type-to-search, and typing a name we don't have offers to create
+                  it — a new client shouldn't mean leaving this form for the
+                  Organisations page and coming back. */}
+              <CompanySearchPicker
+                value={companyId}
+                onChange={setCompanyId}
+                emptyLabel="No organisation — the client portal, credits and invoices all hang off one, so set it when you know it."
+              />
               <button type="button" onClick={() => setLinkingXero(true)} className="btn-ghost" style={{ alignSelf: 'flex-start', fontSize: 12, marginTop: 2 }}>+ Link from Xero</button>
             </>
           ) : (
@@ -3506,7 +3502,7 @@ function EditDealModal({ deal, onClose }) {
           {!addingContact ? (
             <>
               <ContactSearchPicker value={primaryContactId} onChange={setPrimaryContactId} />
-              <button type="button" onClick={() => { setAddingContact(true); setNewContactCompanyId(companyId || ''); setNewCompanyName(''); setContactErr(''); }} className="btn-ghost" style={{ alignSelf: 'flex-start', fontSize: 12, marginTop: 2 }}>+ New contact</button>
+              <button type="button" onClick={() => { setAddingContact(true); setNewContactCompanyId(companyId || ''); setContactErr(''); }} className="btn-ghost" style={{ alignSelf: 'flex-start', fontSize: 12, marginTop: 2 }}>+ New contact</button>
             </>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 10, background: BRAND.paper }}>
@@ -3515,21 +3511,18 @@ function EditDealModal({ deal, onClose }) {
                   with a single profile token on blur). */}
               <input className="input" autoFocus placeholder="Name" name="squideo-contact-name" autoComplete="off" value={newContactName} onChange={(e) => setNewContactName(e.target.value)} />
               <input className="input" type="email" placeholder="Email" name="squideo-contact-email" autoComplete="off" value={newContactEmail} onChange={(e) => setNewContactEmail(e.target.value)} />
-              <label style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, display: 'flex', flexDirection: 'column', gap: 3 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, display: 'flex', flexDirection: 'column', gap: 3 }}>
                 <span>Organisation</span>
-                <select className="input" value={newContactCompanyId} onChange={(e) => setNewContactCompanyId(e.target.value)}>
-                  <option value="">None</option>
-                  {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  <option value="__new__">+ New organisation…</option>
-                </select>
-              </label>
-              {newContactCompanyId === '__new__' && (
-                <input className="input" autoFocus placeholder="New company name" name="squideo-new-company" autoComplete="off" value={newCompanyName} onChange={(e) => setNewCompanyName(e.target.value)} />
-              )}
+                <CompanySearchPicker
+                  value={newContactCompanyId}
+                  onChange={setNewContactCompanyId}
+                  emptyLabel="None"
+                />
+              </div>
               {contactErr && <div style={{ color: '#DC2626', fontSize: 12 }}>{contactErr}</div>}
               <div style={{ display: 'flex', gap: 6 }}>
-                <button type="button" onClick={createContact} disabled={creatingContact || (!newContactName.trim() && !newContactEmail.trim()) || (newContactCompanyId === '__new__' && !newCompanyName.trim())} className="btn" style={{ flex: 1, justifyContent: 'center', fontSize: 12 }}>{creatingContact ? 'Adding…' : 'Add contact'}</button>
-                <button type="button" onClick={() => { setAddingContact(false); setNewContactName(''); setNewContactEmail(''); setNewCompanyName(''); setContactErr(''); }} className="btn-ghost" style={{ fontSize: 12 }}>Cancel</button>
+                <button type="button" onClick={createContact} disabled={creatingContact || (!newContactName.trim() && !newContactEmail.trim())} className="btn" style={{ flex: 1, justifyContent: 'center', fontSize: 12 }}>{creatingContact ? 'Adding…' : 'Add contact'}</button>
+                <button type="button" onClick={() => { setAddingContact(false); setNewContactName(''); setNewContactEmail(''); setContactErr(''); }} className="btn-ghost" style={{ fontSize: 12 }}>Cancel</button>
               </div>
             </div>
           )}
@@ -4107,69 +4100,6 @@ function PickContactModal({ dealId, excludeIds, defaultCompanyId, onClose, onPic
   );
 }
 
-// Type-to-search over the companies already in the CRM. A plain <select> becomes
-// unusable once there are hundreds of companies, so this filters as you type and
-// shows a short list of suggestions. Filtering is local — companies are already
-// in the store, so there's nothing to fetch.
-function CompanyPicker({ value, onChange, companies }) {
-  const [query, setQuery] = useState('');
-  const [open, setOpen] = useState(false);
-  const selected = value ? companies.find((c) => c.id === value) : null;
-
-  const matches = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return companies.slice(0, 8);
-    return companies.filter((c) => (c.name || '').toLowerCase().includes(q)).slice(0, 8);
-  }, [query, companies]);
-
-  if (selected) {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
-        <div style={{ flex: 1, padding: '8px 10px', border: '1px solid ' + BRAND.border, borderRadius: 8, background: 'white', fontSize: 13, fontWeight: 600, color: BRAND.ink, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {selected.name}
-        </div>
-        <button type="button" className="btn-ghost" onClick={() => { onChange(''); setQuery(''); }}>Change</button>
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ position: 'relative', marginTop: 4 }}>
-      <input
-        className="input"
-        style={{ width: '100%' }}
-        value={query}
-        placeholder="Search companies… (optional)"
-        name="squideo-contact-company"
-        autoComplete="off"
-        onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
-        onFocus={() => setOpen(true)}
-        onBlur={() => setTimeout(() => setOpen(false), 150)}
-      />
-      {open && matches.length > 0 && (
-        <div style={{ position: 'absolute', zIndex: 20, top: '100%', left: 0, right: 0, marginTop: 4, background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 8, boxShadow: '0 6px 20px rgba(0,0,0,0.12)', maxHeight: 220, overflowY: 'auto' }}>
-          {matches.map((c) => (
-            <button
-              key={c.id}
-              type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => { onChange(c.id); setOpen(false); }}
-              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 10px', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 13 }}
-            >
-              {c.name}
-            </button>
-          ))}
-        </div>
-      )}
-      {open && query.trim() && matches.length === 0 && (
-        <div style={{ position: 'absolute', zIndex: 20, top: '100%', left: 0, right: 0, marginTop: 4, background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 8, boxShadow: '0 6px 20px rgba(0,0,0,0.12)', padding: '8px 10px', fontSize: 12, color: BRAND.muted }}>
-          No companies match — leave blank to add without one.
-        </div>
-      )}
-    </div>
-  );
-}
-
 // Lightweight create-and-link modal used by the email Cc prompt and the
 // SecondaryContactsRow picker when the typed email isn't in CRM yet.
 function CreateContactModal({ dealId, defaultCompanyId, prefill, onClose, onCreated }) {
@@ -4180,10 +4110,6 @@ function CreateContactModal({ dealId, defaultCompanyId, prefill, onClose, onCrea
   const [companyId, setCompanyId] = useState(prefill?.companyId || defaultCompanyId || '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-
-  const companies = useMemo(() => Object.values(state.companies || {})
-    .sort((a, b) => (a.name || '').localeCompare(b.name || '')),
-    [state.companies]);
 
   // Two outcomes from the same form: create the contact and link it to this deal,
   // or just create it (linked to the organisation) and leave the deal alone —
@@ -4234,7 +4160,7 @@ function CreateContactModal({ dealId, defaultCompanyId, prefill, onClose, onCrea
         </label>
         <div style={{ fontSize: 12, color: BRAND.muted }}>
           Company
-          <CompanyPicker value={companyId} onChange={setCompanyId} companies={companies} />
+          <CompanySearchPicker value={companyId} onChange={setCompanyId} emptyLabel="Optional — leave blank to add them without one." />
         </div>
         {error && <div style={{ color: '#DC2626', fontSize: 12 }}>{error}</div>}
         <div style={{ fontSize: 11, color: BRAND.muted, lineHeight: 1.5 }}>
