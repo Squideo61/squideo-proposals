@@ -209,7 +209,11 @@ function Header() {
             </a>
           </>
         )}
-        <NotificationBell compact={isMobile} />
+        {/* Two bells, the CRM's own arrangement: the specialised feed to the
+            left of the standard one. Tasks hides itself when there's nothing
+            outstanding, so most clients most of the time see just the bell. */}
+        <NotificationBell channel="tasks" compact={isMobile} />
+        <NotificationBell channel="updates" compact={isMobile} />
         {!isMobile && (
           <span style={{ color: '#B9CBD6', fontSize: 13 }}>{user?.name || user?.email}</span>
         )}
