@@ -35,6 +35,7 @@ import Course from './pages/Course.jsx';
 import Brief from './pages/Brief.jsx';
 import Partner from './pages/Partner.jsx';
 import DemoProject from './pages/DemoProject.jsx';
+import { sampleSeen, markSampleSeen } from './demo/store.js';
 
 const MAX_WIDTH = 1080;
 // The left rail, plus the gap to the content. The shell is widened by exactly
@@ -82,11 +83,13 @@ const NAV = [
   // The rail is sized to fit it on one line — see SIDEBAR_W.
   { view: 'course', label: 'Planning crash course', shortLabel: 'Course', hash: '#/course', Icon: GraduationCap, mobilePrimary: true },
   { view: 'brief', label: 'Brief Builder', shortLabel: 'Brief', hash: '#/brief', Icon: FileText, mobilePrimary: true },
-  // Prospects only (see visibleNav). Sits directly under the brief because
-  // that's the order the funnel runs in — read the course, describe the job,
-  // then see what working with us actually feels like. Buried in an empty
-  // state it was the best thing in the portal that nobody found.
-  { view: 'demo', label: 'Sample project', shortLabel: 'Sample', hash: '#/demo', Icon: Sparkles, prospectOnly: true },
+  // Shown to everyone, badged until they've opened it once. It was prospect-only
+  // and buried in an empty state, which meant the best thing in the portal was
+  // invisible to most of the people in it — including every client waiting on a
+  // first draft, who is exactly the person wondering what reviewing one is like.
+  // Sits directly under the brief because that's the order the funnel runs in:
+  // read the course, describe the job, then see what working with us feels like.
+  { view: 'demo', label: 'Sample project', shortLabel: 'Sample', hash: '#/demo', Icon: Sparkles, needsSample: true },
   { view: 'home', label: 'Current projects', shortLabel: 'Projects', hash: '#/', Icon: Home, mobilePrimary: true },
   { view: 'library', label: 'Your Video Library', shortLabel: 'Library', hash: '#/library', Icon: Film, mobilePrimary: true },
   { view: 'video-credit', label: 'Video credit', hash: '#/video-credit', Icon: Wallet },
@@ -110,19 +113,16 @@ const NAV = [
 // has a `prospect` org and shouldn't be shown £/min before we've scoped
 // anything — that number would anchor every quote they get afterwards. The
 // real enforcement is CLIENT_ONLY in api/portal.js; this is the door.
-function visibleNav(company) {
+function visibleNav(company, sampleAvailable = false) {
   // `creditVisible` is resolved server-side from the company's override plus
   // the default rule, so the nav can't disagree with the API guard. Undefined
   // (an older session payload) falls through to visible rather than hiding a
   // paying client's own balance.
   const hideCredit = company?.creditVisible === false;
-  // The sample project is aimed squarely at someone who hasn't bought yet. A
-  // paying client has the real thing one click away, so a permanent "sample"
-  // section in their rail is clutter at best and patronising at worst — the
-  // route stays reachable for them, it just isn't advertised.
-  const isProspect = company?.prospect === true;
+  // The sample project appears for everyone, but only once there's something in
+  // it — see the `sampleProject` flag on /api/portal/me.
   return NAV.filter((n) => !(hideCredit && n.view === 'video-credit'))
-    .filter((n) => !(n.prospectOnly && !isProspect));
+    .filter((n) => !(n.needsSample && !sampleAvailable));
 }
 
 // Header actions. The primary is the blue call-to-action; secondaries are
@@ -236,15 +236,34 @@ function Header() {
 //
 // Phones keep the bottom tab bar; a rail at that width would eat a third of
 // the screen.
-function SideNav({ view, company }) {
+// The unread-style count on a nav item. Deliberately the same red pill the
+// notification bell uses: a client already reads that shape as "something here
+// wants me", and inventing a second visual language for the same idea would
+// just be a second thing to learn.
+function NavBadge({ count, style }) {
+  if (!count) return null;
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+      minWidth: 18, height: 18, padding: '0 5px', borderRadius: 999,
+      background: '#DC2626', color: '#fff', fontSize: 11, fontWeight: 800,
+      lineHeight: 1, flexShrink: 0, ...style,
+    }}>
+      {count}
+    </span>
+  );
+}
+
+function SideNav({ view, company, sampleAvailable, sampleBadge }) {
   return (
     <nav style={{
       width: SIDEBAR_W, flexShrink: 0, alignSelf: 'flex-start',
       position: 'sticky', top: 18, padding: '4px 0',
       display: 'flex', flexDirection: 'column', gap: 2,
     }}>
-      {visibleNav(company).filter((n) => n.view !== 'request').map(({ view: v, label, hash, Icon }) => {
+      {visibleNav(company, sampleAvailable).filter((n) => n.view !== 'request').map(({ view: v, label, hash, Icon }) => {
         const active = view === v || (v === 'home' && view === 'project');
+        const badge = v === 'demo' ? sampleBadge : 0;
         return (
           <a
             key={v}
@@ -267,7 +286,8 @@ function SideNav({ view, company }) {
             {/* flexShrink:0 — a two-line label must squash the text box, never
                 the icon, or the row's icons stop lining up with each other. */}
             <Icon size={17} strokeWidth={active ? 2.3 : 2} style={{ flexShrink: 0 }} />
-            <span>{label}</span>
+            <span style={{ flex: 1, minWidth: 0 }}>{label}</span>
+            <NavBadge count={badge} />
           </a>
         );
       })}
@@ -281,9 +301,9 @@ const tabStyle = (active, highlight) => ({
   color: highlight ? BRAND.blue : active ? BRAND.ink : BRAND.muted,
 });
 
-function MobileTabBar({ view, company }) {
+function MobileTabBar({ view, company, sampleAvailable, sampleBadge }) {
   const [moreOpen, setMoreOpen] = useState(false);
-  const items = visibleNav(company);
+  const items = visibleNav(company, sampleAvailable);
   const primary = items.filter((n) => n.mobilePrimary);
   const overflow = items.filter((n) => !n.mobilePrimary);
   // "More" lights up when the section you're actually in lives behind it —
@@ -335,7 +355,8 @@ function MobileTabBar({ view, company }) {
                   fontSize: 15, fontWeight: active ? 700 : 500,
                 }}>
                   <Icon size={19} strokeWidth={active ? 2.4 : 2} />
-                  {label}
+                  <span style={{ flex: 1, minWidth: 0 }}>{label}</span>
+                  <NavBadge count={v === 'demo' ? sampleBadge : 0} />
                 </a>
               );
             })}
@@ -366,9 +387,16 @@ function MobileTabBar({ view, company }) {
             style={{
               ...tabStyle(moreOpen || inOverflow, false),
               background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+              position: 'relative',
             }}
           >
             <MoreHorizontal size={20} strokeWidth={moreOpen || inOverflow ? 2.4 : 2} />
+            {/* The badged section lives behind this button, so without a mark
+                here the nudge is invisible on a phone — which is where most of
+                this portal is actually read. */}
+            {sampleBadge > 0 && overflow.some((n) => n.view === 'demo') && (
+              <NavBadge count={sampleBadge} style={{ position: 'absolute', top: 4, right: 8 }} />
+            )}
             <span style={{ fontSize: 10, fontWeight: moreOpen || inOverflow ? 700 : 500 }}>More</span>
           </button>
         )}
@@ -378,9 +406,19 @@ function MobileTabBar({ view, company }) {
 }
 
 function AuthedApp() {
-  const { toast, companyId, preview, user, company: activeCompany } = usePortal();
+  const { toast, companyId, preview, user, company: activeCompany, sampleAvailable } = usePortal();
   const isMobile = useIsMobile();
   const [route, setRoute] = useState(parseHash);
+  // The badge is a one-time "there's something here you haven't seen", so it
+  // clears the moment they land on the section — not when they finish the tour.
+  // Its job is to get them to look once, and it has done that job by then.
+  const [sampleBadge, setSampleBadge] = useState(() => (sampleSeen() ? 0 : 1));
+
+  useEffect(() => {
+    if (route.view !== 'demo') return;
+    markSampleSeen();
+    setSampleBadge(0);
+  }, [route.view]);
 
   useEffect(() => {
     const onHash = () => { setRoute(parseHash()); window.scrollTo(0, 0); };
@@ -456,7 +494,14 @@ function AuthedApp() {
           padding: isMobile ? '18px 16px 90px' : '22px 24px 60px',
           boxSizing: 'border-box', alignItems: 'flex-start',
         }}>
-          {!isMobile && <SideNav view={route.view} company={activeCompany} />}
+          {!isMobile && (
+            <SideNav
+              view={route.view}
+              company={activeCompany}
+              sampleAvailable={sampleAvailable}
+              sampleBadge={sampleBadge}
+            />
+          )}
           {/* minWidth:0 matters — without it a wide table or a long unbroken
               string inside the page pushes the whole flex row wider than the
               shell and the rail slides off to the left. */}
@@ -465,7 +510,14 @@ function AuthedApp() {
           </main>
         </div>
       )}
-      {isMobile && <MobileTabBar view={route.view} company={activeCompany} />}
+      {isMobile && (
+        <MobileTabBar
+          view={route.view}
+          company={activeCompany}
+          sampleAvailable={sampleAvailable}
+          sampleBadge={sampleBadge}
+        />
+      )}
       {toast && <Toast msg={toast} />}
     </div>
   );

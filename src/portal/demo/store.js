@@ -33,6 +33,26 @@ export function resetDemo() {
   });
 }
 
+// Has this person ever opened the sample project?
+//
+// localStorage, unlike everything else here — and on purpose. The sample's
+// CONTENT should be clean every visit, but the nav badge that points at it is
+// a one-time "there's something here you haven't seen". Keeping that in
+// sessionStorage would re-badge the same person on every visit forever, which
+// stops being a nudge and starts being nagging.
+//
+// Unreadable storage reads as SEEN. Someone we can't remember is someone we'd
+// badge on every single page load, and a badge that never goes away is worse
+// than one that never appears.
+const SEEN_KEY = 'squideo.portal.sampleSeen';
+
+export function sampleSeen() {
+  try { return localStorage.getItem(SEEN_KEY) === '1'; } catch { return true; }
+}
+export function markSampleSeen() {
+  try { localStorage.setItem(SEEN_KEY, '1'); } catch { /* ignore */ }
+}
+
 // What the visitor has actually done, for the ticks on the overview screen.
 // "Tried" means they left a comment or finalised — opening a stage and looking
 // at it doesn't count, because the point of the tour is doing rather than

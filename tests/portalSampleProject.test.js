@@ -21,11 +21,12 @@ class MemoryStorage {
   removeItem(k) { this.map.delete(k); }
 }
 globalThis.sessionStorage = new MemoryStorage();
+globalThis.localStorage = new MemoryStorage();
 
 const { buildDemoData, buildDemoStoryboardData } = await import('../src/portal/demo/fixtures.js');
 const { createDemoRevApi } = await import('../src/portal/demo/demoRevApi.js');
 const { createDemoSbApi } = await import('../src/portal/demo/demoSbApi.js');
-const { resetDemo, demoProgress } = await import('../src/portal/demo/store.js');
+const { resetDemo, demoProgress, sampleSeen, markSampleSeen } = await import('../src/portal/demo/store.js');
 const { describeActivity } = await import('../api/_lib/portal/activity.js');
 const { DEMO_STAGES, demoConfigured } = await import('../src/portal/demo/stages.js');
 
@@ -38,6 +39,7 @@ const IDENTITY = { name: 'Priya Prospect', email: 'Priya@Example.com' };
 
 beforeEach(() => {
   globalThis.sessionStorage = new MemoryStorage();
+  globalThis.localStorage = new MemoryStorage();
   resetDemo();
 });
 
@@ -232,6 +234,39 @@ describe('how demo events read in the staff activity feed', () => {
 
   it('labels the page view as trying it, not just opening it', () => {
     expect(describeActivity('view', { view: 'demo' })).toBe('Tried the sample project');
+  });
+});
+
+// The nav badge is the only thing in the portal that deliberately nags, so the
+// rules about when it stops have to hold.
+describe('the nav badge', () => {
+  it('shows until they have opened the sample, then never again', () => {
+    expect(sampleSeen()).toBe(false);
+    markSampleSeen();
+    expect(sampleSeen()).toBe(true);
+  });
+
+  it('survives "start over" — resetting the demo must not re-badge them', () => {
+    markSampleSeen();
+    resetDemo();
+    expect(sampleSeen()).toBe(true);
+  });
+
+  it('outlives the session, unlike the demo content itself', () => {
+    markSampleSeen();
+    // A new tab: sessionStorage is gone, localStorage isn't.
+    globalThis.sessionStorage = new MemoryStorage();
+    expect(sampleSeen()).toBe(true);
+    expect(demoProgress().storyboard.tried).toBe(false);
+  });
+
+  it('treats unreadable storage as seen rather than badging on every load', () => {
+    globalThis.localStorage = {
+      getItem() { throw new Error('private mode'); },
+      setItem() { throw new Error('private mode'); },
+    };
+    expect(sampleSeen()).toBe(true);
+    expect(() => markSampleSeen()).not.toThrow();
   });
 });
 

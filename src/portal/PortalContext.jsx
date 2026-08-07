@@ -26,6 +26,9 @@ export function PortalProvider({ children }) {
   // { company, manage, staffEmail } when staff is in the client's portal.
   // manage:false is the read-only preview; manage:true means writes are live.
   const [preview, setPreview] = useState(null);
+  // Whether the sample project has anything uploaded in it. Resolved server-side
+  // so the nav can't advertise a section that opens on "coming shortly".
+  const [sampleAvailable, setSampleAvailable] = useState(false);
   const [toast, setToast] = useState(null);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -54,10 +57,12 @@ export function PortalProvider({ children }) {
       const data = await portalApi.get('me');
       setUser(data.user);
       setPreview(data.preview || null);
+      setSampleAvailable(data.sampleProject?.available === true);
       return data.user;
     } catch {
       setUser(null);
       setPreview(null);
+      setSampleAvailable(false);
       return null;
     }
   }, []);
@@ -165,8 +170,9 @@ export function PortalProvider({ children }) {
     companyId, setActiveCompanyId, company, isProspect: company?.prospect === true,
     overview, overviewLoading, refreshOverview, refreshSession,
     preview, manageMode: preview?.manage === true, logout, toast, showToast,
+    sampleAvailable,
     notifications, unreadCount, refreshNotifications, markRead, markAllRead,
-  }), [booting, user, companyId, setActiveCompanyId, company, overview, overviewLoading, refreshOverview, refreshSession, preview, logout, toast, showToast, notifications, unreadCount, refreshNotifications, markRead, markAllRead]);
+  }), [booting, user, companyId, setActiveCompanyId, company, overview, overviewLoading, refreshOverview, refreshSession, preview, logout, toast, showToast, sampleAvailable, notifications, unreadCount, refreshNotifications, markRead, markAllRead]);
 
   return <PortalContext.Provider value={value}>{children}</PortalContext.Provider>;
 }

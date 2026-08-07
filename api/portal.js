@@ -1239,8 +1239,16 @@ async function authRoutes(req, res) {
 // ═════════════════════════ me ═════════════════════════
 async function meRoutes(req, res, user) {
   if (req.method === 'GET') {
+    // Whether the sample project has anything in it. The nav advertises it to
+    // everyone with a badge, so it has to know — a badged section that opens on
+    // "coming shortly" is worse than no section at all. One cheap read on a
+    // request that's already talking to the database, and a failure reads as
+    // "not available" rather than 500ing the whole session.
+    const [demoCfg] = await sql`SELECT demo_project FROM settings WHERE id = 1`.catch(() => []);
+    const demo = demoCfg?.demo_project || {};
     return res.status(200).json({
       user: publicPortalUser(user, user.companies),
+      sampleProject: { available: !!(demo.videoUrl || demo.storyboardPdfUrl) },
       preview: user.isPreview
         ? {
           company: user.companies[0] || null,
