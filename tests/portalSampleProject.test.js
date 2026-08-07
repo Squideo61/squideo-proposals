@@ -27,6 +27,7 @@ const { createDemoRevApi } = await import('../src/portal/demo/demoRevApi.js');
 const { createDemoSbApi } = await import('../src/portal/demo/demoSbApi.js');
 const { resetDemo, demoProgress } = await import('../src/portal/demo/store.js');
 const { describeActivity } = await import('../api/_lib/portal/activity.js');
+const { DEMO_STAGES, demoConfigured } = await import('../src/portal/demo/stages.js');
 
 const CONFIG = {
   title: 'Sample project',
@@ -81,6 +82,47 @@ describe('fixture shapes match the real public payloads', () => {
     expect(() => buildDemoData({})).not.toThrow();
     expect(() => buildDemoStoryboardData({})).not.toThrow();
     expect(buildDemoStoryboardData({}).storyboards[0].versions[0].pdfUrl).toBeNull();
+  });
+});
+
+// The dashboard renders the sample AS a project card, driven by this list. If
+// it ever imported the list from DemoProject.jsx it would drag pdf.js into the
+// bundle every client loads on sign-in — hence the separate module.
+describe('which stages the tour offers', () => {
+  it('offers each stage only once its file is uploaded', () => {
+    const sb = DEMO_STAGES.find((s) => s.key === 'storyboard');
+    const vid = DEMO_STAGES.find((s) => s.key === 'video');
+    expect(sb.ready({ storyboardPdfUrl: 'x' })).toBe(true);
+    expect(sb.ready({ videoUrl: 'x' })).toBe(false);
+    expect(vid.ready({ videoUrl: 'x' })).toBe(true);
+    expect(vid.ready({ storyboardPdfUrl: 'x' })).toBe(false);
+  });
+
+  it('survives a missing or empty config rather than throwing', () => {
+    DEMO_STAGES.forEach((s) => {
+      expect(s.ready(undefined)).toBe(false);
+      expect(s.ready({})).toBe(false);
+    });
+    expect(demoConfigured(undefined)).toBe(false);
+    expect(demoConfigured({})).toBe(false);
+  });
+
+  it('counts as configured when either half is uploaded', () => {
+    expect(demoConfigured({ videoUrl: 'x' })).toBe(true);
+    expect(demoConfigured({ storyboardPdfUrl: 'x' })).toBe(true);
+  });
+
+  it('gives every stage the copy the task list needs', () => {
+    DEMO_STAGES.forEach((s) => {
+      ['taskTitle', 'taskDetail', 'taskCta', 'doneDetail', 'label'].forEach((f) => {
+        expect(typeof s[f]).toBe('string');
+        expect(s[f].length).toBeGreaterThan(0);
+      });
+    });
+  });
+
+  it('runs storyboard before video, the way production does', () => {
+    expect(DEMO_STAGES.map((s) => s.key)).toEqual(['storyboard', 'video']);
   });
 });
 

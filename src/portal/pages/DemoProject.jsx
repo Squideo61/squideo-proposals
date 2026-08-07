@@ -25,41 +25,14 @@ import { StoryboardRevision } from '../../components/storyboard/StoryboardRevisi
 import { createDemoRevApi } from '../demo/demoRevApi.js';
 import { createDemoSbApi } from '../demo/demoSbApi.js';
 import { resetDemo, demoProgress } from '../demo/store.js';
+import { DEMO_STAGES } from '../demo/stages.js';
 import { DEMO_TOKEN, DEMO_SB_TOKEN } from '../demo/fixtures.js';
 
-// The two stages, in production order. `ready` is answered per-stage by the
-// admin config, so a half-configured tour offers the half that works rather
-// than a dead button.
-const STAGES = [
-  {
-    key: 'storyboard',
-    step: 1,
-    label: 'Storyboard sign-off',
-    Icon: Images,
-    blurb: 'Before a single frame is animated, you see every scene drawn out. Change it here and it costs nothing.',
-    doing: [
-      'Click any spot on a slide to pin a note exactly where you mean it',
-      'Compare the first draft against the redraw',
-      'Sign it off in one button when the direction is right',
-    ],
-    ready: (c) => !!c.storyboardPdfUrl,
-    cta: 'Try the storyboard review',
-  },
-  {
-    key: 'video',
-    step: 2,
-    label: 'Video review',
-    Icon: PlayCircle,
-    blurb: "The cut lands here, not in an email chain. Your whole team comments in one place and we work straight from it.",
-    doing: [
-      'Click the video to leave a comment at that exact second',
-      'Reply to a colleague — everyone sees one thread',
-      'Switch between versions, then approve the final cut',
-    ],
-    ready: (c) => !!c.videoUrl,
-    cta: 'Try the video review',
-  },
-];
+// The stage list lives in demo/stages.js so the dashboard can render the sample
+// as a project card without importing this file (and with it, pdf.js). Icons
+// are attached here rather than there to keep that module React-free.
+const STAGE_ICON = { storyboard: Images, video: PlayCircle };
+const STAGES = DEMO_STAGES.map((s) => ({ ...s, Icon: STAGE_ICON[s.icon] }));
 
 // The real journey, with the two try-able moments picked out. Context matters
 // more than it looks: without it "storyboard" and "video review" are two
@@ -152,7 +125,7 @@ function StageCard({ stage, config, progress }) {
   );
 }
 
-function Overview({ config, progress, onReset }) {
+function Overview({ config, progress, onReset, isProspect }) {
   const anyTried = progress.storyboard.tried || progress.video.tried;
   const readyStages = STAGES.filter((s) => s.ready(config));
   const bothTried = readyStages.length > 0 && readyStages.every((s) => progress[s.key].tried);
@@ -166,13 +139,27 @@ function Overview({ config, progress, onReset }) {
         }}>
           Sample project
         </div>
+        {/* A paying client can reach this from their own project while they're
+            waiting for a first draft, so the pitch has to know which of the two
+            it's talking to. Telling someone who has already bought to "have a
+            go before you're a client" reads as a mailing list they can't get
+            off. */}
         <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: BRAND.ink, lineHeight: 1.25 }}>
-          Have a go before you're a client.
+          {isProspect ? "Have a go before you're a client." : 'Try it now, on a made-up job.'}
         </h1>
         <p style={{ margin: '10px 0 0', fontSize: 14.5, lineHeight: 1.65, color: BRAND.muted, maxWidth: 640 }}>
-          This is the room your project would live in — the same review tools, the same buttons,
-          the same team on the other end. Two moments put you in the driving seat. Both are
-          yours to try right now, on a project we made up.
+          {isProspect ? (
+            <>
+              This is the room your project would live in — the same review tools, the same buttons,
+              the same team on the other end. Two moments put you in the driving seat. Both are
+              yours to try right now, on a project we made up.
+            </>
+          ) : (
+            <>
+              Your own storyboard and cut aren't ready yet. This is the screen they'll arrive in,
+              running on a project we made up — so when yours lands, none of it is new.
+            </>
+          )}
         </p>
       </div>
 
@@ -242,13 +229,19 @@ function Overview({ config, progress, onReset }) {
             <strong style={{ fontSize: 17, color: BRAND.ink }}>That's the whole review loop.</strong>
           </div>
           <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.6, color: BRAND.muted }}>
-            No chasing, no version confusion, no "which email had the feedback in it". Tell us
-            what you're making and we'll scope it — the brief takes about ten minutes and you
-            can save it half-finished.
+            {isProspect
+              ? 'No chasing, no version confusion, no "which email had the feedback in it". Tell us what you\'re making and we\'ll scope it — the brief takes about ten minutes and you can save it half-finished.'
+              : "That's exactly how yours will work when it's ready. Nothing else to do here — we'll email you the moment there's something real to look at."}
           </p>
           <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap' }}>
-            <a className="btn" href="#/brief" style={{ textDecoration: 'none' }}>Start a brief</a>
-            <a className="btn-ghost" href="#/request" style={{ textDecoration: 'none' }}>Request a video</a>
+            {isProspect ? (
+              <>
+                <a className="btn" href="#/brief" style={{ textDecoration: 'none' }}>Start a brief</a>
+                <a className="btn-ghost" href="#/request" style={{ textDecoration: 'none' }}>Request a video</a>
+              </>
+            ) : (
+              <a className="btn" href="#/" style={{ textDecoration: 'none' }}>Back to your projects</a>
+            )}
           </div>
         </div>
       )}
@@ -477,7 +470,7 @@ function NotSetUp({ what }) {
 // ── Page ────────────────────────────────────────────────────────────────────
 
 export default function DemoProject({ stage = null }) {
-  const { user, showToast, companyId, refreshNotifications } = usePortal();
+  const { user, showToast, companyId, refreshNotifications, isProspect } = usePortal();
   const [config, setConfig] = useState(null);
   const [videoData, setVideoData] = useState(null);
   const [sbData, setSbData] = useState(null);
@@ -573,7 +566,7 @@ export default function DemoProject({ stage = null }) {
 
   // ── Overview (rendered inside the normal portal shell) ────────────────────
   if (stage !== 'storyboard' && stage !== 'video') {
-    return <Overview config={config} progress={progress} onReset={startOver} />;
+    return <Overview config={config} progress={progress} onReset={startOver} isProspect={isProspect} />;
   }
 
   // ── A stage (full-bleed; see `fullBleed` in PortalApp) ────────────────────

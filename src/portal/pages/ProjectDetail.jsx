@@ -152,7 +152,13 @@ export default function ProjectDetail({ dealId }) {
         </Card>
       )}
 
-      {(project.reviews?.length > 0 || project.storyboards?.length > 0) && (
+      {/* Once work has started this card always renders, even with nothing in
+          it yet. "When do I get to see something?" is the question a client is
+          most often sitting on at this point, and an absent card answers it
+          with silence. The sample is the honest answer: here's the thing
+          you'll be sent, have a go on a made-up one while you wait. It
+          disappears the moment there's real work to review. */}
+      {(project.reviews?.length > 0 || project.storyboards?.length > 0) ? (
         <Card>
           <SectionHeading>Reviews & feedback</SectionHeading>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -231,6 +237,26 @@ export default function ProjectDetail({ dealId }) {
               </a>
             ))}
           </div>
+        </Card>
+      ) : project.inProduction && (
+        <Card>
+          <SectionHeading>Reviews & feedback</SectionHeading>
+          <div style={{ fontSize: 13, color: BRAND.muted, lineHeight: 1.6, marginBottom: 12 }}>
+            Nothing to review yet. When your storyboard and then your first cut are ready
+            they arrive here, and you'll get an email the moment each one lands.
+          </div>
+          <a
+            href="#/demo"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 8, padding: '9px 13px',
+              border: `1px solid ${BRAND.border}`, borderRadius: 10, textDecoration: 'none',
+              background: '#FAFBFC', color: BRAND.ink, fontSize: 13, fontWeight: 600,
+            }}
+          >
+            <PlayCircle size={16} color={BRAND.blue} />
+            See what reviewing one looks like
+            <span style={{ color: BRAND.muted, fontWeight: 500 }}>· on a sample project</span>
+          </a>
         </Card>
       )}
 

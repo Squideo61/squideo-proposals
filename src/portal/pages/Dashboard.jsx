@@ -6,7 +6,10 @@ import { usePortal } from '../PortalContext.jsx';
 import {
   Card, CourtBanner, PhaseTimeline, StatusPill, EmptyState, SectionHeading, ProjectTasks,
 } from '../components.jsx';
-import { Film, FolderOpen, Sparkles, Handshake, ChevronRight, Video, FileText, Wallet, PlayCircle } from 'lucide-react';
+import { Film, FolderOpen, Sparkles, Handshake, ChevronRight, Video, FileText, Wallet } from 'lucide-react';
+import { portalApi } from '../api.js';
+import { DEMO_STAGES, demoConfigured } from '../demo/stages.js';
+import { demoProgress } from '../demo/store.js';
 
 function BriefDraftCard({ draft }) {
   const when = draft.updatedAt ? new Date(draft.updatedAt) : null;
@@ -41,39 +44,100 @@ function BriefDraftCard({ draft }) {
   );
 }
 
-// The sample project, offered to prospects on the page they land on.
+// The sample project, rendered as a PROJECT — same card, same phase bar, same
+// task list a real one gets.
 //
-// It was previously a button inside an empty state — which meant the single
-// most persuasive thing in the portal was only visible to someone who had
-// already scrolled past "you have no projects". Anyone who hasn't bought yet
-// should be shown it before anything else on this page.
-function SampleProjectCard() {
+// It started life as a link inside the "you have no projects" empty state,
+// which made the most persuasive thing in the portal something you only found
+// after reading that there was nothing here. Promoting it to a banner helped,
+// but it still read as an advert sitting above the room rather than something
+// in it.
+//
+// This is the version worth having: a prospect lands on the same screen a
+// client lands on — a project waiting on them, with tasks to work down — and
+// the tasks happen to be the sample ones. The demo stops being a tour of the
+// portal and becomes a rehearsal of it, which is a far better argument.
+function SampleProjectCard({ config, progress }) {
+  const stages = DEMO_STAGES.filter((s) => s.ready(config));
+  const done = stages.filter((s) => progress[s.key]?.tried).length;
+  const openCount = stages.length - done;
+  const allDone = openCount === 0;
+
+  const tasks = stages.map((s) => ({
+    key: s.key,
+    title: s.taskTitle,
+    detail: progress[s.key]?.tried ? s.doneDetail : s.taskDetail,
+    status: progress[s.key]?.tried ? 'done' : 'todo',
+    cta: { label: progress[s.key]?.tried ? 'Open again' : s.taskCta, href: `#/demo/${s.key}` },
+  }));
+
+  // The phase bar moves as they go, which quietly demonstrates the phase bar
+  // itself. Honest within the sample's own fiction: storyboard sign-off really
+  // is pre-production and the video review really is production.
+  const phase = allDone ? 'completed' : progress.storyboard?.tried ? 'production' : 'pre_production';
+  const stageLabel = allDone ? 'You’ve seen it all' : progress.storyboard?.tried ? 'Your cut is ready' : 'Your storyboard is ready';
+
   return (
-    <div style={{
-      background: 'linear-gradient(135deg, #0F2A3D 0%, #17435F 100%)', borderRadius: 12,
-      padding: '18px 20px', display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap',
-    }}>
-      <PlayCircle size={26} style={{ color: '#7FD3F0', flexShrink: 0 }} />
-      <div style={{ flex: '1 1 260px', minWidth: 0 }}>
-        <div style={{ fontSize: 16, fontWeight: 800, color: '#fff' }}>
-          Try a project before you start one
+    <Card
+      onClick={() => { window.location.hash = '#/demo'; }}
+      style={{ display: 'flex', flexDirection: 'column', gap: 14, borderColor: '#BFE0EE' }}
+    >
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 16.5, fontWeight: 800, color: BRAND.ink }}>
+              {config.title || 'Sample project'}
+            </span>
+            {/* Never let it be mistaken for a real job of theirs. */}
+            <span style={{
+              background: '#EAF6FB', color: '#0B6E93', border: '1px solid #BFE0EE', borderRadius: 999,
+              padding: '2px 9px', fontSize: 10.5, fontWeight: 800, letterSpacing: 0.3, textTransform: 'uppercase',
+            }}>
+              Sample
+            </span>
+          </div>
+          <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 3 }}>
+            A made-up job, so you can try the bits you'd actually do
+          </div>
         </div>
-        <div style={{ fontSize: 13, color: '#B9D6E4', marginTop: 4, lineHeight: 1.55 }}>
-          Sign off a storyboard and review a cut in our real tools, on a project we made up.
-          Takes two minutes and nothing you do reaches anyone.
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          {openCount > 0 && (
+            <span style={{ background: '#FEF3C7', color: '#B45309', border: '1px solid #FDE68A', borderRadius: 999, padding: '2px 9px', fontSize: 11, fontWeight: 800, whiteSpace: 'nowrap' }}>
+              {openCount} to try
+            </span>
+          )}
+          <ChevronRight size={18} color={BRAND.muted} style={{ marginTop: 4 }} />
         </div>
       </div>
-      <a
-        href="#/demo"
-        style={{
-          display: 'inline-flex', alignItems: 'center', gap: 7, whiteSpace: 'nowrap',
-          padding: '9px 16px', borderRadius: 8, textDecoration: 'none',
-          fontSize: 13.5, fontWeight: 700, color: '#0F2A3D', background: BRAND.blue,
-        }}
-      >
-        Open the sample project <ChevronRight size={15} />
-      </a>
-    </div>
+
+      <div style={{ padding: '4px 2px' }}>
+        <PhaseTimeline production={{ phase, stageLabel }} />
+      </div>
+
+      <CourtBanner
+        nextStep={allDone
+          ? {
+            court: 'done',
+            headline: 'That’s the whole review loop — both stages done.',
+            cta: { label: 'Tell us what you’re making', href: '#/brief' },
+          }
+          : {
+            court: 'you',
+            headline: openCount === stages.length
+              ? 'Have a go — everything here really works'
+              : 'One left: see how the rest of it works',
+          }}
+        onCta={(cta) => runCta(cta, null)}
+        compact
+      />
+
+      <div>
+        <div style={{ fontSize: 11.5, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.4, color: BRAND.muted, margin: '0 0 7px' }}>
+          Your tasks{openCount > 0 ? ` · ${openCount} to do` : ' · all done ✅'}
+        </div>
+        <ProjectTasks tasks={tasks} onCta={(cta) => runCta(cta, null)} compact />
+      </div>
+    </Card>
   );
 }
 
@@ -230,6 +294,22 @@ export default function Dashboard() {
   const projects = overview?.projects || [];
   const actionNeeded = overview?.actionNeeded || 0;
 
+  // The sample project stands in for a real one while a prospect hasn't got
+  // one. Only fetched for them — a paying client should never pay a round trip
+  // for something they'll never be shown.
+  const [demoConfig, setDemoConfig] = React.useState(null);
+  React.useEffect(() => {
+    if (!isProspect) return;
+    portalApi.get('demo-project').then((d) => setDemoConfig(d?.demo || {})).catch(() => setDemoConfig({}));
+  }, [isProspect]);
+  // Read once on mount: the page unmounts while they're inside a stage, so it
+  // is re-read on the way back with their ticks up to date.
+  const demoDone = React.useMemo(() => demoProgress(), []);
+  const showSample = isProspect && projects.length === 0 && demoConfigured(demoConfig);
+  const sampleOpen = showSample
+    ? DEMO_STAGES.filter((s) => s.ready(demoConfig) && !demoDone[s.key]?.tried).length
+    : 0;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 26 }}>
       <div>
@@ -241,7 +321,13 @@ export default function Dashboard() {
             ? <>You have <strong style={{ color: '#B45309' }}>{actionNeeded} project{actionNeeded === 1 ? '' : 's'} waiting on you</strong> — sorted in a couple of clicks below.</>
             : projects.length > 0
               ? 'Everything is moving — nothing needed from you right now.'
-              : 'Your projects will appear here.'}
+              // Don't tell someone their projects will appear here while a
+              // project card is sitting right underneath the sentence.
+              : showSample
+                ? sampleOpen > 0
+                  ? <>Your real projects land here once we're underway. Until then, here's <strong>a sample one to try</strong> — it works exactly like the real thing.</>
+                  : "You've been through the whole review loop. Ready to do it for real?"
+                : 'Your projects will appear here.'}
         </p>
       </div>
 
@@ -250,8 +336,6 @@ export default function Dashboard() {
           is reminded about is a draft nobody completes, and a half-finished
           brief is already a warmer lead than a form that was never opened. */}
       {overview?.briefDraft && <BriefDraftCard draft={overview.briefDraft} />}
-
-      {isProspect && <SampleProjectCard />}
 
       {/* Credit, offered at the moment it starts making sense: they have a
           project, so a style exists to repeat, and they haven't bought any yet.
@@ -280,6 +364,20 @@ export default function Dashboard() {
         <SectionHeading>Your projects</SectionHeading>
         {overviewLoading && !overview ? (
           <Card><div style={{ color: BRAND.muted, fontSize: 13, textAlign: 'center', padding: 20 }}>Loading projects…</div></Card>
+        ) : showSample ? (
+          // A prospect gets the sample IN PLACE of the empty state, so they
+          // land on a populated Projects screen rather than being told there's
+          // nothing here and offered a link to somewhere else.
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <SampleProjectCard config={demoConfig} progress={demoDone} />
+            <div style={{ fontSize: 12.5, color: BRAND.muted, lineHeight: 1.6 }}>
+              Nothing you do in the sample reaches anyone, and it resets when you close the tab.
+              Your own projects appear here the moment a proposal is signed —{' '}
+              <a href="#/brief" style={{ color: BRAND.blue, fontWeight: 600 }}>start a brief</a>
+              {' or '}
+              <a href="#/course" style={{ color: BRAND.blue, fontWeight: 600 }}>watch the crash course</a> first.
+            </div>
+          </div>
         ) : projects.length === 0 ? (
           <Card>
             {/* Most people seeing this arrived from the crash course and have
