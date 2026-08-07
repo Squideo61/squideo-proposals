@@ -4,7 +4,7 @@ import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { Card, Empty } from './Card.jsx';
 import {
-  CommentThread, CommentInput, EventRow, ThreadRow,
+  CommentThread, CommentInput, ActivityFeed, ThreadRow,
   ThreadViewerModal, LinkEmailModal, NewDealFromEmailFlow,
 } from './DealDetailView.jsx';
 
@@ -99,12 +99,7 @@ export function DealConversation({ dealId, isMobile, sections = ['emails', 'acti
 
       {sections.includes('activity') && (
       <Card title="Activity" count={timeline.length}>
-        {timeline.length === 0 && <Empty text="No activity yet" />}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {timeline.map((item) => (
-            <EventRow key={'ev_' + item.data.id} event={item.data} users={state.users} />
-          ))}
-        </div>
+        <ActivityFeed events={timeline.map((item) => item.data)} users={state.users} />
       </Card>
       )}
 

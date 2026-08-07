@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AlertTriangle, ArrowLeft, Building2, Calendar, CheckSquare, ChevronDown, ChevronRight, Clock, CreditCard, Download, Edit2, ExternalLink, Eye, FileText, Flame, Folder, FolderPlus, Forward, Link2, Mail, MessageSquare, MoreVertical, Paperclip, Phone, Play, Plus, RefreshCw, Reply, ReplyAll, Rocket, Square, Trash2, Unlink, User, Video, Wallet, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Building2, Calendar, CheckSquare, ChevronDown, ChevronRight, ChevronUp, Clock, CreditCard, Download, Edit2, ExternalLink, Eye, FileText, Flame, Folder, FolderPlus, Forward, Link2, Mail, MessageSquare, MoreVertical, Paperclip, Phone, Play, Plus, RefreshCw, Reply, ReplyAll, Rocket, Square, Trash2, Unlink, User, Video, Wallet, X } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
@@ -1009,12 +1009,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
         </div>
 
         <Card title="Activity" count={timeline.length}>
-          {timeline.length === 0 && <Empty text="No activity yet" />}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {timeline.map((item) => (
-              <EventRow key={'ev_' + item.data.id} event={item.data} users={state.users} />
-            ))}
-          </div>
+          <ActivityFeed events={timeline.map((item) => item.data)} users={state.users} />
         </Card>
 
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
@@ -1298,6 +1293,44 @@ export function EventRow({ event, users }) {
           {formatRelativeTime(event.occurredAt)}{actor ? ' · ' + (actor.name || event.actorEmail) : (event.actorEmail ? ' · ' + event.actorEmail : '')}
         </div>
       </div>
+    </div>
+  );
+}
+
+// How much of the Activity feed shows before it's cut off. Enough to read what
+// just happened at a glance; the rest is one click away.
+const ACTIVITY_PREVIEW = 6;
+
+// The Activity card's body. Every event a deal has ever logged accumulates here
+// — stage changes, emails, tasks, uploads — so on a live project it runs to
+// dozens of rows and pushes everything below it (comments, in the deal page's
+// layout) off the screen. Show the most recent handful and keep the rest behind
+// a toggle. Shared by the deal page and the project/video conversation panel so
+// both behave the same.
+export function ActivityFeed({ events, users, preview = ACTIVITY_PREVIEW }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!events.length) return <Empty text="No activity yet" />;
+
+  const shown = expanded ? events : events.slice(0, preview);
+  const hidden = events.length - shown.length;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {shown.map((event) => (
+        <EventRow key={'ev_' + event.id} event={event} users={users} />
+      ))}
+      {(hidden > 0 || expanded) && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          className="btn-ghost"
+          style={{ alignSelf: 'flex-start', fontSize: 12, marginTop: 2 }}
+        >
+          {expanded
+            ? <><ChevronUp size={12} /> Show less</>
+            : <><ChevronDown size={12} /> Show {hidden} older</>}
+        </button>
+      )}
     </div>
   );
 }
