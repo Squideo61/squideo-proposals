@@ -163,22 +163,36 @@ function CopyLinkButton({ token, showMsg }) {
 }
 
 // Copy a link that opens the client viewer on THIS draft, rather than on
-// whichever draft happens to be newest. A draft the client hasn't been sent yet
-// is still hidden by the submit gate, so say so instead of handing over a link
-// that quietly shows them the older draft.
-function DraftCopyLinkButton({ token, version, sent, showMsg }) {
+// whichever draft happens to be newest.
+//
+// A draft the client hasn't been sent is hidden by the submit gate, so a link to
+// it would land them on the last draft they did get. Copying it is the decision
+// to share it, so we open the gate for that draft — after saying so, since it
+// also shows up in their portal and reopens any approval they'd given.
+function DraftCopyLinkButton({ projectId, token, storyboard, version, sent, showMsg }) {
+  const { actions } = useStore();
   const url = PUBLIC_BASE + '/?storyboard=' + token + '&draft=' + version.id;
   const label = draftLabel(version);
+
   function copy() {
-    navigator.clipboard.writeText(url).then(() => showMsg(sent
-      ? label + ' link copied'
-      : label + ' link copied — submit it to the client first, or they’ll still see the last draft you sent.'
-    )).catch(() => {});
+    if (!sent && !window.confirm(
+      `${label} hasn’t been sent to the client yet.\n\n`
+      + `Copying this link makes ${label} visible to them — in their portal too, not just through the link.`
+      + (storyboard.approvedAt ? '\n\nTheir approval of the previous draft will reopen for comments.' : '')
+      + '\n\nCopy it?')) return;
+    // Copy before the round-trip: browsers only allow a clipboard write while
+    // the click is still fresh.
+    const copied = navigator.clipboard.writeText(url);
+    if (sent) { copied.then(() => showMsg(label + ' link copied')).catch(() => {}); return; }
+    actions.shareStoryboardVersion(projectId, version.id)
+      .then(() => showMsg(label + ' link copied — the client can now see ' + label + '.'))
+      .catch(err => showMsg(err.message || 'Copied, but ' + label + ' could not be shared with the client'));
   }
+
   return (
     <button onClick={copy} className="btn-ghost"
       style={sent ? undefined : { color: '#B45309' }}
-      title={(sent ? '' : 'Not submitted to the client yet — they can’t open this draft until you send it.\n') + url}>
+      title={(sent ? '' : 'Not sent to the client yet — copying this link shares it with them.\n') + url}>
       <Copy size={14} /> Copy link
     </button>
   );
@@ -454,7 +468,8 @@ function StoryboardCard({ projectId, storyboard, shareToken, commentsByVersion }
                   </span>
                 )}
               </button>
-              <DraftCopyLinkButton token={shareToken} version={v} sent={v.versionNumber <= submittedVer} showMsg={showMsg} />
+              <DraftCopyLinkButton projectId={projectId} token={shareToken} storyboard={storyboard}
+                version={v} sent={v.versionNumber <= submittedVer} showMsg={showMsg} />
               <a href={v.pdfUrl} target="_blank" rel="noreferrer" className="btn-ghost" title="Open PDF"><FileDown size={14} /></a>
               <button
                 onClick={() => { if (window.confirm('Delete this draft?')) actions.deleteStoryboardVersion(projectId, v.id); }}

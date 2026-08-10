@@ -4217,6 +4217,13 @@ export function StoreProvider({ children }) {
         .catch(() => actions.loadStoryboardDetail(projectId));
     },
 
+    // Copying one draft's share link hands the client that draft, so the
+    // visibility gate has to move to it (no email, no bell — see shareVersion).
+    shareStoryboardVersion(projectId, versionId) {
+      return api.post('/api/storyboards/share-version?id=' + encodeURIComponent(versionId))
+        .then((resp) => actions.loadStoryboardDetail(projectId).then(() => resp));
+    },
+
     // Submit the latest uploaded storyboard draft to the client.
     submitStoryboardToClient(projectId, storyboardId, email = null) {
       return api.post('/api/storyboards/submit?storyboardId=' + encodeURIComponent(storyboardId), { email })

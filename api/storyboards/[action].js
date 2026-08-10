@@ -338,6 +338,15 @@ export default async function handler(req, res) {
       return res.status(200).json(result);
     }
 
+    // Producer copies one draft's own share link — that draft has to become
+    // client-visible or the link lands them on the last draft they were sent.
+    if (action === 'share-version') {
+      if (req.method !== 'POST') return res.status(405).end();
+      const id = req.query.id ? String(req.query.id) : null;
+      if (!id) return res.status(400).json({ error: 'id required' });
+      return await shareVersion(res, id, user);
+    }
+
     // What the "Submit to client" composer opens with (see the revisions router).
     if (action === 'review-email') {
       if (req.method !== 'GET') return res.status(405).end();
@@ -653,6 +662,49 @@ async function deleteVersion(res, id) {
   }
   await sql`DELETE FROM storyboard_versions WHERE id = ${id}`;
   return res.status(200).json({ ok: true });
+}
+
+// Open the client-visibility gate for ONE draft, because the producer has just
+// copied that draft's own share link and is about to send it. Without this the
+// link opens on the last draft the client was sent — the gate in publicView
+// hides anything newer, so a "link to draft 2" would quietly show draft 1.
+//
+// Deliberately narrower than submitStoryboardToClient: it moves the gate to the
+// named version (not to the newest draft, which may be a further one still
+// being worked on), sends no covering email and rings no portal bell — the
+// producer is sending the link themselves. A prior approval is cleared, as on a
+// normal submit, so the client can comment on what they've just been given.
+async function shareVersion(res, versionId, user) {
+  const [ver] = await sql`
+    SELECT sv.id, sv.project_id, sv.version_number, sv.storyboard_id,
+           sb.title AS storyboard_title, sb.client_submitted_version
+      FROM storyboard_versions sv
+      JOIN storyboards sb ON sb.id = sv.storyboard_id
+      JOIN storyboard_projects sp ON sp.id = sv.project_id
+     WHERE sv.id = ${versionId}
+  `;
+  if (!ver) return res.status(404).json({ error: 'Draft not found' });
+
+  const submitted = ver.client_submitted_version ?? 0;
+  const opened = ver.version_number > submitted;
+  if (opened) {
+    await sql`
+      UPDATE storyboards
+         SET client_submitted_version = ${ver.version_number},
+             client_submitted_at = NOW(),
+             client_submitted_by = ${user.email || null},
+             approved_at = NULL, approved_by = NULL, feedback_submitted_at = NULL
+       WHERE id = ${ver.storyboard_id}`;
+    await sql`UPDATE storyboard_projects SET updated_at = NOW() WHERE id = ${ver.project_id}`;
+    await logToDeal(ver.project_id, 'storyboard_shared_by_link',
+      { storyboard: ver.storyboard_title, version: ver.version_number }, user.email);
+  }
+
+  return res.status(200).json({
+    ok: true,
+    opened,
+    clientSubmittedVersion: opened ? ver.version_number : (ver.client_submitted_version ?? null),
+  });
 }
 
 // Logs an event to the linked deal's activity (surfaces in the project / video
