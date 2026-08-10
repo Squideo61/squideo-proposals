@@ -5,10 +5,16 @@ import { loadPdf } from '../../lib/pdf.js';
 // Small fixed-width thumbnail of one PDF page, rendered to a <canvas>. Used for
 // the slide rail in the public viewer and the first-page preview in the
 // producer list.
-export function PdfThumb({ url, pageNumber = 1, width = 120 }) {
+// `onStatus` (optional) reports 'loading' | 'ready' | 'error' so a caller can
+// substitute its own placeholder — the portal's brand-file card falls back to a
+// document icon rather than showing this component's bare dash, since a PDF we
+// can't render still needs to look like a file the client owns.
+export function PdfThumb({ url, pageNumber = 1, width = 120, onStatus = null }) {
   const canvasRef = useRef(null);
   const taskRef = useRef(null);
   const [status, setStatus] = useState('loading');
+
+  useEffect(() => { if (onStatus) onStatus(status); }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     let cancelled = false;

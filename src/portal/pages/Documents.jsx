@@ -6,12 +6,173 @@ import { portalApi, mediaUrl } from '../api.js';
 import { usePortal } from '../PortalContext.jsx';
 import { Card, EmptyState, FileRow, fmtBytes, fmtDate } from '../components.jsx';
 import {
-  Palette, Upload, FolderOpen, FileText, Image as ImageIcon, Download, Trash2, CheckCircle2,
+  Palette, Upload, FolderOpen, FileText, Download, Trash2, CheckCircle2,
+  Eye, X, ChevronLeft, ChevronRight,
 } from 'lucide-react';
+import { PdfThumb } from '../../components/storyboard/PdfThumb.jsx';
 
 const isImage = (f) => (f.mimeType || '').startsWith('image/');
 const isPdf = (f) => (f.mimeType || '') === 'application/pdf'
   || /\.pdf$/i.test(f.filename || '');
+
+// The cover: the document's actual first page, or the image itself.
+//
+// A red PDF glyph tells a client we hold "a file". Their brand guidelines
+// rendered on the page tells them we hold THE file — which is the entire
+// question they came to this page to answer. It falls back to the glyph if the
+// PDF can't be rendered (an encrypted or damaged file, or a blocked fetch),
+// because a broken tile would answer it worse than the icon did.
+function FileCover({ file, url, width = 92, height = 116 }) {
+  const [pdfStatus, setPdfStatus] = useState('loading');
+  const pdf = isPdf(file);
+  const image = isImage(file);
+  const showGlyph = (!pdf && !image) || (pdf && pdfStatus === 'error');
+
+  return (
+    <div style={{
+      width, height, flexShrink: 0, borderRadius: 8, overflow: 'hidden',
+      display: 'flex', justifyContent: 'center',
+      // A page is taller than this box, so it gets cropped — from the bottom,
+      // because the top of a brand document is where the logo and title are.
+      alignItems: pdf && !showGlyph ? 'flex-start' : 'center',
+      // White for documents (they're pages), a soft tile for images (most logos
+      // are transparent and would vanish on white).
+      background: image ? '#F4F7F9' : '#fff',
+      border: `1px solid ${BRAND.border}`,
+      boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.6)',
+    }}>
+      {image ? (
+        <img src={url} alt="" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', display: 'block' }} />
+      ) : pdf && !showGlyph ? (
+        <div style={{ width: '100%', height: '100%', overflow: 'hidden', display: 'flex', justifyContent: 'center' }}>
+          <PdfThumb url={url} width={width} onStatus={setPdfStatus} />
+        </div>
+      ) : (
+        <FileText size={28} color={pdf ? '#DC2626' : BRAND.muted} />
+      )}
+    </div>
+  );
+}
+
+// Full-size look at a brand file without leaving the portal. Downloading a
+// 10MB PDF just to check it's the right one is the friction this removes.
+//
+// Not dismissable by backdrop click — same rule as every other dialog here.
+function FilePreview({ file, url, onClose }) {
+  const [pages, setPages] = useState(null);
+  const [page, setPage] = useState(1);
+  const pdf = isPdf(file);
+  // Re-measured on resize so rotating a phone doesn't leave the page rendered
+  // at the old width, cropped or stranded in the middle.
+  const [pageWidth, setPageWidth] = useState(() => Math.min(820, window.innerWidth - 96));
+  useEffect(() => {
+    const onResize = () => setPageWidth(Math.min(820, window.innerWidth - 96));
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  useEffect(() => {
+    if (!pdf) return undefined;
+    let alive = true;
+    // loadPdf memoises by url, so the cover already paid for this fetch.
+    import('../../lib/pdf.js')
+      .then((m) => m.loadPdf(url))
+      .then((doc) => { if (alive) setPages(doc.numPages); })
+      .catch(() => { if (alive) setPages(0); });
+    return () => { alive = false; };
+  }, [pdf, url]);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose();
+      if (!pdf || !pages) return;
+      if (e.key === 'ArrowRight') setPage((p) => Math.min(pages, p + 1));
+      if (e.key === 'ArrowLeft') setPage((p) => Math.max(1, p - 1));
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [pdf, pages, onClose]);
+
+  const navBtn = (disabled) => ({
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    width: 34, height: 34, borderRadius: '50%', border: `1px solid ${BRAND.border}`,
+    background: '#fff', color: BRAND.ink, padding: 0,
+    cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.4 : 1,
+  });
+
+  return (
+    <>
+      <div style={{ position: 'fixed', inset: 0, zIndex: 70, background: 'rgba(15,42,61,.6)' }} />
+      <div style={{
+        position: 'fixed', inset: 0, zIndex: 71, display: 'flex', flexDirection: 'column',
+        padding: 'clamp(12px, 3vw, 32px)', pointerEvents: 'none',
+      }}>
+        <div style={{
+          pointerEvents: 'auto', margin: '0 auto', width: '100%', maxWidth: 900,
+          display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1,
+          background: '#fff', borderRadius: 14, overflow: 'hidden',
+          boxShadow: '0 24px 64px rgba(15,42,61,.35)',
+        }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px',
+            borderBottom: `1px solid ${BRAND.border}`, flexShrink: 0,
+          }}>
+            <FileText size={17} color={BRAND.blue} style={{ flexShrink: 0 }} />
+            <strong style={{
+              flex: 1, minWidth: 0, fontSize: 14, color: BRAND.ink,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}>
+              {file.filename}
+            </strong>
+            <a
+              href={url}
+              className="btn-ghost"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, textDecoration: 'none', flexShrink: 0 }}
+            >
+              <Download size={14} /> Download
+            </a>
+            <button
+              type="button" aria-label="Close" onClick={onClose}
+              style={{ background: 'none', border: 'none', padding: 6, cursor: 'pointer', color: BRAND.muted, display: 'flex', flexShrink: 0 }}
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          <div style={{
+            flex: 1, minHeight: 0, overflow: 'auto', background: '#F4F7F9',
+            display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: 16,
+          }}>
+            {pdf ? (
+              // Fixed pixel width (the canvas can't be sized in CSS without
+              // going blurry), so it's measured against the viewport once.
+              <PdfThumb key={`${page}:${pageWidth}`} url={url} pageNumber={page} width={pageWidth} />
+            ) : (
+              <img src={url} alt={file.filename} style={{ maxWidth: '100%', display: 'block', borderRadius: 6 }} />
+            )}
+          </div>
+
+          {pdf && pages > 1 && (
+            <div style={{
+              flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 14,
+              padding: '10px 14px', borderTop: `1px solid ${BRAND.border}`,
+            }}>
+              <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1} title="Previous page" style={navBtn(page <= 1)}>
+                <ChevronLeft size={18} />
+              </button>
+              <span style={{ fontSize: 13, color: BRAND.ink, minWidth: 74, textAlign: 'center' }}>
+                <strong>{page}</strong><span style={{ color: BRAND.muted }}> / {pages}</span>
+              </span>
+              <button onClick={() => setPage((p) => Math.min(pages, p + 1))} disabled={page >= pages} title="Next page" style={navBtn(page >= pages)}>
+                <ChevronRight size={18} />
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
 
 // A brand file, presented rather than listed.
 //
@@ -20,33 +181,21 @@ const isPdf = (f) => (f.mimeType || '') === 'application/pdf'
 // right one (an image shows itself), and who put it there. The plain FileRow
 // the Documents tab uses is right for a pile of attachments; it is not right
 // for the one thing on the page a client came to verify.
-function BrandFile({ file, onDownload, onDelete }) {
-  const thumb = isImage(file);
+function BrandFile({ file, url, onPreview, onDownload, onDelete }) {
+  const previewable = isPdf(file) || isImage(file);
   return (
     <div style={{
-      display: 'flex', alignItems: 'center', gap: 14, padding: 12,
+      display: 'flex', alignItems: 'center', gap: 16, padding: 14,
       border: `1px solid ${BRAND.border}`, borderRadius: 12, background: '#fff',
     }}>
-      <div style={{
-        width: 52, height: 52, borderRadius: 10, flexShrink: 0, overflow: 'hidden',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        // A checkerboard-free light tile: most logos are transparent PNGs, and
-        // on white they'd look like nothing at all.
-        background: thumb ? '#F4F7F9' : isPdf(file) ? '#FEF2F2' : '#F1F4F7',
-        border: `1px solid ${BRAND.border}`,
-      }}>
-        {thumb ? (
-          <img
-            src={onDownload.url}
-            alt=""
-            style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', display: 'block' }}
-          />
-        ) : isPdf(file) ? (
-          <FileText size={22} color="#DC2626" />
-        ) : (
-          <ImageIcon size={22} color={BRAND.muted} />
-        )}
-      </div>
+      <button
+        type="button"
+        onClick={previewable ? onPreview : onDownload}
+        title={previewable ? 'Open preview' : 'Download'}
+        style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'flex', flexShrink: 0 }}
+      >
+        <FileCover file={file} url={url} />
+      </button>
 
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{
@@ -74,7 +223,12 @@ function BrandFile({ file, onDownload, onDelete }) {
         </div>
       </div>
 
-      <button className="btn-ghost" onClick={onDownload.go} title="Download" style={{ padding: '7px 11px', flexShrink: 0 }}>
+      {previewable && (
+        <button className="btn-ghost" onClick={onPreview} style={{ padding: '7px 12px', flexShrink: 0, fontSize: 12.5, fontWeight: 700, color: BRAND.blue }}>
+          <Eye size={14} style={{ verticalAlign: -2, marginRight: 5 }} />Preview
+        </button>
+      )}
+      <button className="btn-ghost" onClick={onDownload} title="Download" style={{ padding: '7px 11px', flexShrink: 0 }}>
         <Download size={15} />
       </button>
       {onDelete && (
@@ -126,6 +280,7 @@ export default function Documents() {
   const [files, setFiles] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [tab, setTab] = useState('brand'); // 'brand' | 'document'
+  const [preview, setPreview] = useState(null); // { file, url } | null
 
   const load = useCallback(async () => {
     if (!companyId) return;
@@ -263,7 +418,9 @@ export default function Documents() {
                   <BrandFile
                     key={f.id}
                     file={f}
-                    onDownload={{ url, go: () => { window.location.href = url; } }}
+                    url={url}
+                    onPreview={() => setPreview({ file: f, url })}
+                    onDownload={() => { window.location.href = url; }}
                     onDelete={() => remove(f.id)}
                   />
                 ) : (
@@ -282,6 +439,10 @@ export default function Documents() {
           )}
         </div>
       </Card>
+
+      {preview && (
+        <FilePreview file={preview.file} url={preview.url} onClose={() => setPreview(null)} />
+      )}
     </div>
   );
 }
