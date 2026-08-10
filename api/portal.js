@@ -35,7 +35,7 @@
 import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import Stripe from 'stripe';
-import { put, del, getDownloadUrl } from '@vercel/blob';
+import { put, del, head, getDownloadUrl } from '@vercel/blob';
 import { handleUpload } from '@vercel/blob/client';
 import sql, { batchWrite } from './_lib/db.js';
 import { streamBlob } from './_lib/blobStream.js';
@@ -572,6 +572,7 @@ export default async function handler(req, res) {
       case 'overview': return overviewRoute(req, res, user);
       case 'project': return projectRoute(req, res, user);
       case 'library': return libraryRoute(req, res, user);
+      case 'files-upload-token': return filesUploadTokenRoute(req, res, user);
       case 'library-upload-token': return libraryUploadTokenRoute(req, res, user);
       case 'library-item': return libraryItemRoute(req, res, user);
       case 'library-reorder': return libraryReorderRoute(req, res, user);
@@ -2144,6 +2145,41 @@ async function downloadRoute(req, res, user) {
 }
 
 // ═════════════════════════ files ═════════════════════════
+// Mints a client-upload token so the browser can send a file STRAIGHT to Blob
+// storage instead of through this function.
+//
+// It has to work that way. A serverless request body is capped at ~4.5MB by the
+// platform, well under the 20MB this route claims to accept — and the platform
+// rejects the oversized request before any of our code runs, with a non-JSON
+// body, so the client saw a bare "Upload failed" with nothing to act on. Brand
+// guidelines are routinely a 10MB PDF. Same pattern as the library, revision
+// and course uploads, all of which hit this years ago.
+//
+// Authorised by simply having a portal session: the token only permits writing
+// to our own store, and nothing is readable without going through the download
+// route, which checks the file's company against the caller's memberships.
+async function filesUploadTokenRoute(req, res, user) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  if (!process.env.BLOB_READ_WRITE_TOKEN) return res.status(503).json({ error: 'File storage not configured' });
+  if (!user.companyIds?.length) return res.status(403).json({ error: 'No organisation' });
+  const body = await readJsonBody(req);
+  try {
+    const jsonResponse = await handleUpload({
+      body,
+      request: req,
+      token: process.env.BLOB_READ_WRITE_TOKEN,
+      // No maximumSizeInBytes / allowedContentTypes: either one makes the
+      // multipart-create call 400 (see api/revisions/[action].js). The real
+      // checks happen at registration, against the blob we can actually see.
+      onBeforeGenerateToken: async () => ({ addRandomSuffix: true }),
+    });
+    return res.status(200).json(jsonResponse);
+  } catch (err) {
+    if (res.headersSent) return;
+    return res.status(400).json({ error: err?.message || 'Upload authorisation failed' });
+  }
+}
+
 async function filesRoutes(req, res, user) {
   const scope = req.query.scope ? String(req.query.scope) : 'brand';
 
@@ -2179,15 +2215,46 @@ async function filesRoutes(req, res, user) {
 
   if (req.method === 'POST') {
     if (!process.env.BLOB_READ_WRITE_TOKEN) return res.status(503).json({ error: 'File storage not configured' });
-    const filename = decodeURIComponent(req.headers['x-filename'] || 'upload');
+
+    // Two ways in. A JSON body registers a blob the browser already uploaded
+    // direct (the normal path — see filesUploadTokenRoute for why); a raw body
+    // is the old in-request upload, kept as the fallback for anything that
+    // can't reach Blob storage from the browser.
+    const direct = String(req.headers['content-type'] || '').includes('application/json');
+    let filename, mimeType, buf = null, uploaded = null, sizeBytes;
+
+    if (direct) {
+      const body = await readJsonBody(req);
+      filename = trimOrNull(body.filename) || 'upload';
+      mimeType = trimOrNull(body.mimeType) || 'application/octet-stream';
+      const blobUrl = trimOrNull(body.blobUrl);
+      if (!blobUrl) return res.status(400).json({ error: 'No file was uploaded' });
+      // head() with OUR token is the ownership check: a URL that isn't in our
+      // store throws, so a forged one can't be registered against a company.
+      // It's also the only trustworthy size — the browser's number is a claim.
+      try {
+        uploaded = await head(blobUrl, { token: process.env.BLOB_READ_WRITE_TOKEN });
+      } catch {
+        return res.status(400).json({ error: 'That upload could not be verified — try again.' });
+      }
+      sizeBytes = Number(uploaded.size) || 0;
+    } else {
+      filename = decodeURIComponent(req.headers['x-filename'] || 'upload');
+      mimeType = req.headers['content-type'] || 'application/octet-stream';
+      buf = await readRawBody(req);
+      if (!buf.length) return res.status(400).json({ error: 'No file data received' });
+      sizeBytes = buf.length;
+    }
+
     const ext = (filename.split('.').pop() || '').toLowerCase();
     if (!UPLOAD_EXTENSIONS.has(ext)) {
+      if (uploaded) await del(uploaded.url, { token: process.env.BLOB_READ_WRITE_TOKEN }).catch(() => {});
       return res.status(400).json({ error: `That file type isn't supported (.${ext}). Try a PDF, doc, image or zip.` });
     }
-    const mimeType = req.headers['content-type'] || 'application/octet-stream';
-    const buf = await readRawBody(req);
-    if (!buf.length) return res.status(400).json({ error: 'No file data received' });
-    if (buf.length > MAX_FILE_SIZE) return res.status(413).json({ error: 'File too large (max 20 MB)' });
+    if (sizeBytes > MAX_FILE_SIZE) {
+      if (uploaded) await del(uploaded.url, { token: process.env.BLOB_READ_WRITE_TOKEN }).catch(() => {});
+      return res.status(413).json({ error: 'File too large (max 20 MB)' });
+    }
 
     // Deal-scoped documents land on deal_files (source='portal') so they show
     // in the CRM Files card automatically; brand/org docs live on their own table.
@@ -2232,12 +2299,12 @@ async function filesRoutes(req, res, user) {
     let stored;
     if (dealId) {
       const fileId = crypto.randomUUID();
-      const blob = await put(`deal-files/${dealId}/${fileId}/${safeName}`, buf, { access: 'private', contentType: mimeType });
+      const blob = uploaded || await put(`deal-files/${dealId}/${fileId}/${safeName}`, buf, { access: 'private', contentType: mimeType });
       await sql`
         INSERT INTO deal_files (id, deal_id, filename, mime_type, size_bytes, blob_url, blob_pathname, uploaded_by, source, portal_user_id, category)
-        VALUES (${fileId}, ${dealId}, ${filename}, ${mimeType}, ${buf.length}, ${blob.url}, ${blob.pathname}, NULL, 'portal', ${user.puid}, ${dealCategory})
+        VALUES (${fileId}, ${dealId}, ${filename}, ${mimeType}, ${sizeBytes}, ${blob.url}, ${blob.pathname}, NULL, 'portal', ${user.puid}, ${dealCategory})
       `;
-      stored = { id: fileId, filename, mimeType, sizeBytes: buf.length, category: dealCategory, createdAt: new Date().toISOString() };
+      stored = { id: fileId, filename, mimeType, sizeBytes, category: dealCategory, createdAt: new Date().toISOString() };
       // A script/direction upload answers the stage — including when they'd
       // previously asked us to write it, or we'd ticked "already received".
       // 'refining' survives: a fresh version of a draft we're already polishing
@@ -2248,10 +2315,10 @@ async function filesRoutes(req, res, user) {
     } else {
       const id = makeId('pcf');
       const category = req.query.category === 'document' ? 'document' : 'brand';
-      const blob = await put(`portal-files/${companyId}/${id}/${safeName}`, buf, { access: 'private', contentType: mimeType });
+      const blob = uploaded || await put(`portal-files/${companyId}/${id}/${safeName}`, buf, { access: 'private', contentType: mimeType });
       const [inserted] = await sql`
         INSERT INTO portal_company_files (id, company_id, category, filename, mime_type, size_bytes, blob_url, blob_pathname, uploaded_by_portal_user, uploaded_by_staff)
-        VALUES (${id}, ${companyId}, ${category}, ${filename}, ${mimeType}, ${buf.length}, ${blob.url}, ${blob.pathname}, ${user.puid},
+        VALUES (${id}, ${companyId}, ${category}, ${filename}, ${mimeType}, ${sizeBytes}, ${blob.url}, ${blob.pathname}, ${user.puid},
                 -- uploaded_by_staff is a FK to users(email). Resolved through a
                 -- subquery so an address that isn't a CRM user lands as NULL
                 -- instead of failing the whole upload on a constraint — losing
@@ -2260,7 +2327,7 @@ async function filesRoutes(req, res, user) {
         RETURNING uploaded_by_staff
       `;
       stored = {
-        id, category, filename, mimeType, sizeBytes: buf.length,
+        id, category, filename, mimeType, sizeBytes,
         uploadedByStaff: !!inserted?.uploaded_by_staff, createdAt: new Date().toISOString(),
       };
     }
