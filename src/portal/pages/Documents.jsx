@@ -4,8 +4,87 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { BRAND } from '../../theme.js';
 import { portalApi, mediaUrl } from '../api.js';
 import { usePortal } from '../PortalContext.jsx';
-import { Card, EmptyState, FileRow, SectionHeading } from '../components.jsx';
-import { Palette, Upload, FolderOpen } from 'lucide-react';
+import { Card, EmptyState, FileRow, fmtBytes, fmtDate } from '../components.jsx';
+import {
+  Palette, Upload, FolderOpen, FileText, Image as ImageIcon, Download, Trash2, CheckCircle2,
+} from 'lucide-react';
+
+const isImage = (f) => (f.mimeType || '').startsWith('image/');
+const isPdf = (f) => (f.mimeType || '') === 'application/pdf'
+  || /\.pdf$/i.test(f.filename || '');
+
+// A brand file, presented rather than listed.
+//
+// These are the documents a client is most likely to check we actually have —
+// so this row exists to answer that at a glance: what it is, that it's the
+// right one (an image shows itself), and who put it there. The plain FileRow
+// the Documents tab uses is right for a pile of attachments; it is not right
+// for the one thing on the page a client came to verify.
+function BrandFile({ file, onDownload, onDelete }) {
+  const thumb = isImage(file);
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 14, padding: 12,
+      border: `1px solid ${BRAND.border}`, borderRadius: 12, background: '#fff',
+    }}>
+      <div style={{
+        width: 52, height: 52, borderRadius: 10, flexShrink: 0, overflow: 'hidden',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        // A checkerboard-free light tile: most logos are transparent PNGs, and
+        // on white they'd look like nothing at all.
+        background: thumb ? '#F4F7F9' : isPdf(file) ? '#FEF2F2' : '#F1F4F7',
+        border: `1px solid ${BRAND.border}`,
+      }}>
+        {thumb ? (
+          <img
+            src={onDownload.url}
+            alt=""
+            style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', display: 'block' }}
+          />
+        ) : isPdf(file) ? (
+          <FileText size={22} color="#DC2626" />
+        ) : (
+          <ImageIcon size={22} color={BRAND.muted} />
+        )}
+      </div>
+
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontSize: 14, fontWeight: 700, color: BRAND.ink,
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}>
+          {file.filename}
+        </div>
+        <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 3, display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
+          <span>{[file.sizeBytes != null ? fmtBytes(file.sizeBytes) : null, fmtDate(file.createdAt)].filter(Boolean).join(' · ')}</span>
+          {/* The client didn't put this here — we did, from manage mode. Saying
+              so is the whole point: it reads as "they're on it", where an
+              unattributed file reads as one they forgot uploading. */}
+          {file.uploadedByStaff ? (
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+              background: '#EAF6FB', color: '#0B6E93', border: '1px solid #BFE0EE',
+              borderRadius: 999, padding: '1px 9px', fontSize: 11, fontWeight: 700,
+            }}>
+              Added by Squideo
+            </span>
+          ) : file.uploadedByName ? (
+            <span>by {file.uploadedByName}</span>
+          ) : null}
+        </div>
+      </div>
+
+      <button className="btn-ghost" onClick={onDownload.go} title="Download" style={{ padding: '7px 11px', flexShrink: 0 }}>
+        <Download size={15} />
+      </button>
+      {onDelete && (
+        <button className="btn-ghost" onClick={onDelete} title="Remove" style={{ padding: '7px 11px', color: '#DC2626', flexShrink: 0 }}>
+          <Trash2 size={15} />
+        </button>
+      )}
+    </div>
+  );
+}
 
 function UploadZone({ onFiles, uploading, label }) {
   const [drag, setDrag] = useState(false);
@@ -43,7 +122,7 @@ function UploadZone({ onFiles, uploading, label }) {
 }
 
 export default function Documents() {
-  const { companyId, showToast, isProspect } = usePortal();
+  const { companyId, showToast, isProspect, manageMode } = usePortal();
   const [files, setFiles] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [tab, setTab] = useState('brand'); // 'brand' | 'document'
@@ -64,7 +143,9 @@ export default function Documents() {
         // eslint-disable-next-line no-await-in-loop
         await portalApi.upload(`files?companyId=${encodeURIComponent(companyId)}&category=${tab}`, file);
       }
-      showToast('Uploaded ✓ — our team can see it now');
+      showToast(manageMode
+        ? 'Uploaded ✓ — the client can see it in their portal now'
+        : 'Uploaded ✓ — our team can see it now');
       await load();
     } catch (err) {
       showToast(err.message);
@@ -110,12 +191,49 @@ export default function Documents() {
         </button>
       </div>
 
+      {/* The receipt. A client who sent their guidelines over email months ago
+          has no way of knowing they landed anywhere useful, and asking again is
+          the kind of small friction that makes an agency feel disorganised.
+          This is the page they'd come to check, so it answers first. */}
+      {tab === 'brand' && visible.length > 0 && (
+        <div style={{
+          display: 'flex', gap: 11, alignItems: 'flex-start', padding: '13px 15px',
+          borderRadius: 12, background: '#F3FBF6', border: '1px solid #9BE0B7',
+          fontSize: 13.5, lineHeight: 1.55, color: '#15803D',
+        }}>
+          <CheckCircle2 size={17} style={{ flexShrink: 0, marginTop: 1 }} />
+          <div>
+            <strong style={{ color: BRAND.ink }}>
+              We've got your brand {visible.length === 1 ? 'file' : 'files'}.
+            </strong>{' '}
+            {manageMode
+              ? 'The client sees this confirmation too — every project we make for them works from these.'
+              : 'Every project we make for you works from these, so you should never have to send them twice.'}
+          </div>
+        </div>
+      )}
+
       <Card>
         <UploadZone
           onFiles={upload}
           uploading={uploading}
-          label={tab === 'brand' ? 'Upload brand guidelines, logos or fonts' : 'Upload a document'}
+          label={manageMode
+            ? (tab === 'brand'
+              ? "Upload brand guidelines on the client's behalf"
+              : "Upload a document on the client's behalf")
+            : (tab === 'brand' ? 'Upload brand guidelines, logos or fonts' : 'Upload a document')}
         />
+        {/* Manage mode is the whole reason this path exists: a client who emails
+            their guidelines to a producer should end up with them filed here,
+            not in a thread. Saying it plainly stops anyone wondering whether
+            this lands as "the client uploaded it". */}
+        {manageMode && (
+          <div style={{ fontSize: 12.5, color: '#B45309', marginTop: 10, lineHeight: 1.5 }}>
+            Uploaded here, these show in the client's own portal marked
+            {' '}<strong>Added by Squideo</strong> — and tick off their
+            &ldquo;{tab === 'brand' ? 'Upload your brand guidelines & logo' : 'Documents'}&rdquo; task.
+          </div>
+        )}
         <div style={{ marginTop: 18 }}>
           {files === null ? (
             <div style={{ color: BRAND.muted, fontSize: 13, textAlign: 'center', padding: 10 }}>Loading…</div>
@@ -136,18 +254,30 @@ export default function Documents() {
                   : 'Anything else you want our team to have on hand.')}
             />
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {visible.map((f) => (
-                <FileRow
-                  key={f.id}
-                  filename={f.filename}
-                  sizeBytes={f.sizeBytes}
-                  createdAt={f.createdAt}
-                  meta={f.uploadedByName ? `by ${f.uploadedByName}` : null}
-                  onDownload={() => { window.location.href = mediaUrl(`download?scope=company&id=${encodeURIComponent(f.id)}`); }}
-                  onDelete={() => remove(f.id)}
-                />
-              ))}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {visible.map((f) => {
+                const url = mediaUrl(`download?scope=company&id=${encodeURIComponent(f.id)}`);
+                // Brand files get the richer card; general documents stay a
+                // plain row — a pile of attachments doesn't need thumbnails.
+                return tab === 'brand' ? (
+                  <BrandFile
+                    key={f.id}
+                    file={f}
+                    onDownload={{ url, go: () => { window.location.href = url; } }}
+                    onDelete={() => remove(f.id)}
+                  />
+                ) : (
+                  <FileRow
+                    key={f.id}
+                    filename={f.filename}
+                    sizeBytes={f.sizeBytes}
+                    createdAt={f.createdAt}
+                    meta={f.uploadedByStaff ? 'added by Squideo' : f.uploadedByName ? `by ${f.uploadedByName}` : null}
+                    onDownload={() => { window.location.href = url; }}
+                    onDelete={() => remove(f.id)}
+                  />
+                );
+              })}
             </div>
           )}
         </div>

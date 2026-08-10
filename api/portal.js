@@ -2167,7 +2167,8 @@ async function filesRoutes(req, res, user) {
     if (!companyId) return;
     const rows = await sql`
       SELECT f.id, f.category, f.filename, f.mime_type, f.size_bytes,
-             f.uploaded_by_portal_user, f.created_at, pu.name AS uploaded_by_name
+             f.uploaded_by_portal_user, f.uploaded_by_staff, f.created_at,
+             pu.name AS uploaded_by_name
         FROM portal_company_files f
         LEFT JOIN portal_users pu ON pu.id = f.uploaded_by_portal_user
        WHERE f.company_id = ${companyId}
@@ -2220,6 +2221,13 @@ async function filesRoutes(req, res, user) {
       return res.status(429).json({ error: 'Upload limit reached for today — try again tomorrow or email the files to your producer.' });
     }
 
+    // Staff uploading in manage mode, on the client's behalf. A preview session
+    // has no puid, so without this the row lands anonymous and the client sees
+    // a file that appeared from nowhere — the opposite of the point, which is
+    // that they can see we have their brand assets and who put them there.
+    const staffUploader = user.isPreview ? (user.previewBy || null) : null;
+    const actorLabel = user.isPreview ? 'The Squideo team' : (user.name || user.email);
+
     const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
     let stored;
     if (dealId) {
@@ -2241,11 +2249,20 @@ async function filesRoutes(req, res, user) {
       const id = makeId('pcf');
       const category = req.query.category === 'document' ? 'document' : 'brand';
       const blob = await put(`portal-files/${companyId}/${id}/${safeName}`, buf, { access: 'private', contentType: mimeType });
-      await sql`
-        INSERT INTO portal_company_files (id, company_id, category, filename, mime_type, size_bytes, blob_url, blob_pathname, uploaded_by_portal_user)
-        VALUES (${id}, ${companyId}, ${category}, ${filename}, ${mimeType}, ${buf.length}, ${blob.url}, ${blob.pathname}, ${user.puid})
+      const [inserted] = await sql`
+        INSERT INTO portal_company_files (id, company_id, category, filename, mime_type, size_bytes, blob_url, blob_pathname, uploaded_by_portal_user, uploaded_by_staff)
+        VALUES (${id}, ${companyId}, ${category}, ${filename}, ${mimeType}, ${buf.length}, ${blob.url}, ${blob.pathname}, ${user.puid},
+                -- uploaded_by_staff is a FK to users(email). Resolved through a
+                -- subquery so an address that isn't a CRM user lands as NULL
+                -- instead of failing the whole upload on a constraint — losing
+                -- the byline is a blemish, losing the file is a bug.
+                (SELECT u.email FROM users u WHERE u.email = ${staffUploader}))
+        RETURNING uploaded_by_staff
       `;
-      stored = { id, category, filename, mimeType, sizeBytes: buf.length, createdAt: new Date().toISOString() };
+      stored = {
+        id, category, filename, mimeType, sizeBytes: buf.length,
+        uploadedByStaff: !!inserted?.uploaded_by_staff, createdAt: new Date().toISOString(),
+      };
     }
 
     // Best-effort team ping (in-app only — uploads can be frequent). A script or
@@ -2258,14 +2275,14 @@ async function filesRoutes(req, res, user) {
       const what = dealCategory === 'visual_direction' ? 'visual direction' : 'script';
       await sendNotification(dealCategory ? 'portal.script_uploaded' : 'portal.doc_uploaded', {
         subject: dealCategory
-          ? `✍️ ${user.name || user.email} sent a ${what}: ${filename}`
-          : `📎 ${user.name || user.email} uploaded ${filename}`,
+          ? `✍️ ${actorLabel} sent a ${what}: ${filename}`
+          : `📎 ${actorLabel} uploaded ${filename}`,
         text: dealCategory
-          ? `${user.name || user.email} uploaded a ${what} (${filename}) via the client portal (${co?.name || companyId}).`
-          : `${user.name || user.email} uploaded ${filename} via the client portal (${co?.name || companyId}).`,
+          ? `${actorLabel} uploaded a ${what} (${filename}) via the client portal (${co?.name || companyId}).`
+          : `${actorLabel} uploaded ${filename} via the client portal (${co?.name || companyId}).`,
         inApp: {
           title: dealCategory ? `Client ${what}: ${filename}` : `Client file: ${filename}`,
-          body: `${user.name || user.email} · ${co?.name || ''}`,
+          body: `${actorLabel} · ${co?.name || ''}`,
           link: dealId ? `#/deal/${dealId}` : `#/company/${companyId}`,
         },
         inAppOnly: true,

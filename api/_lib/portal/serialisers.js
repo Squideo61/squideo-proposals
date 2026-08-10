@@ -138,6 +138,10 @@ export function serialisePortalCompanyFile(f) {
     sizeBytes: f.size_bytes == null ? null : Number(f.size_bytes),
     uploadedByPortalUser: f.uploaded_by_portal_user || null,
     uploadedByName: f.uploaded_by_name || null,
+    // Whether we put this here for them, from manage mode. A boolean, not the
+    // staff address — the client needs to know it came from Squideo, not which
+    // of us was logged in.
+    uploadedByStaff: !!f.uploaded_by_staff,
     createdAt: f.created_at,
   };
 }
