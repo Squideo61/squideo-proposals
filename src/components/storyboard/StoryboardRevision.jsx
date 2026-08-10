@@ -103,7 +103,7 @@ function CommentAttachment({ url, name, type }) {
  * draft PDF versions. Reviewers must enter their name + email before viewing,
  * then comment per-slide (optionally pinned to a spot) and approve.
  */
-export function StoryboardRevision({ token, data, api, showMsg, identity = null, embedded = false }) {
+export function StoryboardRevision({ token, data, api, showMsg, identity = null, embedded = false, initialVersionId = null }) {
   const preIdentified = !!(identity && isEmail(identity.email || ''));
   // Phones get a stacked layout: the desktop three-column split (148px slide
   // rail + slide + 380px thread) leaves the slide a few pixels wide on a 390px
@@ -137,10 +137,16 @@ export function StoryboardRevision({ token, data, api, showMsg, identity = null,
 
   // ── Storyboard + draft selection ────────────────────────────────────────────
   const storyboards = data.storyboards || [];
-  const [storyboardId, setStoryboardId] = useState(storyboards[0]?.id || null);
+  // A per-draft link (…&draft=<versionId>) opens straight on that draft. If the
+  // draft isn't visible to this viewer — not submitted yet, or deleted — we fall
+  // back to the newest one they can see.
+  const deepLink = storyboards
+    .map(s => ({ storyboardId: s.id, version: (s.versions || []).find(v => v.id === initialVersionId) }))
+    .find(x => x.version) || null;
+  const [storyboardId, setStoryboardId] = useState(deepLink?.storyboardId || storyboards[0]?.id || null);
   const activeStoryboard = storyboards.find(s => s.id === storyboardId) || storyboards[0] || null;
   const versions = activeStoryboard?.versions || [];
-  const [versionId, setVersionId] = useState(versions[0]?.id || null);
+  const [versionId, setVersionId] = useState(deepLink?.version.id || versions[0]?.id || null);
   const version = versions.find(v => v.id === versionId) || versions[0] || null;
 
   const [comments, setComments] = useState(data.comments || []);

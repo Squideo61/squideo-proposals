@@ -162,6 +162,28 @@ function CopyLinkButton({ token, showMsg }) {
   );
 }
 
+// Copy a link that opens the client viewer on THIS draft, rather than on
+// whichever draft happens to be newest. A draft the client hasn't been sent yet
+// is still hidden by the submit gate, so say so instead of handing over a link
+// that quietly shows them the older draft.
+function DraftCopyLinkButton({ token, version, sent, showMsg }) {
+  const url = PUBLIC_BASE + '/?storyboard=' + token + '&draft=' + version.id;
+  const label = draftLabel(version);
+  function copy() {
+    navigator.clipboard.writeText(url).then(() => showMsg(sent
+      ? label + ' link copied'
+      : label + ' link copied — submit it to the client first, or they’ll still see the last draft you sent.'
+    )).catch(() => {});
+  }
+  return (
+    <button onClick={copy} className="btn-ghost"
+      style={sent ? undefined : { color: '#B45309' }}
+      title={(sent ? '' : 'Not submitted to the client yet — they can’t open this draft until you send it.\n') + url}>
+      <Copy size={14} /> Copy link
+    </button>
+  );
+}
+
 function NewProjectModal({ onClose, onCreated }) {
   const { actions, showMsg } = useStore();
   const [title, setTitle] = useState('');
@@ -249,7 +271,9 @@ function ProjectDetail({ projectId, onBack }) {
             projectId={projectId} kind="storyboard"
             onLinked={() => actions.loadStoryboardDetail(projectId)} />
           <button onClick={addStoryboard} className="btn-ghost"><Plus size={14} /> Add storyboard</button>
-          <CopyLinkButton token={detail.shareToken} showMsg={showMsg} />
+          {/* No project-level "Copy link" here: it always opened the newest draft
+              the client could see, which read as "always draft 1" once a newer
+              draft was waiting to be submitted. Each draft carries its own. */}
         </div>
       </header>
 
@@ -289,7 +313,8 @@ function ProjectDetail({ projectId, onBack }) {
               </span>
             </div>
           )}
-          <StoryboardCard key={activeStoryboard.id} projectId={projectId} storyboard={activeStoryboard} commentsByVersion={commentsByVersion} />
+          <StoryboardCard key={activeStoryboard.id} projectId={projectId} storyboard={activeStoryboard}
+            shareToken={detail.shareToken} commentsByVersion={commentsByVersion} />
         </>
       )}
     </div>
@@ -297,7 +322,7 @@ function ProjectDetail({ projectId, onBack }) {
 }
 
 // One storyboard within a project: its own upload dropzone + list of draft PDFs.
-function StoryboardCard({ projectId, storyboard, commentsByVersion }) {
+function StoryboardCard({ projectId, storyboard, shareToken, commentsByVersion }) {
   const { actions, showMsg } = useStore();
   const fileInputRef = useRef(null);
   const [progress, setProgress] = useState(null);
@@ -429,6 +454,7 @@ function StoryboardCard({ projectId, storyboard, commentsByVersion }) {
                   </span>
                 )}
               </button>
+              <DraftCopyLinkButton token={shareToken} version={v} sent={v.versionNumber <= submittedVer} showMsg={showMsg} />
               <a href={v.pdfUrl} target="_blank" rel="noreferrer" className="btn-ghost" title="Open PDF"><FileDown size={14} /></a>
               <button
                 onClick={() => { if (window.confirm('Delete this draft?')) actions.deleteStoryboardVersion(projectId, v.id); }}
