@@ -175,10 +175,12 @@ function DraftCopyLinkButton({ projectId, token, storyboard, version, sent, show
   const label = draftLabel(version);
 
   function copy() {
+    const approvedLabel = storyboard.approvedVersion != null
+      ? 'Draft ' + storyboard.approvedVersion : 'the approved draft';
     if (!sent && !window.confirm(
       `${label} hasn’t been sent to the client yet.\n\n`
       + `Copying this link makes ${label} visible to them — in their portal too, not just through the link.`
-      + (storyboard.approvedAt ? '\n\nTheir approval of the previous draft will reopen for comments.' : '')
+      + (storyboard.approvedAt ? `\n\n${approvedLabel} stays approved and locked; only ${label} opens for comments.` : '')
       + '\n\nCopy it?')) return;
     // Copy before the round-trip: browsers only allow a clipboard write while
     // the click is still fresh.
@@ -363,6 +365,11 @@ function StoryboardCard({ projectId, storyboard, shareToken, commentsByVersion }
   const latestVersionNumber = versions[0]?.versionNumber ?? 0;
   const submittedVer = storyboard.clientSubmittedVersion ?? 0;
   const hasUnsent = latestVersionNumber > submittedVer;
+  // An approval covers one draft. Once a newer draft goes out, that draft stays
+  // approved but the storyboard is back under review — so the chip has to follow
+  // the draft the client is holding, not the fact that they once approved.
+  const approvedVer = storyboard.approvedVersion ?? null;
+  const approvalIsCurrent = !!storyboard.approvedAt && (approvedVer == null || approvedVer >= submittedVer);
 
   // Submitting opens the covering email first — same composer as the project
   // video page, so the client hears about it the same way from either side.
@@ -373,9 +380,12 @@ function StoryboardCard({ projectId, storyboard, shareToken, commentsByVersion }
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
         <FileText size={18} color={BRAND.blue} />
         <strong style={{ color: BRAND.ink, fontSize: 16 }}>{storyboard.title}</strong>
-        {storyboard.approvedAt
+        {approvalIsCurrent
           ? <span style={APPROVED_CHIP}><CheckCircle2 size={11} /> Approved</span>
-          : <span style={{ ...APPROVED_CHIP, background: '#F59E0B' }}>Pending review</span>}
+          : <span style={{ ...APPROVED_CHIP, background: '#F59E0B' }}
+              title={storyboard.approvedAt ? `Draft ${approvedVer} is approved; a newer draft is out for review` : undefined}>
+              Pending review
+            </span>}
         <span style={{ fontSize: 12, color: BRAND.muted }}>{versions.length} draft{versions.length === 1 ? '' : 's'}</span>
         <button
           onClick={() => { if (window.confirm(`Delete "${storyboard.title}" and all its drafts?`)) actions.deleteStoryboard(projectId, storyboard.id); }}
@@ -453,6 +463,12 @@ function StoryboardCard({ projectId, storyboard, shareToken, commentsByVersion }
                   cursor: 'pointer', padding: 0, flex: 1, textAlign: 'left', flexWrap: 'wrap' }}>
                 {isOpen ? <ChevronDown size={16} color={BRAND.muted} /> : <ChevronRight size={16} color={BRAND.muted} />}
                 <strong style={{ color: BRAND.ink, fontSize: 14 }}>{draftLabel(v)}</strong>
+                {approvedVer != null && v.versionNumber === approvedVer && (
+                  <span style={{ ...APPROVED_CHIP, fontSize: 10 }}
+                    title={`Approved by ${storyboard.approvedBy || 'the client'} — locked for comments`}>
+                    <CheckCircle2 size={10} /> Approved
+                  </span>
+                )}
                 {v.pageCount != null && <span style={{ fontSize: 12, color: BRAND.muted }}>{v.pageCount} slide{v.pageCount === 1 ? '' : 's'}</span>}
                 <span style={{ fontSize: 12, color: BRAND.muted, display: 'flex', alignItems: 'center', gap: 4 }}>
                   <MessageSquare size={13} /> {comments.length}

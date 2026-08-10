@@ -674,6 +674,17 @@ async function withVideoExtras(video) {
         const [cs] = await sql`SELECT client_submitted_version FROM storyboards WHERE id = ${video.storyboardId}`;
         storyboardStatus.clientSubmittedVersion = cs?.client_submitted_version ?? null;
       } catch { /* gate column not present yet */ }
+      try {
+        // Approval is per-draft: it stops counting once a newer draft has gone
+        // to the client (the video page reads approvedAt as "signed off").
+        const [av] = await sql`SELECT approved_version FROM storyboards WHERE id = ${video.storyboardId}`;
+        const approvedVer = av?.approved_version ?? null;
+        if (storyboardStatus.approvedAt && approvedVer != null
+            && approvedVer < (storyboardStatus.clientSubmittedVersion ?? 0)) {
+          storyboardStatus.approvedAt = null;
+          storyboardStatus.approvedBy = null;
+        }
+      } catch { /* approved_version column not present yet */ }
       if (sv?.version_number != null) {
         try {
           const [c] = await sql`

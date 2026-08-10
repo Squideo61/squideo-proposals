@@ -170,10 +170,15 @@ export function StoryboardRevision({ token, data, api, showMsg, identity = null,
   }, [version?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const pageCount = resolvedPages || version?.pageCount || 1;
 
-  // Approval is per-storyboard.
+  // Approval is per-storyboard, but it only closes the draft it was given for
+  // and the drafts before it. A newer draft is a fresh round: still commentable,
+  // still approvable in its own right.
   const [approvals, setApprovals] = useState(() =>
-    Object.fromEntries((data.storyboards || []).map(s => [s.id, s.approvedAt || null])));
-  const approvedAt = activeStoryboard ? approvals[activeStoryboard.id] : null;
+    Object.fromEntries((data.storyboards || []).map(s => [s.id, s.approvedAt ? { at: s.approvedAt, version: s.approvedVersion ?? null } : null])));
+  const approval = activeStoryboard ? approvals[activeStoryboard.id] : null;
+  // `approvedAt` now means "this draft is signed off", not "this storyboard is".
+  const approvedAt = (approval && (approval.version == null || (version?.versionNumber ?? 0) <= approval.version))
+    ? approval.at : null;
   const [approving, setApproving] = useState(false);
   // Per-storyboard "feedback submitted" state (seeded from the server).
   const [submitted, setSubmitted] = useState(() =>
@@ -291,7 +296,7 @@ export function StoryboardRevision({ token, data, api, showMsg, identity = null,
     try {
       const res = await api.approveStoryboard(token, activeStoryboard.id, name);
       const at = res.approvedAt || new Date().toISOString();
-      setApprovals(prev => ({ ...prev, [activeStoryboard.id]: at }));
+      setApprovals(prev => ({ ...prev, [activeStoryboard.id]: { at, version: version?.versionNumber ?? null } }));
       setSubmitted(prev => ({ ...prev, [activeStoryboard.id]: res.feedbackSubmittedAt || new Date().toISOString() }));
       showMsg('Revisions finalised and sent — thank you!');
     } catch (err) {
@@ -474,7 +479,7 @@ export function StoryboardRevision({ token, data, api, showMsg, identity = null,
             <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
               padding: isMobile ? '9px 12px' : '7px 12px', borderRadius: 8, flex: isMobile ? 1 : undefined,
               background: '#16A34A', color: '#fff', fontSize: 13, fontWeight: 600 }}>
-              <CheckCircle2 size={15} /> Storyboard finalised
+              <CheckCircle2 size={15} /> {versions.length > 1 ? draftLabel(version) + ' approved' : 'Storyboard finalised'}
             </span>
           ) : (
             <button onClick={finalise} disabled={approving}
@@ -649,7 +654,10 @@ export function StoryboardRevision({ token, data, api, showMsg, identity = null,
             <div style={{ borderTop: `1px solid ${BRAND.border}`, padding: 16, textAlign: 'center',
               color: '#16A34A', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center',
               justifyContent: 'center', gap: 6 }}>
-              <CheckCircle2 size={16} /> Approved — this storyboard is finalised.
+              <CheckCircle2 size={16} />
+              {versions[0] && versions[0].id !== version.id
+                ? `Approved — this draft is finalised. Open ${draftLabel(versions[0])} above to review the latest.`
+                : 'Approved — this storyboard is finalised.'}
             </div>
           ) : (
             <div style={{ borderTop: `1px solid ${BRAND.border}`, padding: 12 }}>

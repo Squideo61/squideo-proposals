@@ -105,12 +105,15 @@ export async function submitStoryboardToClient({ storyboardId, actorEmail, email
 
   const submittedAt = new Date();
   if (!email?.emailOnly) { // see submitRevisionToClient
+    // A previous approval is left standing: storyboard approvals are per-draft
+    // (storyboards.approved_version), so the draft they signed off stays locked
+    // while this new one opens for comments. See isDraftLocked in the router.
     await sql`
       UPDATE storyboards
          SET client_submitted_version = ${row.max_ver},
              client_submitted_at = NOW(),
              client_submitted_by = ${actorEmail || null},
-             approved_at = NULL, approved_by = NULL, feedback_submitted_at = NULL
+             feedback_submitted_at = NULL
        WHERE id = ${storyboardId}`;
     await sql`UPDATE storyboard_projects SET updated_at = NOW() WHERE id = ${row.project_id}`;
 

@@ -338,7 +338,18 @@ async function gatherDealStates(dealIds) {
         LEFT JOIN deals dd ON dd.revision_project_id = rp.id
        WHERE rp.deal_id = ANY(${dealIds}) OR dd.id = ANY(${dealIds})
     `.catch(() => []),
+    // approved_version (which draft the approval covers) is added by the
+    // storyboards router's self-heal, so fall back to the column-free query on a
+    // database that hasn't had it applied yet rather than losing every link.
     sql`
+      SELECT COALESCE(sp.deal_id, dd.id) AS deal_id, sp.share_token, sb.id AS storyboard_id, sb.title AS storyboard_title,
+             sb.approved_at, sb.approved_version, sb.feedback_submitted_at,
+             sb.client_submitted_version
+        FROM storyboard_projects sp
+        JOIN storyboards sb ON sb.project_id = sp.id
+        LEFT JOIN deals dd ON dd.storyboard_project_id = sp.id
+       WHERE sp.deal_id = ANY(${dealIds}) OR dd.id = ANY(${dealIds})
+    `.catch(() => sql`
       SELECT COALESCE(sp.deal_id, dd.id) AS deal_id, sp.share_token, sb.id AS storyboard_id, sb.title AS storyboard_title,
              sb.approved_at, sb.feedback_submitted_at,
              sb.client_submitted_version
@@ -346,7 +357,7 @@ async function gatherDealStates(dealIds) {
         JOIN storyboards sb ON sb.project_id = sp.id
         LEFT JOIN deals dd ON dd.storyboard_project_id = sp.id
        WHERE sp.deal_id = ANY(${dealIds}) OR dd.id = ANY(${dealIds})
-    `.catch(() => []),
+    `).catch(() => []),
     sql`
       SELECT DISTINCT ON (deal_id) deal_id, starts_at, meet_url, client_timezone
         FROM intro_call_bookings
@@ -426,13 +437,18 @@ async function gatherDealStates(dealIds) {
     if (!sbLinks.has(r.deal_id)) sbLinks.set(r.deal_id, []);
     // Only surface once submitted to the client (see revLinks note above).
     if (r.client_submitted_version != null) {
+      // An approval covers the draft it was given for. A newer draft sent since
+      // is back with the client, so it isn't "approved" as far as the portal's
+      // ball-in-court is concerned.
+      const approved = !!r.approved_at
+        && (r.approved_version == null || r.approved_version >= (r.client_submitted_version ?? 0));
       sbLinks.get(r.deal_id).push({
         shareToken: r.share_token,
         title: r.storyboard_title,
-        approved: !!r.approved_at,
+        approved,
         feedbackSubmitted: !!r.feedback_submitted_at,
       });
-      if (!r.approved_at && !r.feedback_submitted_at && !sbPending.has(r.deal_id)) {
+      if (!approved && !r.feedback_submitted_at && !sbPending.has(r.deal_id)) {
         sbPending.set(r.deal_id, { shareToken: r.share_token, storyboardTitle: r.storyboard_title });
       }
     }

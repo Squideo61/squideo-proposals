@@ -166,6 +166,18 @@ function ensureStoryboardTables() {
                     FROM storyboard_versions GROUP BY storyboard_id) sub
            WHERE sub.storyboard_id = sb.id AND sb.client_submitted_version IS NULL`;
       } catch (err) { console.warn('[storyboards] submit-gate backfill skipped', err.message); }
+      // Which draft the client signed off (db/migrations/20260810_storyboard_approved_version.sql).
+      // Approval used to lock every draft in the storyboard; it now locks the
+      // approved draft and everything before it, so a newer draft can go out for
+      // comments without reopening the one they've already agreed.
+      await sql`ALTER TABLE storyboards ADD COLUMN IF NOT EXISTS approved_version INT`;
+      try {
+        await sql`
+          UPDATE storyboards sb
+             SET approved_version = COALESCE(sb.client_submitted_version,
+                   (SELECT MAX(version_number) FROM storyboard_versions WHERE storyboard_id = sb.id))
+           WHERE sb.approved_at IS NOT NULL AND sb.approved_version IS NULL`;
+      } catch (err) { console.warn('[storyboards] approved-version backfill skipped', err.message); }
     } catch (err) {
       tablesEnsured = null;
       console.warn('[storyboards] ensure tables failed', err.message);
@@ -382,7 +394,13 @@ async function listProjects(res, user) {
     FROM storyboard_projects sp
     LEFT JOIN deals d ON d.id = sp.deal_id
     LEFT JOIN (
-      SELECT project_id, COUNT(*) AS storyboard_count, COUNT(approved_at) AS approved_storyboard_count,
+      SELECT project_id, COUNT(*) AS storyboard_count,
+             -- Approved counts only while the approval still covers the draft the
+             -- client holds; a newer draft sent since is back out for review.
+             COUNT(*) FILTER (
+               WHERE approved_at IS NOT NULL
+                 AND (approved_version IS NULL OR approved_version >= COALESCE(client_submitted_version, 0))
+             ) AS approved_storyboard_count,
              COUNT(feedback_submitted_at) AS feedback_submitted_count
       FROM storyboards GROUP BY project_id
     ) sb ON sb.project_id = sp.id
@@ -488,8 +506,8 @@ async function projectDetail(res, id) {
   if (!project) return res.status(404).json({ error: 'not found' });
 
   const storyboards = await sql`
-    SELECT id, title, sort_order, created_at, approved_at, approved_by, feedback_submitted_at,
-           client_submitted_version, client_submitted_at FROM storyboards
+    SELECT id, title, sort_order, created_at, approved_at, approved_by, approved_version,
+           feedback_submitted_at, client_submitted_version, client_submitted_at FROM storyboards
     WHERE project_id = ${id} ORDER BY sort_order, created_at
   `;
   const versions = await sql`
@@ -543,6 +561,7 @@ async function projectDetail(res, id) {
     storyboards: storyboards.map(sb => ({
       id: sb.id, title: sb.title, sortOrder: sb.sort_order, createdAt: sb.created_at,
       approvedAt: sb.approved_at || null, approvedBy: sb.approved_by || null,
+      approvedVersion: sb.approved_version ?? null,
       feedbackSubmittedAt: sb.feedback_submitted_at || null,
       clientSubmittedVersion: sb.client_submitted_version ?? null,
       clientSubmittedAt: sb.client_submitted_at || null,
@@ -671,9 +690,10 @@ async function deleteVersion(res, id) {
 //
 // Deliberately narrower than submitStoryboardToClient: it moves the gate to the
 // named version (not to the newest draft, which may be a further one still
-// being worked on), sends no covering email and rings no portal bell — the
-// producer is sending the link themselves. A prior approval is cleared, as on a
-// normal submit, so the client can comment on what they've just been given.
+// being worked on), and sends no covering email and rings no portal bell — the
+// producer is sending the link themselves. Any approval the client has already
+// given stands: it locks the draft they signed off, and the new draft opens for
+// comments on its own (see isDraftLocked).
 async function shareVersion(res, versionId, user) {
   const [ver] = await sql`
     SELECT sv.id, sv.project_id, sv.version_number, sv.storyboard_id,
@@ -693,7 +713,7 @@ async function shareVersion(res, versionId, user) {
          SET client_submitted_version = ${ver.version_number},
              client_submitted_at = NOW(),
              client_submitted_by = ${user.email || null},
-             approved_at = NULL, approved_by = NULL, feedback_submitted_at = NULL
+             feedback_submitted_at = NULL
        WHERE id = ${ver.storyboard_id}`;
     await sql`UPDATE storyboard_projects SET updated_at = NOW() WHERE id = ${ver.project_id}`;
     await logToDeal(ver.project_id, 'storyboard_shared_by_link',
@@ -852,8 +872,8 @@ async function publicView(req, res) {
   const [cfg] = await sql`SELECT revision_call_url FROM settings WHERE id = 1`;
 
   const storyboards = await sql`
-    SELECT id, title, sort_order, created_at, approved_at, approved_by, feedback_submitted_at,
-           client_submitted_version FROM storyboards
+    SELECT id, title, sort_order, created_at, approved_at, approved_by, approved_version,
+           feedback_submitted_at, client_submitted_version FROM storyboards
     WHERE project_id = ${project.id} ORDER BY sort_order, created_at
   `;
   const versions = await sql`
@@ -895,6 +915,9 @@ async function publicView(req, res) {
       return {
         id: sb.id, title: sb.title,
         approvedAt: sb.approved_at || null, approvedBy: sb.approved_by || null,
+        // Which draft that approval covers — the viewer locks that one and
+        // everything before it, and leaves any newer draft open (isDraftLocked).
+        approvedVersion: sb.approved_version ?? null,
         feedbackSubmittedAt: sb.feedback_submitted_at || null,
         versions: versions.filter(v => v.storyboard_id === sb.id && v.version_number <= submittedVer).map(mapVersion),
       };
@@ -950,14 +973,18 @@ async function approveStoryboard(req, res) {
   if (!storyboardId) return res.status(400).json({ error: 'storyboardId required' });
 
   const [storyboard] = await sql`
-    SELECT sb.id, sb.title, sb.approved_at, sb.project_id,
+    SELECT sb.id, sb.title, sb.approved_at, sb.approved_version, sb.client_submitted_version, sb.project_id,
            sp.title AS project_title, sp.client_name, sp.deal_id, sp.created_by
       FROM storyboards sb
       JOIN storyboard_projects sp ON sp.id = sb.project_id
      WHERE sb.id = ${storyboardId} AND sp.share_token = ${token}
   `;
   if (!storyboard) return res.status(404).json({ error: 'Not found' });
-  if (storyboard.approved_at) {
+  // The draft they're signing off is the newest one they've been given.
+  const approvingVersion = storyboard.client_submitted_version ?? null;
+  // Already approved — unless a newer draft has gone out since, which is a fresh
+  // round the client can approve in its own right.
+  if (isDraftLocked(approvingVersion ?? 0, storyboard)) {
     return res.status(200).json({ storyboardId, approvedAt: storyboard.approved_at, alreadyApproved: true });
   }
   // "Finalise and send revisions" — approve + submit feedback in one go.
@@ -965,6 +992,7 @@ async function approveStoryboard(req, res) {
     UPDATE storyboards
        SET approved_at = NOW(),
            approved_by = ${approvedBy},
+           approved_version = ${approvingVersion},
            feedback_submitted_at = COALESCE(feedback_submitted_at, NOW())
      WHERE id = ${storyboardId}
      RETURNING approved_at, approved_by, feedback_submitted_at
@@ -1175,6 +1203,14 @@ async function recordView(req, res) {
   return res.status(200).json({ ok: true });
 }
 
+// Is this draft closed to comments? Approval covers the draft the client signed
+// off and every earlier one; drafts uploaded since are a new round. Rows from
+// before approved_version existed fall back to locking the whole storyboard.
+function isDraftLocked(versionNumber, sb) {
+  if (!sb?.approved_at) return false;
+  return sb.approved_version == null || versionNumber <= sb.approved_version;
+}
+
 async function postComment(req, res) {
   const token = req.query.token ? String(req.query.token) : null;
   if (!token) return res.status(400).json({ error: 'token required' });
@@ -1210,7 +1246,7 @@ async function postComment(req, res) {
   // The version must belong to the project this share_token unlocks, and its
   // storyboard must not yet be approved.
   const [match] = await sql`
-    SELECT ver.id, ver.version_number, sb.approved_at, sb.client_submitted_version
+    SELECT ver.id, ver.version_number, sb.approved_at, sb.approved_version, sb.client_submitted_version
       FROM storyboard_versions ver
     JOIN storyboards sb ON sb.id = ver.storyboard_id
     JOIN storyboard_projects sp ON sp.id = ver.project_id
@@ -1221,8 +1257,11 @@ async function postComment(req, res) {
   if (match.version_number > (match.client_submitted_version ?? 0)) {
     return res.status(403).json({ error: 'This draft is not available for review.' });
   }
-  if (match.approved_at) {
-    return res.status(403).json({ error: 'This storyboard has been approved and is now locked.' });
+  // Approval locks the approved draft and everything before it. A later draft is
+  // a fresh round, so it stays open — approving v1 doesn't have to be undone to
+  // put v2 in front of them.
+  if (isDraftLocked(match.version_number, match)) {
+    return res.status(403).json({ error: 'This draft has been approved and is now locked.' });
   }
 
   // A reply's parent must be on the same version.
@@ -1261,7 +1300,8 @@ async function updateComment(req, res) {
   if (newText.length > 4000) return res.status(400).json({ error: 'comment too long' });
 
   const [match] = await sql`
-    SELECT sc.id, lower(sc.author_email) AS owner_email, sb.approved_at
+    SELECT sc.id, lower(sc.author_email) AS owner_email, sv.version_number,
+           sb.approved_at, sb.approved_version
       FROM storyboard_comments sc
       JOIN storyboard_versions sv ON sv.id = sc.version_id
       JOIN storyboards sb ON sb.id = sv.storyboard_id
@@ -1269,7 +1309,7 @@ async function updateComment(req, res) {
      WHERE sc.id = ${id} AND sp.share_token = ${token}
   `;
   if (!match) return res.status(404).json({ error: 'not found' });
-  if (match.approved_at) return res.status(403).json({ error: 'This storyboard has been finalised and is now locked.' });
+  if (isDraftLocked(match.version_number, match)) return res.status(403).json({ error: 'This draft has been finalised and is now locked.' });
   if (!match.owner_email || match.owner_email !== viewerEmail) {
     return res.status(403).json({ error: 'You can only edit your own comments.' });
   }
@@ -1292,7 +1332,8 @@ async function deleteComment(req, res) {
   if (!viewerEmail) return res.status(400).json({ error: 'viewerEmail required' });
 
   const [match] = await sql`
-    SELECT sc.id, lower(sc.author_email) AS owner_email, sb.approved_at
+    SELECT sc.id, lower(sc.author_email) AS owner_email, sv.version_number,
+           sb.approved_at, sb.approved_version
       FROM storyboard_comments sc
       JOIN storyboard_versions sv ON sv.id = sc.version_id
       JOIN storyboards sb ON sb.id = sv.storyboard_id
@@ -1300,7 +1341,7 @@ async function deleteComment(req, res) {
      WHERE sc.id = ${id} AND sp.share_token = ${token}
   `;
   if (!match) return res.status(404).json({ error: 'not found' });
-  if (match.approved_at) return res.status(403).json({ error: 'This storyboard has been finalised and is now locked.' });
+  if (isDraftLocked(match.version_number, match)) return res.status(403).json({ error: 'This draft has been finalised and is now locked.' });
   if (!match.owner_email || match.owner_email !== viewerEmail) {
     return res.status(403).json({ error: 'You can only delete your own comments.' });
   }
