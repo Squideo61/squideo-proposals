@@ -9,6 +9,7 @@ import { portalApi } from '../api.js';
 import { usePortal } from '../PortalContext.jsx';
 import { Card, SectionHeading, EmptyState, fmtGBP } from '../components.jsx';
 import { Clapperboard, CreditCard, FileText, Minus, Plus, Sparkles, Wallet } from 'lucide-react';
+import { LEAD_MAGNET } from '../../lib/leadMagnet.js';
 
 const MIN = 1;
 const MAX = 120;
@@ -117,7 +118,7 @@ export default function VideoCredit() {
             action={
               <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
                 <a className="btn" href="#/brief">Start a brief</a>
-                <a className="btn-ghost" href="#/course">Watch the crash course</a>
+                <a className="btn-ghost" href="#/course">Watch {LEAD_MAGNET.shortNoun}</a>
               </div>
             }
           />

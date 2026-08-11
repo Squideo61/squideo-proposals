@@ -8,7 +8,8 @@
       "Bash(pkill -f \"vite\")",
       "Bash(exit 0)",
       "Bash(npx vitest *)",
-      "Bash(npx vite *)"
+      "Bash(npx vite *)",
+      "PowerShell(Set-Location \"C:\\\\Users\\\\Adam Shelton\\\\Desktop\\\\squideo-web\"; npx tsc --noEmit 2>&1 | Select-Object -First 5; npm run build 2>&1 | Select-Object -Last 2; $c = Get-NetTCPConnection -LocalPort 3100 -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { $c.OwningProcess | Select-Object -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue } }; Start-Process -FilePath \"cmd\" -ArgumentList \"/c\",\"npx next start -p 3100\" -WindowStyle Hidden; \"serving\")"
     ]
   }
 }

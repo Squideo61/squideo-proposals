@@ -118,7 +118,7 @@ export function CourseTab() {
     <div style={{ maxWidth: 900 }}>
       <header style={{ marginBottom: 18 }}>
         <h2 style={{ margin: '0 0 4px', fontSize: 18, fontWeight: 700, color: BRAND.ink, display: 'flex', alignItems: 'center', gap: 9 }}>
-          <GraduationCap size={19} color={BRAND.blue} /> The Explainer Video Planning Crash Course
+          <GraduationCap size={19} color={BRAND.blue} /> Free 6-Min Video Guide
         </h2>
         <p style={{ margin: 0, fontSize: 12.5, color: BRAND.muted, lineHeight: 1.5 }}>
           Public page: <a href="/course" target="_blank" rel="noreferrer" style={{ color: BRAND.blue }}>

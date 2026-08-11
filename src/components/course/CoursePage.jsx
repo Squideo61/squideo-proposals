@@ -14,6 +14,7 @@ import { BRAND } from '../../theme.js';
 import { SQUIDEO_LOGO } from '../../defaults.js';
 import { storedAttribution } from '../../lib/attribution.js';
 import { MARKETING_CONSENT_TEXT, COURSE_EMAILS_NOTICE, consentRecord } from '../../lib/courseConsent.js';
+import { LEAD_MAGNET } from '../../lib/leadMagnet.js';
 
 const NAVY = BRAND.ink;
 const PALE = '#DCEEF7';
@@ -147,11 +148,11 @@ export function CoursePage({ track }) {
             margin: '0 0 14px', fontSize: 'clamp(28px, 5vw, 44px)', lineHeight: 1.12,
             fontWeight: 800, color: '#fff', letterSpacing: '-0.02em',
           }}>
-            {/* Breaks after "Planning" because that's how the name parses: the
-                [Explainer Video Planning] [Crash Course]. Splitting it anywhere
-                else reads as a course about explainer videos generally, which
-                is the ambiguity the word "Planning" was added to remove. */}
-            The Explainer Video Planning<br />Crash Course
+            {/* Word-for-word the button on squideo.com, so the page confirms
+                they clicked the right thing rather than making them work it
+                out. Breaks after "Free 6-Min" only on a narrow screen — see
+                the wrapper's clamp — because "Video Guide" is the noun. */}
+            {LEAD_MAGNET.name}
           </h1>
           <p style={{ margin: '0 auto', maxWidth: 560, fontSize: 16, lineHeight: 1.6, color: PALE }}>
             This is the same thinking we walk every client through before we start.

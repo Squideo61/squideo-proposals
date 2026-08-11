@@ -36,15 +36,16 @@ import Brief from './pages/Brief.jsx';
 import Partner from './pages/Partner.jsx';
 import DemoProject from './pages/DemoProject.jsx';
 import { sampleSeen, markSampleSeen } from './demo/store.js';
+import { LEAD_MAGNET } from '../lib/leadMagnet.js';
 
 const MAX_WIDTH = 1080;
 // The left rail, plus the gap to the content. The shell is widened by exactly
 // this much so the content column keeps the width every page was designed
 // against — otherwise adding the rail would have quietly narrowed every table
 // and player in the portal.
-// Wide enough for the longest label — "Planning crash course" at 14px — to sit
-// on one line. The shell max below grows by the same amount, so widening the
-// rail costs the content column nothing.
+// Wide enough for the longest label — "Partner Programme" at 14px — to sit on
+// one line. The shell max below grows by the same amount, so widening the rail
+// costs the content column nothing.
 const SIDEBAR_W = 224;
 const SIDEBAR_GAP = 26;
 const SHELL_MAX = MAX_WIDTH + SIDEBAR_W + SIDEBAR_GAP;
@@ -78,10 +79,10 @@ const NAV = [
   // empty, and an empty first screen is a bad first impression. A client with
   // live work reaches their projects in one more glance; a prospect who lands
   // on nothing may not come back at all.
-  // "Planning" is load-bearing, not decoration: without it the course reads as
-  // one about animating videos yourself, which is the opposite of who it's for.
-  // The rail is sized to fit it on one line — see SIDEBAR_W.
-  { view: 'course', label: 'Planning crash course', shortLabel: 'Course', hash: '#/course', Icon: GraduationCap, mobilePrimary: true },
+  // Named from LEAD_MAGNET so the rail, the landing page and the button on
+  // squideo.com can't drift apart. "Free" is dropped in here: they've already
+  // got it, and still selling it to someone who owns it reads badly.
+  { view: 'course', label: LEAD_MAGNET.navLabel, shortLabel: LEAD_MAGNET.navShort, hash: '#/course', Icon: GraduationCap, mobilePrimary: true },
   { view: 'brief', label: 'Brief Builder', shortLabel: 'Brief', hash: '#/brief', Icon: FileText, mobilePrimary: true },
   // Shown to everyone, badged until they've opened it once. It was prospect-only
   // and buried in an empty state, which meant the best thing in the portal was

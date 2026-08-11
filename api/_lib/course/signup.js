@@ -53,7 +53,7 @@ const SIGNUP_SOURCES = {
     invitedBy: 'system:course',
     consentSource: 'course_landing',
     tag: { slug: 'course-signup', label: 'Course signup', colour: '#2BB8E6' },
-    notify: { emoji: '🎓', noun: 'Crash course signup', verb: 'signed up for the crash course' },
+    notify: { emoji: '🎓', noun: 'Video guide signup', verb: 'signed up for the 6-Min Video Guide' },
   },
   brief: {
     companySource: 'brief',

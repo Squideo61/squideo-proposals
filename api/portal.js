@@ -959,10 +959,10 @@ async function seedSampleTourNotification(user) {
 const SIGNUP_LANDINGS = {
   course: {
     to: '#/course',
-    subject: 'Your Explainer Video Planning Crash Course is unlocked',
+    subject: 'Your Free 6-Min Video Guide is unlocked',
     html: (args) => courseCrashCourseHtml(args),
     textNew: `All eight videos are unlocked here: ${PORTAL_URL}#/course`,
-    textReturning: (loginUrl) => `You already have a Squideo account — sign in here to watch the course: ${loginUrl}`,
+    textReturning: (loginUrl) => `You already have a Squideo account — sign in here to watch the guide: ${loginUrl}`,
     activityKey: 'course.signup',
     schedule: scheduleCourseEmails,
   },

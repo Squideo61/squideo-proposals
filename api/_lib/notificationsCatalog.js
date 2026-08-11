@@ -156,7 +156,7 @@ export const NOTIFICATIONS = [
   },
   {
     key: 'course.signup',
-    label: 'Crash course signup',
+    label: 'Video guide signup',
     description: 'Someone gives us their email address for the crash course. Defaults to the bell only (which is what raises a desktop/phone push) rather than email — a lead magnet is meant to be high volume, and an inbox copy of each one stops being read.',
     audience: 'broadcast',
     group: 'Leads',

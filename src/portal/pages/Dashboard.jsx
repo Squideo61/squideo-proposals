@@ -10,6 +10,7 @@ import { Film, FolderOpen, Sparkles, Handshake, ChevronRight, Video, FileText, W
 import { portalApi } from '../api.js';
 import { DEMO_STAGES, demoConfigured } from '../demo/stages.js';
 import { demoProgress } from '../demo/store.js';
+import { LEAD_MAGNET } from '../../lib/leadMagnet.js';
 
 function BriefDraftCard({ draft }) {
   const when = draft.updatedAt ? new Date(draft.updatedAt) : null;
@@ -375,24 +376,24 @@ export default function Dashboard() {
               Your own projects appear here the moment a proposal is signed —{' '}
               <a href="#/brief" style={{ color: BRAND.blue, fontWeight: 600 }}>start a brief</a>
               {' or '}
-              <a href="#/course" style={{ color: BRAND.blue, fontWeight: 600 }}>watch the crash course</a> first.
+              <a href="#/course" style={{ color: BRAND.blue, fontWeight: 600 }}>watch {LEAD_MAGNET.shortNoun}</a> first.
             </div>
           </div>
         ) : projects.length === 0 ? (
           <Card>
-            {/* Most people seeing this arrived from the crash course and have
-                no project by definition — so lead with the thing they actually
+            {/* Most people seeing this arrived from the guide and have no
+                project by definition — so lead with the thing they actually
                 came for, and keep "request a video" as the quieter option. */}
             <EmptyState
               icon={<Film size={34} />}
               title="No live projects just yet"
-              body="When a proposal is signed your project appears here with live status, review links and downloads. In the meantime, the crash course is all yours."
+              body={`When a proposal is signed your project appears here with live status, review links and downloads. In the meantime, ${LEAD_MAGNET.shortNoun} is all yours.`}
               action={
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap' }}>
                   {/* Prospects already have the sample project offered above
                       in its own card — repeating it here just splits the eye. */}
                   {!isProspect && <a className="btn" href="#/demo">Take the sample project tour</a>}
-                  <a className="btn-ghost" href="#/course">Watch the crash course</a>
+                  <a className="btn-ghost" href="#/course">Watch {LEAD_MAGNET.shortNoun}</a>
                   <a className="btn-ghost" href="#/request">Request a video</a>
                 </div>
               }

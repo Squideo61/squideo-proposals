@@ -16,6 +16,7 @@ import { portalApi, mediaUrl } from '../api.js';
 import { usePortal } from '../PortalContext.jsx';
 import { Card, EmptyState, SectionHeading } from '../components.jsx';
 import { navigate } from '../PortalApp.jsx';
+import { LEAD_MAGNET } from '../../lib/leadMagnet.js';
 
 const HEARTBEAT_MS = 15000;
 
@@ -55,11 +56,11 @@ export default function Course({ slug }) {
       <SectionHeading>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
           <GraduationCap size={18} color={BRAND.blue} />
-          The Explainer Video Planning Crash Course
+          {LEAD_MAGNET.portalName}
         </span>
       </SectionHeading>
       <p style={{ margin: '-6px 0 16px', fontSize: 13, color: BRAND.muted, lineHeight: 1.55 }}>
-        Brief to Broadcast — everything we know about planning a video that works.
+        {LEAD_MAGNET.tagline}
       </p>
 
       <ProgressBar
