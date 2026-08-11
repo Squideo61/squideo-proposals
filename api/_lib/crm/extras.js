@@ -42,7 +42,13 @@ function dealVatPercent(dealVatRate) {
 // Alert Admins + Directors that an ad-hoc extra was logged on a deal (in-app
 // bell + desktop push; no email — these are frequent production-floor actions).
 // The creator is excluded. Best-effort; never fails the write.
-async function notifyExtraAdded({ dealId, dealTitle, description, amount, author, paymentType, invoiceNumber }) {
+//
+// On a deal with no signed proposal the same record is the SALE, not an addition
+// to one, and that's the more newsworthy of the two: money just came in on a job
+// finance has no proposal for. So it's announced as a sale, off the same key —
+// the audience and the "who needs to know about unbilled money" question are
+// identical, and splitting it would mean a second switch to keep in step.
+async function notifyExtraAdded({ dealId, dealTitle, description, amount, author, paymentType, invoiceNumber, isSale }) {
   try {
     await ensureExtraAddedNotificationDefault();
     const amountStr = '£' + (Number(amount) || 0).toFixed(2);
@@ -52,14 +58,17 @@ async function notifyExtraAdded({ dealId, dealTitle, description, amount, author
       : paymentType === 'po' ? 'raised as a PO quote'
       : paymentType === 'po_awaited' ? 'awaiting a purchase order'
       : paymentType === 'existing_invoice' ? `added to invoice ${invoiceNumber || ''}`.trim()
+      : isSale ? 'to invoice later'
       : 'added to the final invoice';
     await sendNotification('extra.added', {
       excludeEmails: author?.email ? [author.email] : null,
-      subject: `Extra charge added — ${title}`,
-      text: `${who} added an extra charge to ${title}: ${description} (${amountStr} ex-VAT) — ${route}.`,
+      subject: isSale ? `Sale recorded — ${title}` : `Extra charge added — ${title}`,
+      text: isSale
+        ? `${who} recorded a sale on ${title} (no proposal): ${description} (${amountStr} ex-VAT) — ${route}.`
+        : `${who} added an extra charge to ${title}: ${description} (${amountStr} ex-VAT) — ${route}.`,
       inApp: {
-        title: `Extra charge: ${amountStr} ex-VAT`,
-        body: `${who} · ${description} · ${route}`,
+        title: isSale ? `Sale recorded: ${amountStr} ex-VAT` : `Extra charge: ${amountStr} ex-VAT`,
+        body: `${who} · ${title} · ${description} · ${route}`,
         link: `#/deal/${dealId}`,
       },
       inAppOnly: true,
@@ -248,10 +257,18 @@ export async function extrasRoute(req, res, id, action, user) {
     if (amount == null || amount <= 0) return res.status(400).json({ error: 'A positive amount is required' });
 
     const [dealRow] = await sql`
-      SELECT d.id, d.title, d.vat_rate, d.po_number, c.name AS company_name
+      SELECT d.id, d.title, d.vat_rate, d.po_number, c.name AS company_name,
+             EXISTS (
+               SELECT 1 FROM signatures s
+                 JOIN proposals p ON p.id = s.proposal_id
+                WHERE p.deal_id = d.id
+             ) AS has_signature
         FROM deals d LEFT JOIN companies c ON c.id = d.company_id
        WHERE d.id = ${dealId}`;
     if (!dealRow) return res.status(404).json({ error: 'Deal not found' });
+    // Derived here rather than taken from the caller: it decides what the alert
+    // tells Admins and Directors happened, and the client shouldn't get a vote.
+    const isSale = !dealRow.has_signature;
     const vatPct = dealVatPercent(dealRow.vat_rate);
 
     // Always record the extra first (pending), then run the chosen billing
@@ -346,7 +363,7 @@ export async function extrasRoute(req, res, id, action, user) {
     // likewise stays pending, but shows in Purchase Orders until the client's PO
     // number arrives and it can be invoiced.
 
-    await notifyExtraAdded({ dealId, dealTitle: dealRow.title, description, amount, author: user, paymentType, invoiceNumber });
+    await notifyExtraAdded({ dealId, dealTitle: dealRow.title, description, amount, author: user, paymentType, invoiceNumber, isSale });
     const [row] = await sql`SELECT * FROM deal_extras WHERE id = ${newId}`;
     return res.status(201).json(serialiseExtra(row));
   }

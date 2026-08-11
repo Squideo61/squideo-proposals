@@ -60,8 +60,8 @@ export const NOTIFICATIONS = [
   },
   {
     key: 'extra.added',
-    label: 'Extra charge added',
-    description: 'A production manager logs an ad-hoc extra charge on a deal during production.',
+    label: 'Extra charge or sale recorded',
+    description: 'Someone logs an ad-hoc extra charge on a deal during production, or records a sale on a deal that has no proposal.',
     audience: 'broadcast',
     group: 'Payments',
     channel: 'finance',
