@@ -1108,11 +1108,17 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
           company={company}
           onClose={() => setChoosingProposal(false)}
           onCreate={() => { setChoosingProposal(false); onCreateProposal?.(dealId); }}
-          onLink={async (proposalId) => {
+          onLink={async (proposalId, movedFromDealId = null) => {
             try {
               await actions.linkProposalToDeal(proposalId, dealId);
+              // Moved off another deal: its cached page still shows the proposal
+              // (and its value), so refresh it and the pipeline behind it.
+              if (movedFromDealId) {
+                actions.loadDealDetail?.(movedFromDealId);
+                actions.refreshDeals?.();
+              }
               setChoosingProposal(false);
-              showMsg('Proposal linked');
+              showMsg(movedFromDealId ? 'Proposal moved to this deal' : 'Proposal linked');
             } catch (e) {
               showMsg(e?.message || 'Could not link proposal');
             }
@@ -3653,23 +3659,41 @@ function CreateOrLinkProposalModal({ deal, contact, company, onClose, onCreate, 
     return null;
   };
 
+  const matchesQuery = (p, q) => {
+    if (!q) return true;
+    const hay = `${p.clientName || ''} ${p.contactBusinessName || ''} ${p.proposalTitle || ''} ${formatProposalNumber(p._number) || ''}`.toLowerCase();
+    return hay.includes(q);
+  };
+
   const linkable = useMemo(() => {
     const q = query.trim().toLowerCase();
     return Object.entries(state.proposals || {})
       .map(([id, p]) => ({ id, ...p, _reason: null }))
       .filter((p) => !p.archived && (!p._dealId || p._dealId === 'deal_' + p.id))
       .map((p) => ({ ...p, _reason: suggestionReason(p) }))
-      .filter((p) => {
-        if (!q) return true;
-        const hay = `${p.clientName || ''} ${p.contactBusinessName || ''} ${p.proposalTitle || ''} ${formatProposalNumber(p._number) || ''}`.toLowerCase();
-        return hay.includes(q);
-      })
+      .filter((p) => matchesQuery(p, q))
       // Suggested first, then newest.
       .sort((a, b) => {
         if (!!a._reason !== !!b._reason) return a._reason ? -1 : 1;
         return proposalCreatedMs(b) - proposalCreatedMs(a);
       });
   }, [state.proposals, query, deal, contact, company]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Proposals that ARE attached, to some other real deal. They used to be
+  // filtered out silently, which reads as "the search is broken" when you're
+  // hunting for a proposal you know exists — the one thing you can't tell from
+  // an empty list is why. Only shown once you've searched, so the default view
+  // stays the short list of things you can just link.
+  const attachedElsewhere = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    return Object.entries(state.proposals || {})
+      .map(([id, p]) => ({ id, ...p }))
+      .filter((p) => !p.archived && p._dealId && p._dealId !== 'deal_' + p.id && p._dealId !== deal?.id)
+      .filter((p) => matchesQuery(p, q))
+      .sort((a, b) => proposalCreatedMs(b) - proposalCreatedMs(a))
+      .slice(0, 10);
+  }, [state.proposals, query, deal]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const renderRow = (p) => {
     const num = formatProposalNumber(p._number);
@@ -3706,6 +3730,56 @@ function CreateOrLinkProposalModal({ deal, contact, company, onClose, onCreate, 
     );
   };
 
+  // A proposal already on another deal. Moving an unsigned one is just a
+  // re-point (the server re-parents it and tidies up any shadow deal it left).
+  // A SIGNED one carries the money — the old deal's committed value, order
+  // summary and commission all read from it — so that stays a decision to make
+  // deliberately, not a click in a search box.
+  const renderAttachedRow = (p) => {
+    const num = formatProposalNumber(p._number);
+    const signed = !!p._signature;
+    const price = p.totalExVat ?? p.basePrice;
+    const onDeal = state.deals?.[p._dealId];
+    const dealName = onDeal?.title || 'another deal';
+    return (
+      <button
+        key={p.id}
+        disabled={signed || !!linkingId}
+        title={signed
+          ? 'Signed proposals stay with the deal they were signed on — that deal’s value, order and commission all come from it.'
+          : `Move this proposal from “${dealName}” onto this deal`}
+        onClick={() => {
+          if (signed || linkingId) return;
+          if (!window.confirm(`“${p.clientName || p.contactBusinessName || 'This proposal'}” is on ${onDeal?.title ? `“${dealName}”` : 'another deal'}.\n\nMove it onto this deal instead?`)) return;
+          setLinkingId(p.id);
+          onLink(p.id, p._dealId);
+        }}
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+          width: '100%', padding: '8px 10px', background: BRAND.paper,
+          border: '1px solid ' + BRAND.border, borderRadius: 6,
+          cursor: signed || linkingId ? 'default' : 'pointer', textAlign: 'left', fontFamily: 'inherit',
+          opacity: signed ? 0.65 : (linkingId && linkingId !== p.id ? 0.5 : 1),
+        }}
+      >
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            {num ? <span style={{ color: BRAND.muted, fontSize: 11 }}>{num}</span> : null}
+            <span>{p.clientName || p.contactBusinessName || 'Untitled'}</span>
+            {signed ? <Badge color="green">Signed</Badge> : <Badge color="grey">Unsigned</Badge>}
+          </div>
+          <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>
+            On {onDeal?.title ? `“${dealName}”` : 'another deal'}
+            {price != null ? ` · ${formatGBP(price)} ex VAT` : ''}
+          </div>
+        </div>
+        <span style={{ fontSize: 12, color: signed ? BRAND.muted : BRAND.blue, fontWeight: 600, whiteSpace: 'nowrap' }}>
+          {linkingId === p.id ? 'Moving…' : (signed ? 'Signed' : 'Move here')}
+        </span>
+      </button>
+    );
+  };
+
   const suggested = linkable.filter((p) => p._reason);
   const others = linkable.filter((p) => !p._reason);
 
@@ -3730,7 +3804,7 @@ function CreateOrLinkProposalModal({ deal, contact, company, onClose, onCreate, 
         style={{ width: '100%', marginBottom: 10, boxSizing: 'border-box' }}
       />
       <div style={{ maxHeight: 300, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {linkable.length === 0 && (
+        {linkable.length === 0 && attachedElsewhere.length === 0 && (
           <div style={{ fontSize: 13, color: BRAND.muted, fontStyle: 'italic', padding: '8px 2px' }}>
             {query.trim() ? 'No matching proposals.' : 'No proposals available to link.'}
           </div>
@@ -3747,6 +3821,12 @@ function CreateOrLinkProposalModal({ deal, contact, company, onClose, onCreate, 
           </div>
         )}
         {others.map(renderRow)}
+        {attachedElsewhere.length > 0 && (
+          <div style={{ fontSize: 12, fontWeight: 600, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, padding: (suggested.length || others.length) ? '8px 2px 2px' : '2px 2px' }}>
+            Already on another deal
+          </div>
+        )}
+        {attachedElsewhere.map(renderAttachedRow)}
       </div>
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 18 }}>
