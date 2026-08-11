@@ -61,7 +61,7 @@ const TABS = [
   { key: 'overview', label: 'Dashboard', icon: LayoutDashboard },
   { key: 'reports', label: 'Reports', icon: BarChart3 },
   { key: 'leads', label: 'Leads', icon: MailQuestion },
-  { key: 'course', label: 'Course', icon: GraduationCap },
+  { key: 'course', label: 'Video guide', icon: GraduationCap },
   { key: 'portal', label: 'Portal', icon: KeyRound },
   { key: 'search', label: 'Search', icon: Search },
   { key: 'traffic', label: 'Traffic', icon: Globe },

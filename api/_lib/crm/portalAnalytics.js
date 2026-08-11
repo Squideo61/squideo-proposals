@@ -8,7 +8,7 @@
 //     and how many of them return. Date-ranged, aggregated, nobody named.
 //   · Admin/contact "portal activity" — what one client did, in detail.
 //
-// The route split is the whole point. A crash-course signup creates its own
+// The route split is the whole point. A video-guide signup creates its own
 // account off a marketing page; an invited client is handed one by a producer
 // after a deal is signed. Lumping them together would let invite volume (which
 // tracks sales) masquerade as marketing performance.

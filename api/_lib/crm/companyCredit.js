@@ -3,7 +3,7 @@
 // The default position is the commercial one: credit is the rung AFTER a first
 // project — you buy production time in bulk once a style exists to repeat — so
 // an org with nothing in production doesn't see £/min. That covers both a
-// `prospect` (a crash-course signup we've never scoped anything for) and a
+// `prospect` (a video-guide signup we've never scoped anything for) and a
 // company we've only sent a proposal to. Showing it would anchor every quote we
 // sent them later, and undercut the one they're currently reading.
 //
@@ -41,7 +41,7 @@ export function ensureCompanyCreditColumns() {
 //
 // `hasProject` is what "they're a client" actually means here: a deal of theirs
 // has entered production. NOT "we've sent them a proposal" — a company we're
-// still quoting is a prospect whether or not they arrived via the crash course,
+// still quoting is a prospect whether or not they arrived via the video guide,
 // and handing them £/min mid-negotiation undercuts the proposal they're sitting
 // on. See hasProjectFor() for how it's resolved.
 export function creditVisibleFor({ creditEnabled = null, prospect = false, hasProject = false } = {}) {

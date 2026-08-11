@@ -107,7 +107,7 @@ export function ensureCourseTables() {
       await sql`CREATE INDEX IF NOT EXISTS course_signups_user_idx ON course_signups(portal_user_id)`;
     });
 
-    // More than one public door writes here now — the crash course and the
+    // More than one public door writes here now — the video guide and the
     // brief builder — so a row records which one it came through.
     //
     // This table stays the single home for self-serve signups rather than

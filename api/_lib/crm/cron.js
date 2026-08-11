@@ -1173,7 +1173,7 @@ async function cronIntroCallReminders(req, res) {
   return res.status(200).json({ ok: true, candidates: bookings.length, emailed, tasksCreated });
 }
 
-// ═════════════════ crash-course nudges ═════════════════
+// ═════════════════ video-guide nudges ═════════════════
 // Daily. Sends the next due nudge to anyone still working through the course.
 //
 // Every gate is re-checked HERE, at send time, not when the row was scheduled
@@ -1185,7 +1185,7 @@ export async function cronCourseNudges(req, res) {
   await ensureSuppressionTable();
 
   // Off by default so the sequence can't start sending the moment it deploys.
-  // Turn it on in Admin → Crash course when the copy has been read.
+  // Turn it on in Admin → Video guide when the copy has been read.
   const [cfg] = await sql`SELECT course_emails FROM settings WHERE id = 1`.catch(() => []);
   const config = cfg?.course_emails || {};
   const force = req?.query?.force === '1';

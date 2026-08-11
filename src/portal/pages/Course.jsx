@@ -1,4 +1,4 @@
-// The Explainer Video Planning Crash Course, inside the portal.
+// The Free 6-Min Video Guide, inside the portal.
 //
 // Every signed-in portal user sees all eight videos — real clients and course
 // signups alike. There's nothing org-scoped here, so no company switcher

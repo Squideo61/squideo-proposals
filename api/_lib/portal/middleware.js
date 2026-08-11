@@ -145,7 +145,7 @@ export async function requirePortalAuth(req, res) {
       id: m.company_id,
       name: m.company_name,
       logoUrl: m.has_logo ? portalLogoPath(m.company_id, logoVersion(m.logo_updated_at)) : null,
-      // A crash-course signup gets a portal account and a `prospect` org, but
+      // A video-guide signup gets a portal account and a `prospect` org, but
       // isn't a client. The portal uses this to decide what the rate card is
       // shown to: publishing £/min to someone we haven't scoped anything for
       // anchors every quote we send them afterwards.

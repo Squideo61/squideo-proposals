@@ -1,4 +1,4 @@
-// Admin → Crash course. Manage the 8 videos of The Explainer Video Crash
+// Admin → Video guide. Manage the 8 videos of The Explainer Video Crash
 // Course: upload each one, pick its thumbnail, write the copy, and publish.
 //
 // NAMING: the schema and the code say "module" (course_modules, moduleNumber);

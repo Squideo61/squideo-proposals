@@ -1,4 +1,4 @@
-// Admin CRUD for The Explainer Video Planning Crash Course (Admin → Crash course).
+// Admin CRUD for the Free 6-Min Video Guide (Admin → Video guide).
 // Gated on settings.manage — it's a workspace-wide marketing asset, not
 // per-deal content.
 //

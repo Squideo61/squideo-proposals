@@ -3,7 +3,7 @@
 //
 // Two decisions shape what's shown:
 //
-// A signup is split by ROUTE — a crash-course signup created its own account
+// A signup is split by ROUTE — a video-guide signup created its own account
 // off a marketing page; an invited client was handed one by a producer after a
 // deal was signed. Only the first is marketing's. Reporting one number would
 // let invite volume, which tracks sales, read as marketing performance.

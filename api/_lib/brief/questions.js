@@ -9,7 +9,7 @@
 // Derived from Squideo's existing "Video Brief Template" PDF, restructured:
 //   · The PDF's "Your Details" section is gone. Name, email, phone, company and
 //     website are all on the account already — five fields removed for free.
-//   · Questions carry `why`, tied to the crash course where relevant. Someone
+//   · Questions carry `why`, tied to the video guide where relevant. Someone
 //     who has watched video 2 recognises the one-message rule and answers it
 //     properly; someone who hasn't gets taught it at the moment it matters.
 //   · Placement is asked BEFORE length, because length is a consequence of

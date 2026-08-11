@@ -111,7 +111,7 @@ function StageCard({ stage, config, progress }) {
           // The visitor gets a plain "not yet"; the fix lives in the title so
           // whoever notices it internally knows where to go.
           <span
-            title="Admin → Crash course → Sample project"
+            title="Admin → Video guide → Sample project"
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 13px',
               borderRadius: 8, background: '#F4F7F9', border: `1px solid ${BRAND.border}`,
@@ -481,7 +481,7 @@ function NotSetUp({ what }) {
   return (
     <div style={{ padding: 40, textAlign: 'center', color: BRAND.muted, fontSize: 14 }}>
       The sample {what} hasn't been set up yet.<br />
-      <span style={{ fontSize: 13 }}>Admin → Crash course → Sample project.</span>
+      <span style={{ fontSize: 13 }}>Admin → Video guide → Sample project.</span>
     </div>
   );
 }

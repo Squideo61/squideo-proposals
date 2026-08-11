@@ -15,7 +15,7 @@
 // put a fake company in Finance, the pipeline and the staff activity feed.
 // Nothing here touches the database at all.
 //
-// The video and the storyboard PDF are both configured in Admin → Crash course,
+// The video and the storyboard PDF are both configured in Admin → Video guide,
 // so Ben's explainer can be re-recorded and the sample storyboard swapped
 // without a deploy.
 

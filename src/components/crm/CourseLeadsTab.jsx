@@ -1,4 +1,4 @@
-// Marketing → Course. Who signed up for the crash course, how far they got,
+// Marketing → Video guide. Who signed up for the video guide, how far they got,
 // and which of them is worth a call today.
 //
 // The commercially useful output of this whole feature is the hot list. A

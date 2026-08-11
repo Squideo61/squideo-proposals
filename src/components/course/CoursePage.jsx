@@ -1,4 +1,4 @@
-// The public landing page for The Explainer Video Planning Crash Course.
+// The public landing page for the Free 6-Min Video Guide.
 //
 // The whole conversion strategy is the order of this page: module 1 plays
 // immediately, with no form anywhere above it. The signup only appears once

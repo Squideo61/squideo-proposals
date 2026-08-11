@@ -1,4 +1,4 @@
-// The crash-course nudge sequence: schedule, copy, and the gates that decide
+// The video-guide nudge sequence: schedule, copy, and the gates that decide
 // at SEND time whether each one still makes sense.
 //
 // Every gate is re-evaluated when the cron runs, never when the row is written.
@@ -130,7 +130,7 @@ const esc = (s = '') => String(s).replace(/[&<>"']/g, (c) => ({
 
 const firstName = (name) => (name ? String(name).trim().split(/\s+/)[0] : '');
 
-function shell(inner, unsubscribeUrl, heading = 'Crash Course') {
+function shell(inner, unsubscribeUrl, heading = '6-Min Video Guide') {
   return `<!doctype html>
 <html><body style="margin:0;padding:0;background:#FAFBFC;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#0F2A3D;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#FAFBFC;padding:32px 16px;">
@@ -159,12 +159,12 @@ const TEMPLATES = {
   nudge_1: (ctx) => ({
     subject: ctx.videosDone > 0
       ? `You stopped after video ${ctx.videosDone}`
-      : 'Your crash course is still waiting',
+      : 'Your video guide is still waiting',
     inner: `
       <p style="margin:0 0 14px;">Hi${ctx.name ? ' ' + esc(ctx.name) : ''},</p>
       <p style="margin:0 0 14px;">${ctx.videosDone > 0
         ? `You got ${ctx.videosDone} video${ctx.videosDone === 1 ? '' : 's'} in, which is further than most people manage.`
-        : 'You signed up for the crash course but haven\'t started it yet.'}</p>
+        : 'You signed up for the video guide but haven\'t started it yet.'}</p>
       <p style="margin:0 0 18px;">${ctx.nextTitle
         ? `Next up is <strong>${esc(ctx.nextTitle)}</strong> — it's about 45 seconds.`
         : 'The whole thing is under six minutes.'}</p>
@@ -196,7 +196,7 @@ const TEMPLATES = {
     subject: 'Want us to sanity-check your brief?',
     inner: `
       <p style="margin:0 0 14px;">Hi${ctx.name ? ' ' + esc(ctx.name) : ''},</p>
-      <p style="margin:0 0 14px;">You've been through the crash course, so you already know what a good
+      <p style="margin:0 0 14px;">You've been through the video guide, so you already know what a good
         brief looks like. If you've got one in progress, we're happy to read it and tell you
         what we'd push back on — fifteen minutes, no pitch.</p>
       <p style="margin:0 0 14px;">We do this because a well-briefed project is easier for everyone,

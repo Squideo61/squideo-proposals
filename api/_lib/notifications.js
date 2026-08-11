@@ -339,7 +339,7 @@ export async function ensurePoReceivedNotificationDefault() {
 // po_provided + partner_interest ← quote_request.new; voiceover_selected ←
 // project.good_to_go (bell-only). Guarded to run at most once per warm instance.
 let portalDefaultsReady = false;
-// Crash-course signups. On for whoever already receives new quote requests —
+// Video-guide signups. On for whoever already receives new quote requests —
 // it's the same job (a stranger just raised their hand), so the same people
 // should hear about it without anyone configuring a second list.
 //

@@ -110,7 +110,7 @@ const NAV = [
 // end up hidden in one and visible in the other.
 //
 // `video-credit` is the rate card, and it belongs to clients: credit is the rung
-// AFTER a first project, when a style exists to repeat. A crash-course signup
+// AFTER a first project, when a style exists to repeat. A video-guide signup
 // has a `prospect` org and shouldn't be shown £/min before we've scoped
 // anything — that number would anchor every quote they get afterwards. The
 // real enforcement is CLIENT_ONLY in api/portal.js; this is the door.

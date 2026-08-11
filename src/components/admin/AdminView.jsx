@@ -29,7 +29,7 @@ const TABS = [
   { id: 'intro-calls',   label: 'Intro call rules', icon: CalendarClock, perm: 'settings.manage' },
   { id: 'proposals', label: 'Proposals', icon: FileText, perm: 'settings.manage' },
   { id: 'voiceovers', label: 'Voiceovers', icon: Mic, perm: ['voiceovers.manage', 'settings.manage'] },
-  { id: 'course', label: 'Crash course', icon: GraduationCap, perm: 'settings.manage' },
+  { id: 'course', label: 'Video guide', icon: GraduationCap, perm: 'settings.manage' },
   { id: 'task-reminders', label: 'Task reminders', icon: BellRing, perm: 'settings.manage' },
   { id: 'demo', label: 'Testing', icon: FlaskConical, perm: 'settings.manage' },
 ];

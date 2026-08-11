@@ -8,7 +8,7 @@
 // files, and reading a 150MB module into memory would blow the function.
 //
 // Callers: api/portal.js (library thumbnails) and api/_lib/crm/course.js
-// (Admin → Crash course thumbnails).
+// (Admin → Video guide thumbnails).
 
 export async function streamBlob(req, res, url, mimeType) {
   const headers = {};

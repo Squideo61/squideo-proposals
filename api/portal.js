@@ -172,7 +172,7 @@ const MANAGE_BLOCKED = new Set([
 
 // ═══ THE RATE CARD IS FOR CLIENTS, NOT PROSPECTS ═════════════════════════════
 // Video credit is the rung AFTER a first project: you buy production time in
-// bulk once a style exists to repeat. Showing £/min to a crash-course signup
+// bulk once a style exists to repeat. Showing £/min to a video-guide signup
 // we've never scoped anything for anchors every quote we send them afterwards
 // — they'll read a bespoke price as a mark-up on a number they already know.
 //
@@ -613,7 +613,7 @@ export default async function handler(req, res) {
 //
 // logPortalActivity no-ops without a portal_user_id, so a staff preview or
 // manage session silently records nothing: the client's activity stays theirs.
-// 'course' is deliberately absent. The crash course reports itself when a video
+// 'course' is deliberately absent. The video guide reports itself when a video
 // is FINISHED (course.completed_video), which is the only part of it worth
 // knowing; logging every visit to the page on top of that told us a client had
 // been busy when all they'd done was reload.
@@ -646,7 +646,7 @@ async function trackRoute(req, res, user) {
   return res.status(200).json({ ok: true });
 }
 
-// ═════════════════════════ crash course ═════════════════════════
+// ═════════════════════════ video guide ═════════════════════════
 // Every signed-in portal user gets all eight videos — clients and course
 // signups alike. There is nothing org-scoped here, which is why it needs no
 // resolveCompanyId: the entitlement IS having a session.
@@ -936,7 +936,7 @@ async function seedSampleTourNotification(user) {
 // The only account creation in the product without an invite, and therefore the
 // one public door — written defensively in api/_lib/course/signup.js.
 //
-// Two lead magnets arrive here: the crash course and the brief builder. They
+// Two lead magnets arrive here: the video guide and the brief builder. They
 // differ only in where they land someone and what the email says, so they share
 // a handler; everything genuinely per-source lives in SIGNUP_SOURCES.
 //
@@ -1025,7 +1025,7 @@ async function selfServeSignup(req, res, body, source) {
       loginToken = await issueLoginToken(result.user.id, 'magic_link', 15).catch(() => null);
     }
     // Queue this door's nudge series. Nothing sends until the cron is enabled in
-    // Admin → Crash course, and every step re-checks its gates at send time.
+    // Admin → Video guide, and every step re-checks its gates at send time.
     await landing.schedule(result.signupId, result.user.email);
     // Best-effort: a failed welcome email must not cost them the account they
     // just created and are already signed in to.
@@ -1978,7 +1978,7 @@ function blobRedirect(res, url, wantDownload) {
 
 // streamBlob (the Range-passthrough relay used where a 302 won't do, because a
 // canvas capture needs a same-origin video) now lives in api/_lib/blobStream.js
-// — Admin → Crash course needs the same thing for its thumbnails.
+// — Admin → Video guide needs the same thing for its thumbnails.
 
 async function downloadRoute(req, res, user) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
@@ -1992,7 +1992,7 @@ async function downloadRoute(req, res, user) {
   // Only a real download counts. Serving bytes is not the same as someone
   // saving a file: a poster is a thumbnail, stream=1 is the thumbnail picker,
   // inline=1 is a preview — and a 302 to a video the player is simply PLAYING
-  // is not a download either. That last one is why every crash-course video
+  // is not a download either. That last one is why every video-guide video
   // used to appear in the log as "Downloaded a file".
   //
   // So each branch below notes its own download once it knows what the file
@@ -2028,7 +2028,7 @@ async function downloadRoute(req, res, user) {
     return blobRedirect(res, item.blob_url, wantDownload);
   }
 
-  // A crash-course video. No org check: the course is the same eight videos for
+  // A video-guide video. No org check: the course is the same eight videos for
   // every account, and having ANY live portal session is the entitlement. That
   // is exactly what the signup buys, and it's why this can't live on the public
   // /api/course endpoint, which serves only the free ones.
@@ -2828,10 +2828,10 @@ async function createPortalQuoteRequest({
   const id = crypto.randomUUID();
   const createdAt = new Date();
 
-  // A crash-course signup gets a portal account and a `prospect` org, but they
+  // A video-guide signup gets a portal account and a `prospect` org, but they
   // are NOT a client — so they aren't owed the 10% portal discount, and the
   // team alert must not tell sales they are. Stamping lead_magnet at the same
-  // time is what makes "from the crash course: N leads · £X signed" countable;
+  // time is what makes "from the video guide: N leads · £X signed" countable;
   // it's a separate dimension from attr_channel, which still records how they
   // originally found us.
   const [origin] = await sql`
@@ -2864,7 +2864,7 @@ async function createPortalQuoteRequest({
   };
   // Attribution follows the PERSON, not the form.
   //
-  // Someone who clicked an ad, took the crash course and came back a fortnight
+  // Someone who clicked an ad, took the video guide and came back a fortnight
   // later to ask for a quote is still that ad's conversion — but the portal is
   // on app.squideo.com and the ad landed them on squideo.com, so nothing in the
   // browser (cookie, localStorage, referrer) survives the hop. track.js can't
@@ -2939,8 +2939,8 @@ async function createPortalQuoteRequest({
   // it deserves a subject line that says so — it's the difference between "get
   // to this today" and "get to this this week".
   const leadLabel = briefId
-    ? (leadMagnet ? 'completed brief (crash course)' : 'completed video brief')
-    : (leadMagnet ? 'crash-course lead'
+    ? (leadMagnet ? 'completed brief (video guide)' : 'completed video brief')
+    : (leadMagnet ? 'video-guide lead'
                   : (discount ? 'portal quote request (10% discount)' : 'portal quote request'));
 
   // Volume is the signal that decides whether this is one project or the start
@@ -2980,7 +2980,7 @@ async function createPortalQuoteRequest({
         title: subject,
         body: [qr.company, qr.budget, qr.timeline, volumeNote,
                briefId ? 'Full brief' : null,
-               leadMagnet ? 'Crash course' : (discount ? 'Portal · 10% discount' : 'Portal'),
+               leadMagnet ? 'Video guide' : (discount ? 'Portal · 10% discount' : 'Portal'),
                useCredit ? 'has credit to draw down' : null].filter(Boolean).join(' · '),
         link: '#/quote-requests',
       },
@@ -3715,7 +3715,7 @@ async function partnerRoute(req, res, user) {
     sql`SELECT partner_video FROM settings WHERE id = 1`.catch(() => []),
   ]);
 
-  // Set in Admin → Crash course. Null until then, and the page simply omits the
+  // Set in Admin → Video guide. Null until then, and the page simply omits the
   // player rather than showing a broken frame.
   const video = cfg?.partner_video?.url
     ? { url: cfg.partner_video.url, title: cfg.partner_video.title || null }

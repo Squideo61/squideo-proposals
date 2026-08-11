@@ -92,7 +92,7 @@ describe('copy', () => {
 
   it('brands the shell for the sequence it belongs to', () => {
     expect(buildNudgeEmail('brief_1', ctx).html).toContain('Video Brief');
-    expect(buildNudgeEmail('nudge_1', { ...ctx, videosDone: 2 }).html).toContain('Crash Course');
+    expect(buildNudgeEmail('nudge_1', { ...ctx, videosDone: 2 }).html).toContain('6-Min Video Guide');
   });
 
   it('tells someone how far in they actually are', () => {

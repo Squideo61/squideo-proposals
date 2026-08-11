@@ -66,7 +66,7 @@ export function portalWelcomeHtml({ clientName, projectTitle, inviteUrl, logoUrl
   return shell(inner, logoUrl);
 }
 
-// The Explainer Video Planning Crash Course welcome.
+// The Free 6-Min Video Guide welcome.
 //
 // Two shapes from one template. A brand-new signup is ALREADY signed in by the
 // time this lands — the email is a bookmark, not a step, so it must not read
@@ -77,12 +77,12 @@ export function courseCrashCourseHtml({ name, loginUrl = null, returning = false
   const url = loginUrl || `${PORTAL_URL}#/course`;
   const inner = returning ? `
     <h2 style="margin:0 0 12px;font-size:19px;font-weight:700;">You already have an account${name ? ', ' + escapeHtml(name) : ''}</h2>
-    <p style="margin:0 0 14px;">Good news — that means the crash course is already waiting for you. All eight videos, unlocked.</p>
+    <p style="margin:0 0 14px;">Good news — that means the video guide is already waiting for you. All eight videos, unlocked.</p>
     <p style="margin:0 0 18px;">${ctaButton(url, 'Sign in and watch')}</p>
     <p style="margin:0 0 6px;font-size:12px;color:#6B7785;">This link works once and expires in 15 minutes.</p>
   ` : `
     <h2 style="margin:0 0 12px;font-size:19px;font-weight:700;">You're in${name ? ', ' + escapeHtml(name) : ''} 🎬</h2>
-    <p style="margin:0 0 14px;">All eight videos of <strong>The Explainer Video Planning Crash Course</strong> are unlocked — about six minutes end to end, so you could be done before your coffee is.</p>
+    <p style="margin:0 0 14px;">All eight videos of the <strong>Free 6-Min Video Guide</strong> are unlocked — about six minutes end to end, so you could be done before your coffee is.</p>
     <p style="margin:0 0 14px;">You're already signed in on the device you signed up on. This email is just so you can find your way back.</p>
     <p style="margin:0 0 18px;">${ctaButton(url, 'Watch the course')}</p>
     <p style="margin:0 0 14px;">While you're in there, have a proper look round — it's the same portal our clients use to review storyboards, leave timestamped feedback on drafts and download finished videos.</p>
@@ -91,7 +91,7 @@ export function courseCrashCourseHtml({ name, loginUrl = null, returning = false
   return shell(inner, logoUrl);
 }
 
-// Someone came in through the brief builder rather than the crash course. The
+// Someone came in through the brief builder rather than the video guide. The
 // email has one job: get them back to a half-finished brief. That is the whole
 // reason the builder exists instead of a downloadable template — an abandoned
 // document is invisible, an abandoned brief is a warm lead we can nudge.
@@ -107,7 +107,7 @@ export function briefBuilderHtml({ name, loginUrl = null, returning = false, log
     <p style="margin:0 0 14px;">Answer what you can — we can work from as little as a list of key points, and it saves as you type, so you can stop halfway and come back.</p>
     <p style="margin:0 0 14px;">You're already signed in on the device you started on. This email is just so you can find your way back.</p>
     <p style="margin:0 0 18px;">${ctaButton(url, 'Open my brief')}</p>
-    <p style="margin:0 0 14px;">There's also a short planning crash course in there if you'd rather think it through first — about six minutes end to end.</p>
+    <p style="margin:0 0 14px;">There's also a short video guide in there if you'd rather think it through first — about six minutes end to end.</p>
     <p style="margin:0;font-size:12px;color:#6B7785;">No password needed. If you ever get signed out, ask for a sign-in link on the portal page.</p>
   `;
   return shell(inner, logoUrl);

@@ -192,9 +192,9 @@ export async function portalTimeline({ companyId = null, dealId = null, limit = 
 const ACTIVITY_LABELS = {
   login: 'Signed in',
   download: 'Downloaded a file',
-  'course.signup': 'Signed up for the crash course',
+  'course.signup': 'Signed up for the video guide',
   'course.completed_video': 'Watched a course video',
-  'course.completed': 'Finished the whole crash course',
+  'course.completed': 'Finished the whole video guide',
   'brief.signup': 'Came in through the brief builder',
   'brief.submitted': 'Sent us a completed brief',
   'demo.commented': 'Left a comment in the sample project',
@@ -206,7 +206,7 @@ const ACTIVITY_LABELS = {
 // "finished a stage" doesn't.
 const DEMO_STAGE_LABEL = { storyboard: 'storyboard', video: 'video review' };
 
-// The crash course reports itself once per video, when the video is finished.
+// The video guide reports itself once per video, when the video is finished.
 //
 // Opening the course page and fetching the video file are both plumbing: a
 // client who presses play, scrubs back and reloads has done one thing, not
@@ -243,7 +243,7 @@ const VIEW_LABELS = {
   kickoff: 'Opened the kick-off booking',
   script: 'Opened script & visual direction',
   request: 'Opened the new-video request',
-  course: 'Watched the crash course',
+  course: 'Watched the video guide',
   brief: 'Worked on their video brief',
   'video-credit': 'Looked at video credit',
   partner: 'Read about the Partner Programme',
@@ -329,7 +329,7 @@ export async function portalPresence(portalUserId, { limit = 40, scan = 300 } = 
 }
 
 // The two things a client does in the portal that leave no trace on a deal:
-// watch the crash course, and fill in a brief. Both are early signals — they
+// watch the video guide, and fill in a brief. Both are early signals — they
 // happen before there's anything to transact — so they need reporting on their
 // own rather than waiting to show up as a quote request.
 export async function portalEngagement(portalUserId) {
@@ -403,7 +403,7 @@ export async function portalActiveUsers({ days = 30, companyId = null, limit = 5
   `.catch(() => []);
   if (!rows.length) return [];
 
-  // Course progress is the crash-course funnel's engagement signal, and it lives
+  // Course progress is the video-guide funnel's engagement signal, and it lives
   // on its own table. Best-effort: a missing table must not empty the list.
   const ids = rows.map((r) => r.id);
   const course = await sql`

@@ -23,12 +23,12 @@ describe('creditVisibleFor — the default rule', () => {
   });
 
   it('hides it from a company that has only been sent a proposal', () => {
-    // The case this rule was tightened for: not a crash-course prospect, but
+    // The case this rule was tightened for: not a video-guide prospect, but
     // not a client either — nothing of theirs has entered production.
     expect(creditVisibleFor({ prospect: false, hasProject: false })).toBe(false);
   });
 
-  it('hides it from a crash-course prospect', () => {
+  it('hides it from a video-guide prospect', () => {
     expect(creditVisibleFor({ prospect: true, hasProject: false })).toBe(false);
   });
 

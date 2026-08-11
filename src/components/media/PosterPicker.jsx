@@ -7,7 +7,7 @@
 // (the portal library uses its download route's &stream=1 relay) or the capture
 // throws a security error on toDataURL.
 //
-// Used by the portal library (manage mode) and by Admin → Crash course.
+// Used by the portal library (manage mode) and by Admin → Video guide.
 // Storage is the caller's business: `onSave` receives a base64 JPEG data URL,
 // or null when the admin clears the thumbnail.
 

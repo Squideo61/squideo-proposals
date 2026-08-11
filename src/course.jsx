@@ -1,5 +1,5 @@
 // Entry point for /course — the public landing page for The Explainer Video
-// Crash Course. Its own Vite bundle (like /quote and /contact) so an anonymous
+// Video Guide. Its own Vite bundle (like /quote and /contact) so an anonymous
 // visitor never downloads the CRM or the authenticated portal.
 //
 // This page is always top-level (Duda hard-links to it rather than iframing —

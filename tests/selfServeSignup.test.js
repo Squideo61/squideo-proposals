@@ -1,4 +1,4 @@
-// Two public doors now create portal accounts: the crash course and the brief
+// Two public doors now create portal accounts: the video guide and the brief
 // builder. They share one defensively-written signup, so what's pinned here is
 // the part that differs — and the part that must NOT.
 //

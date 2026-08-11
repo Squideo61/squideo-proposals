@@ -52,7 +52,7 @@ export function publicModule(row) {
   };
 }
 
-// The staff-facing shape (Admin → Crash course). Carries the blob URL because
+// The staff-facing shape (Admin → Video guide). Carries the blob URL because
 // the caller is an authenticated admin, and the upload/replace UI needs to know
 // whether a file is actually attached.
 export function adminModule(row) {

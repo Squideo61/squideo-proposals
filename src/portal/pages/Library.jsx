@@ -356,7 +356,7 @@ function FileTile({ dealId, file, manage, projects, seriesOptions, position, tot
 }
 
 // Manage mode: pick the tile's thumbnail from a still in the video. The picker
-// itself is shared with Admin → Crash course (src/components/media/PosterPicker.jsx);
+// itself is shared with Admin → Video guide (src/components/media/PosterPicker.jsx);
 // this wrapper supplies the same-origin stream URL and the save call.
 //
 // The frame is drawn onto a canvas, which browsers refuse to read back from if

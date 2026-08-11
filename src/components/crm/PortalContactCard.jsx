@@ -18,7 +18,7 @@ const ACTIVITY_ICONS = {
 };
 
 // The two things a client does in the portal that never reach a deal: watch the
-// crash course, and work on a brief. Both happen before there's anything to
+// video guide, and work on a brief. Both happen before there's anything to
 // transact, so they only show up if we go and look for them.
 function EngagementStrip({ engagement }) {
   const course = engagement?.course;
@@ -45,7 +45,7 @@ function EngagementStrip({ engagement }) {
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
         {course && pill(
           <PlayCircle size={15} color={BRAND.blue} style={{ flexShrink: 0 }} />,
-          course.done >= course.total && course.total ? 'Finished the crash course' : 'Crash course',
+          course.done >= course.total && course.total ? 'Finished the video guide' : 'Video guide',
           `${course.done} of ${course.total} video${course.total === 1 ? '' : 's'} watched`,
           course.lastAt,
         )}

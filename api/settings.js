@@ -43,11 +43,11 @@ function ensureFinanceTargetsColumn() {
     // { enabled, everyDays, maxReminders, subject, bodyHtml } — read by
     // cronClientTaskReminders. null until an admin saves one.
     await sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS task_reminders JSONB`;
-    // Crash-course nudge sequence config (Admin → Crash course). { enabled }
+    // Video-guide nudge sequence config (Admin → Video guide). { enabled }
     // — read by cronCourseNudges. Off until an admin turns it on, so the
     // sequence can never start sending the moment it deploys.
     await sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS course_emails JSONB`;
-    // Sample project config (Admin → Crash course). { videoUrl, posterUrl,
+    // Sample project config (Admin → Video guide). { videoUrl, posterUrl,
     // title, videoTitle } — the demo itself is a fixture in the portal bundle;
     // this is only where the video lives, so it can be re-recorded and swapped
     // without a deploy.
@@ -85,7 +85,7 @@ export default async function handler(req, res) {
       voiceoverPricing: row.voiceover_pricing || null,
       // Automatic client-task reminder cadence + copy. null until first saved.
       taskReminders: row.task_reminders || null,
-      // Crash-course nudge sequence. null until first saved (cron treats that
+      // Video-guide nudge sequence. null until first saved (cron treats that
       // as disabled).
       courseEmails: row.course_emails || null,
       // Where the sample project's video lives. null until one is uploaded.

@@ -2915,7 +2915,7 @@ export function StoreProvider({ children }) {
         api.put('/api/settings', { taskReminders: data }).catch(() => {});
       }, 800);
     },
-    // Crash-course follow-up sequence on/off (Admin → Crash course).
+    // Video-guide follow-up sequence on/off (Admin → Video guide).
     // Not debounced like the others: this is a single switch that decides
     // whether marketing email sends, so the caller needs to know it landed —
     // and a "saved" toast over a failed write would be a real problem here.

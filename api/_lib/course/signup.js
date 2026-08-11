@@ -1,4 +1,4 @@
-// Self-serve signup for The Explainer Video Planning Crash Course.
+// Self-serve signup for the Free 6-Min Video Guide.
 //
 // This is the FIRST and ONLY place in the product where an account is created
 // without an invite. Everything else — clients, colleagues, staff — comes in
@@ -210,7 +210,7 @@ export async function createPortalSignup({
   return { outcome: 'created', user, signupId, companyId: company.id };
 }
 
-// The crash course was the first door and is still the busiest one, so it keeps
+// The video guide was the first door and is still the busiest one, so it keeps
 // a name of its own rather than every call site spelling out the source.
 export const createCourseSignup = (args) => createPortalSignup({ ...args, source: 'course' });
 

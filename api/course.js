@@ -1,4 +1,4 @@
-// Public, unauthenticated API for The Explainer Video Planning Crash Course.
+// Public, unauthenticated API for the Free 6-Min Video Guide.
 //
 // Serves the /course landing page: the module list, the free module's bytes,
 // poster images, and the anonymous funnel events that measure landing → play →
