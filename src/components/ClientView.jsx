@@ -5,7 +5,7 @@ import {
   Play, RefreshCw, Rocket, Share2, Smartphone, Sparkles, Users
 } from 'lucide-react';
 import { BRAND, CONFIG, DEFAULT_PHOTOS } from '../theme.js';
-import { SQUIDEO_LOGO, NEXT_STEPS, extraHasVariants, extraHasQuantity, extraUnitPrice, extraNetUnitPrice, extrasDiscountRate, resolveExtraPricing, applyInclusionTokens } from '../defaults.js';
+import { SQUIDEO_LOGO, NEXT_STEPS, extraHasVariants, extraHasQuantity, extraUnitPrice, extraNetUnitPrice, extrasDiscountRate, formatFreeSubtitlesValue, resolveExtraPricing, applyInclusionTokens } from '../defaults.js';
 import { useStore } from '../store.jsx';
 import { formatGBP, sendNotification, useIsMobile, computeBaseDiscount } from '../utils.js';
 import { openPrintWindow, openReceiptWindow, printOptionsForSigned } from '../utils/printProposal.js';
@@ -1578,7 +1578,7 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
         )}
         <div style={{ display: 'grid', gap: 12, marginBottom: 12 }}>
           {(() => {
-            const subtitlesPrice = data.optionalExtras.find(e => e.id === 'subtitles')?.price ?? 125;
+            const subtitlesPrice = formatFreeSubtitlesValue(data, contentMinutes);
             const fullIncentive = data.paymentOptionDescs?.full?.trim() || `get a free subtitled version (worth £${subtitlesPrice})`;
             const incentiveOn = data.payInFullIncentive !== false;
             const fullTitle = (partnerSelected || !incentiveOn) ? 'Pay in full' : `Pay in full - ${fullIncentive}`;

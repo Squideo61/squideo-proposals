@@ -1,4 +1,4 @@
-import { SQUIDEO_LOGO, extraHasVariants, extraHasQuantity, extraUnitPrice, extraNetUnitPrice, extrasDiscountRate, applyInclusionTokens } from '../defaults.js';
+import { SQUIDEO_LOGO, extraHasVariants, extraHasQuantity, extraUnitPrice, extraNetUnitPrice, extrasDiscountRate, formatFreeSubtitlesValue, applyInclusionTokens } from '../defaults.js';
 import { CONFIG, DEFAULT_PHOTOS } from '../theme.js';
 import { formatGBP, computeBaseDiscount } from '../utils.js';
 import { printButtonHTML, writeDoc } from './printWindow.js';
@@ -534,7 +534,7 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
   <div style="display:grid;gap:10px;margin-bottom:28px;">
     ${(() => {
       // Pay-in-full incentive is optional (defaults on) and may carry custom text.
-      const subtitlesPrice = (data.optionalExtras || []).find(e => e.id === 'subtitles')?.price ?? 125;
+      const subtitlesPrice = formatFreeSubtitlesValue(data, printMinutes);
       const incentiveOn = data.payInFullIncentive !== false;
       const fullIncentive = (data.paymentOptionDescs?.full || '').trim() || `get a free subtitled version (worth £${subtitlesPrice})`;
       const fullTitle = (partnerSelected || !incentiveOn) ? 'Pay in full' : `Pay in full - ${fullIncentive}`;

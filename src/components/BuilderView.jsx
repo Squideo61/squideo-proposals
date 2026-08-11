@@ -7,7 +7,7 @@ import { Field, Modal, Section } from './ui.jsx';
 import { LogoUploader } from './LogoUploader.jsx';
 import { TeamMemberEditor } from './TeamMemberEditor.jsx';
 import { ExtrasBankManager } from './ExtrasBankManager.jsx';
-import { extraHasVariants, extraUnitPrice, extraNetUnitPrice, extrasDiscountRate, resolveExtraPricing, DEFAULT_PROPOSAL, VARIANT_ELIGIBLE_IDS } from '../defaults.js';
+import { extraHasVariants, extraUnitPrice, extraNetUnitPrice, extrasDiscountRate, formatFreeSubtitlesValue, resolveExtraPricing, DEFAULT_PROPOSAL, VARIANT_ELIGIBLE_IDS } from '../defaults.js';
 import { InclusionsBankManager } from './InclusionsBankManager.jsx';
 import { ClientLinkPanel } from './crm/ClientLinkPanel.jsx';
 
@@ -1254,7 +1254,7 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
       >
         <p style={{ fontSize: 12, color: BRAND.muted, margin: '0 0 12px' }}>Select which payment options are available to the client. At least one must be selected.</p>
         {(() => {
-          const subtitlesPrice = data.optionalExtras.find(e => e.id === 'subtitles')?.price ?? 125;
+          const subtitlesPrice = formatFreeSubtitlesValue(data, contentMinutes);
           const currentOpts = data.paymentOptions || ['5050', 'full'];
           return [
             { key: '5050', label: '50/50 split', desc: '50% deposit to start, balance invoiced on final approval' },

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { computeProposalCheckout, quotedProjectExVat } from '../api/_lib/proposalPricing.js';
+import { computeProposalCheckout, quotedProjectExVat, freeSubtitlesValue } from '../api/_lib/proposalPricing.js';
+import { freeSubtitlesValue as clientFreeSubtitlesValue, formatFreeSubtitlesValue } from '../src/defaults.js';
 
 // Authoritative server-side pricing for Stripe checkout. These lock in that the
 // figure is derived from the PROPOSAL's prices and the SIGNED selections — never
@@ -421,5 +422,26 @@ describe('computeProposalCheckout', () => {
 
   it('returns null when there is no proposal to price', () => {
     expect(computeProposalCheckout(null, { paymentOption: 'full' })).toBeNull();
+  });
+});
+
+// The "Pay in full - get a free subtitled version (worth £X)" figure. Subtitles
+// are priced per extra minute, so the perk on a longer video is worth more than
+// the first-minute price the extra is entered at.
+describe('freeSubtitlesValue', () => {
+  it('scales with the minutes of content the proposal covers', () => {
+    expect(freeSubtitlesValue(baseProposal, 1)).toBe(125);
+    expect(freeSubtitlesValue(baseProposal, 3)).toBe(185);   // 125 + 2 × 30
+    expect(freeSubtitlesValue(baseProposal, 0)).toBe(125);   // unknown length → one minute
+  });
+
+  it('falls back to the catalogue price when the extra was removed', () => {
+    expect(freeSubtitlesValue({ optionalExtras: [] }, 3)).toBe(185);
+  });
+
+  it('matches the client-side figure, formatted without stray pennies', () => {
+    expect(clientFreeSubtitlesValue(baseProposal, 4)).toBe(freeSubtitlesValue(baseProposal, 4));
+    expect(formatFreeSubtitlesValue(baseProposal, 4)).toBe('215');
+    expect(formatFreeSubtitlesValue({ optionalExtras: [{ id: 'subtitles', price: 99.5 }] }, 1)).toBe('99.50');
   });
 });

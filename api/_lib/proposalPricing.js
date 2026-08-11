@@ -57,6 +57,15 @@ export function extraUnitPrice(extra, minutes) {
   return base + (mins - 1) * (Number(e.perExtraMinute) || 0);
 }
 
+// Mirror of freeSubtitlesValue in src/defaults.js: what the pay-in-full
+// incentive's free subtitled version is worth, scaled to the proposal's content
+// length (subtitles are priced per extra minute).
+export function freeSubtitlesValue(data, minutes) {
+  const extra = (data?.optionalExtras || []).find((e) => e && e.id === 'subtitles')
+    || { id: 'subtitles', price: 125 };
+  return extraUnitPrice(extra, minutes);
+}
+
 // Mirror of extrasDiscountRate in src/defaults.js: a blanket % off every
 // optional extra, read from the PROPOSAL (never the signature). Signed
 // proposals are frozen, so this is always the rate the client was shown.

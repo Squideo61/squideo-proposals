@@ -88,6 +88,25 @@ export function extraUnitPrice(extra, minutes) {
   return base + (mins - 1) * (Number(e.perExtraMinute) || 0);
 }
 
+// What the pay-in-full incentive's free subtitled version is actually worth.
+// Subtitles are priced per extra minute, so the perk on a 5-minute video is
+// worth far more than the headline first-minute price — read the proposal's own
+// subtitles extra and scale it, falling back to the catalogue price if the extra
+// was removed from the proposal. `minutes` is the content length the proposal
+// covers (the same figure every other per-minute extra scales off).
+export function freeSubtitlesValue(data, minutes) {
+  const extra = (data?.optionalExtras || []).find((e) => e && e.id === 'subtitles')
+    || { id: 'subtitles', price: 125 };
+  return extraUnitPrice(extra, minutes);
+}
+
+// The same figure written the way the proposal copy shows it: whole pounds where
+// it lands on one ("worth £215", not "worth £215.00").
+export function formatFreeSubtitlesValue(data, minutes) {
+  const v = freeSubtitlesValue(data, minutes);
+  return Number.isInteger(v) ? String(v) : v.toFixed(2);
+}
+
 // A blanket discount across EVERY optional extra, stored on the proposal as
 // `extrasDiscount: { value: 15, label: '' }`. Separate from `discount`, which
 // only ever touches the project base price. Percentage-only on purpose: a flat

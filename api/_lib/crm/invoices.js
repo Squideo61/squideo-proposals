@@ -24,6 +24,7 @@ import {
   lineItemsForPartnerFirstMonth,
   formatProposalNumber,
 } from '../xeroMappers.js';
+import { freeSubtitlesValue, proposalContentMinutes } from '../proposalPricing.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 import { pendingExtrasForDeal, markExtrasInvoiced, markExtrasPaidForXeroInvoice, releaseExtrasForVoidedInvoice } from './extras.js';
@@ -1166,7 +1167,9 @@ function freeSubtitleLine(proposal, signed) {
   // proposal customised that copy and it no longer mentions subtitles, skip.
   const fullDesc = (proposal?.paymentOptionDescs?.full || '').trim();
   if (fullDesc && !/subtitle/i.test(fullDesc)) return null;
-  const subPrice = Number(proposal?.optionalExtras?.find(e => e.id === 'subtitles')?.price ?? 125) || 125;
+  // Scaled to the proposal's content length — subtitles are priced per extra
+  // minute, so a 5-minute video's free subtitles are worth more than a 1-min's.
+  const subPrice = Number(freeSubtitlesValue(proposal, proposalContentMinutes(proposal, signed))) || 125;
   return {
     description: 'Hard-coded English subtitled version (free with pay in full)',
     quantity: 1,
