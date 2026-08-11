@@ -5,8 +5,8 @@ import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
 import { Modal, RefBadge } from '../ui.jsx';
 import { XeroContactPicker } from './XeroContactPicker.jsx';
+import { CompanySearchPicker } from './CompanySearchPicker.jsx';
 import { ContactSearchPicker } from './ContactSearchPicker.jsx';
-import { api } from '../../api.js';
 import {
   PRODUCTION_PHASES, PHASE_BY_ID, STAGE_LABEL, PAYMENT_OPTION_LABEL,
   VIDEO_LENGTH_OPTIONS, VIDEO_LENGTH_VALUES,
@@ -482,12 +482,16 @@ export function SearchBox({ value, onChange, placeholder }) {
 }
 
 // Create a project and assign it to a customer. Mirrors the pipeline's "New
-// deal" modal (Xero contact → company); the result lands on the board as a
-// project with one video.
+// deal" modal (CRM organisation, or one imported from Xero); the result lands
+// on the board as a project with one video.
 function NewProjectModal({ onClose, onCreated }) {
   const { state, actions, showMsg } = useStore();
   const [title, setTitle] = useState('');
-  const [xeroContact, setXeroContact] = useState(null);
+  // The customer is a CRM organisation. Xero is a way to find it, not a
+  // prerequisite: a client we haven't invoiced yet won't be in Xero at all.
+  const [companyId, setCompanyId] = useState('');
+  const [linkingXero, setLinkingXero] = useState(false);
+  const [importingXero, setImportingXero] = useState(false);
   const [primaryContactId, setPrimaryContactId] = useState('');
   const [producerEmail, setProducerEmail] = useState('');
   const [value, setValue] = useState('');
@@ -497,9 +501,28 @@ function NewProjectModal({ onClose, onCreated }) {
     .map(([email, u]) => ({ email, name: u.name || email }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  function handleXeroPick(c) {
-    setXeroContact(c);
-    if (c && !title.trim()) setTitle(c.name);
+  // Choosing a customer names the project too, while the title is still blank.
+  // An effect rather than part of the pick, because an organisation created from
+  // the picker only lands in the store after the change is handed back.
+  useEffect(() => {
+    if (!companyId || title.trim()) return;
+    const name = state.companies?.[companyId]?.name;
+    if (name) setTitle(name);
+  }, [companyId, state.companies]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Picked a Xero contact → find-or-create the matching CRM organisation and
+  // select it, the same as the deal editor's "Link from Xero".
+  async function pickXeroOrg(c) {
+    if (!c?.id) return;
+    setImportingXero(true);
+    try {
+      const co = await actions.importCompanyFromXero(c.id);
+      if (co?.id) { setCompanyId(co.id); setLinkingXero(false); }
+    } catch (err) {
+      showMsg?.(err?.message || 'Could not link that Xero organisation');
+    } finally {
+      setImportingXero(false);
+    }
   }
 
   const submit = async (e) => {
@@ -507,14 +530,12 @@ function NewProjectModal({ onClose, onCreated }) {
     if (!title.trim() || submitting) return;
     setSubmitting(true);
     try {
-      let companyId = null;
-      if (xeroContact) {
-        const company = await api.post('/api/crm/companies/from-xero-contact', { xeroContactId: xeroContact.id });
-        companyId = company.id;
-      }
+      // The picker hands back a real organisation id (creating it when a new
+      // name is typed, or importing it from Xero), so there's nothing to
+      // resolve here.
       const deal = await actions.createProject({
         title: title.trim(),
-        companyId,
+        companyId: companyId || null,
         primaryContactId: primaryContactId || null,
         producerEmail: producerEmail || null,
         value: value === '' ? null : Number(value),
@@ -531,12 +552,34 @@ function NewProjectModal({ onClose, onCreated }) {
     <Modal onClose={onClose} fullScreenOnMobile>
       <h2 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>New project</h2>
       <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <label style={{ fontSize: 13, fontWeight: 500 }}>
-          Customer (Xero contact)
-          <div style={{ marginTop: 4 }}>
-            <XeroContactPicker value={xeroContact} onChange={handleXeroPick} placeholder="Search Xero contacts…" />
-          </div>
-        </label>
+        <div style={{ fontSize: 13, fontWeight: 500, display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <span>Customer</span>
+          {!linkingXero ? (
+            <>
+              {/* Type-to-search the CRM, and typing a name we don't have offers
+                  to create it — a client we haven't invoiced yet isn't in Xero,
+                  and shouldn't have to be before they can have a project. */}
+              <CompanySearchPicker
+                value={companyId}
+                onChange={setCompanyId}
+                emptyLabel="No customer — you can set one later, but the portal, credits and invoices all hang off one."
+              />
+              <button type="button" onClick={() => setLinkingXero(true)} className="btn-ghost" style={{ alignSelf: 'flex-start', fontSize: 12, marginTop: 2 }}>+ Link from Xero</button>
+            </>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 10, background: BRAND.paper }}>
+              <span style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted }}>Search Xero contacts — links (or creates) the matching organisation.</span>
+              <XeroContactPicker
+                value={null}
+                onChange={(c) => { if (c) pickXeroOrg(c); }}
+                autoFocus
+                placeholder="Search Xero contacts…"
+                creatingNew={importingXero}
+              />
+              <button type="button" onClick={() => setLinkingXero(false)} disabled={importingXero} className="btn-ghost" style={{ alignSelf: 'flex-start', fontSize: 12 }}>Cancel</button>
+            </div>
+          )}
+        </div>
         <label style={{ fontSize: 13, fontWeight: 500 }}>
           Project title
           <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Acme Corp — Brand explainer" style={{ marginTop: 4 }} required />
