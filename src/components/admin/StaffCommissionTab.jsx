@@ -331,6 +331,7 @@ function PendingKindTag({ kind }) {
     deposit: { label: 'Awaiting deposit', color: '#B45309', bg: '#FFFBEB' },
     po_paid: { label: 'PO — awaiting payment', color: '#7C3AED', bg: '#F3E8FF' },
     extra: { label: 'Extra — unpaid', color: '#CA8A04', bg: '#FEF9C3' },
+    sale: { label: 'Sale — unpaid', color: '#15803D', bg: '#ECFDF3' },
     cancelled: { label: 'Cancelled', color: '#B45309', bg: '#FFFBEB' },
   };
   const s = map[kind] || { label: kind || '—', color: BRAND.muted, bg: BRAND.paper };
@@ -707,12 +708,14 @@ function RateCell({ sale }) {
 }
 
 // deposit = full project recognised at deposit; signing = PO recognised at
-// signature; extra = a later extra recognised when paid.
+// signature; extra = a later extra recognised when paid; sale = work recorded on
+// a deal with no proposal, recognised when its invoice is paid.
 function KindTag({ kind }) {
   const map = {
     deposit: { label: 'Deposit', color: '#0891B2', bg: '#ECFEFF' },
     po_paid: { label: 'PO paid', color: '#7C3AED', bg: '#F3E8FF' },
     extra: { label: 'Extra', color: '#CA8A04', bg: '#FEF9C3' },
+    sale: { label: 'Sale', color: '#15803D', bg: '#ECFDF3' },
     disqualified: { label: 'Disqualified', color: '#B45309', bg: '#FFFBEB' },
   };
   const s = map[kind] || { label: kind || '—', color: BRAND.muted, bg: BRAND.paper };

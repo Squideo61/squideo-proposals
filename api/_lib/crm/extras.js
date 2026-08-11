@@ -22,9 +22,15 @@ import { createXeroInvoiceForDeal, resolveXeroContactInfo } from './invoices.js'
 //   'invoice_now'      — its own Xero invoice raised immediately
 //   'po'               — a Xero quote ("Pending PO") is raised; later turned into
 //                        an invoice from the Purchase Orders section
+//   'po_awaited'       — sold against a purchase order the client hasn't raised
+//                        yet: nothing goes to Xero, the charge sits pending in
+//                        Purchase Orders until there's a PO number to invoice
+//                        against. (Unlike 'po', which parks it as a 'quoted' row
+//                        — and quoted rows are not receivables, so they'd drop
+//                        out of Pending Payments entirely.)
 //   'existing_invoice' — appended as a line to one of the deal's still-open Xero
 //                        invoices (requires `xeroInvoiceId`)
-const PAYMENT_TYPES = ['final', 'invoice_now', 'po', 'existing_invoice'];
+const PAYMENT_TYPES = ['final', 'invoice_now', 'po', 'po_awaited', 'existing_invoice'];
 
 // The deal's effective VAT rate as a percent (deal_extras.vat_rate is a fraction
 // or null = inherit; deals.vat_rate is a fraction, default 20% when unset).
@@ -44,6 +50,7 @@ async function notifyExtraAdded({ dealId, dealTitle, description, amount, author
     const title = dealTitle || 'a deal';
     const route = paymentType === 'invoice_now' ? 'invoiced now'
       : paymentType === 'po' ? 'raised as a PO quote'
+      : paymentType === 'po_awaited' ? 'awaiting a purchase order'
       : paymentType === 'existing_invoice' ? `added to invoice ${invoiceNumber || ''}`.trim()
       : 'added to the final invoice';
     await sendNotification('extra.added', {
@@ -184,7 +191,7 @@ export async function releaseExtrasForVoidedInvoice(xeroInvoiceId) {
 export async function outstandingExtrasByDeal() {
   await ensureDealExtrasTable();
   const rows = await sql`
-    SELECT id, deal_id, description, amount, status
+    SELECT id, deal_id, description, amount, status, vat_rate, payment_type
       FROM deal_extras
      WHERE status NOT IN ('paid', 'quoted')
      ORDER BY created_at ASC`;
@@ -196,6 +203,10 @@ export async function outstandingExtrasByDeal() {
       description: r.description,
       amount: Number(r.amount) || 0,
       status: r.status,
+      // Both drive the report: its own VAT rate grosses the line, and the
+      // payment type is what tells a proposal-less deal apart as PO-route.
+      vatRate: r.vat_rate == null ? null : Number(r.vat_rate),
+      paymentType: r.payment_type || 'final',
     });
   }
   return map;
@@ -331,7 +342,9 @@ export async function extrasRoute(req, res, id, action, user) {
         return res.status(err.status || 502).json({ error: 'Could not add to invoice: ' + (err.message || 'unknown') });
       }
     }
-    // 'final' leaves the extra pending to ride the final invoice.
+    // 'final' leaves the extra pending to ride the final invoice; 'po_awaited'
+    // likewise stays pending, but shows in Purchase Orders until the client's PO
+    // number arrives and it can be invoiced.
 
     await notifyExtraAdded({ dealId, dealTitle: dealRow.title, description, amount, author: user, paymentType, invoiceNumber });
     const [row] = await sql`SELECT * FROM deal_extras WHERE id = ${newId}`;

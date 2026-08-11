@@ -11,7 +11,7 @@ function makeLineItem() {
   return { _key: ++_lineItemKey, description: '', quantity: 1, unitAmount: '', vatRate: 20 };
 }
 
-export function CreateXeroInvoiceModal({ dealId, companyId, deals, initialDealId, mode, proposalId, contactName: contactNameProp, initialReference, onClose, onCreated }) {
+export function CreateXeroInvoiceModal({ dealId, companyId, deals, initialDealId, mode, proposalId, contactName: contactNameProp, initialReference, initialLineItems, onClose, onCreated }) {
   const { showMsg } = useStore();
   const [contactName, setContactName] = useState(contactNameProp || '');
   const [invoiceNumber, setInvoiceNumber] = useState('');
@@ -19,7 +19,14 @@ export function CreateXeroInvoiceModal({ dealId, companyId, deals, initialDealId
   const [reference, setReference] = useState(initialReference || '');
   const [issuedAt, setIssuedAt] = useState(new Date().toISOString().slice(0, 10));
   const [dueAt, setDueAt] = useState(new Date().toISOString().slice(0, 10));
-  const [lineItems, setLineItems] = useState([makeLineItem()]);
+  // Prefilled when the caller already knows what's being billed — invoicing a
+  // recorded sale from Pending Payments, where the line carries the `extraId`
+  // that settles the record once the invoice exists.
+  const [lineItems, setLineItems] = useState(
+    initialLineItems?.length
+      ? initialLineItems.map((l) => ({ _key: ++_lineItemKey, ...l }))
+      : [makeLineItem()],
+  );
   const [saving, setSaving] = useState(false);
 
   // Company-page mode: let the user attach the invoice to a deal (existing or

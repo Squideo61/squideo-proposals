@@ -31,13 +31,21 @@ const STATUS_COLOR = {
   void: '#DC2626',
 };
 
-export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName, deals, vatRate, poNumber, onChanged, openCreateSignal, preselectDealId }) {
+export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName, deals, vatRate, dealVatRate, dealValue, poNumber, onChanged, openCreateSignal, preselectDealId }) {
   const { showMsg, actions } = useStore();
+  // A deal with no signed proposal has no signed total, so nothing here can be
+  // an "extra" on top of one — what gets recorded IS the sale. Same record, same
+  // endpoint; the card just stops calling it the wrong thing.
+  const saleMode = !!dealId && !(proposals || []).some((p) => p && p.signed);
   const [sendingFinal, setSendingFinal] = useState(null); // dealId while raising
   // Figures are stored inc-VAT; show them ex-VAT with "+VAT" to match invoices.
   const vr = Number(vatRate) || 0;
   const vatSuffix = vr > 0 ? ' +VAT' : '';
   const fmtEx = (inc) => formatGBP((Number(inc) || 0) / (1 + vr)) + vatSuffix;
+  // Extras and recorded sales are stored net, so they get their own suffix off
+  // the deal's own rate — the deal page has no signed proposal to read `vatRate`
+  // from, and borrowing it would restate the inc-VAT figures above as well.
+  const extraSuffix = ((Number(dealVatRate) || vr) > 0) ? ' +VAT' : '';
   const [invoices, setInvoices] = useState(null);
   const [payments, setPayments] = useState(null);
   const [adding, setAdding] = useState(false);
@@ -195,7 +203,10 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
               <Upload size={12} /> {poNumber ? 'Edit PO' : 'Add PO'}
             </button>
           )}
-          <button onClick={() => setAddingExtra(true)} className="btn-ghost"><Plus size={12} /> Add extra</button>
+          <button onClick={() => setAddingExtra(true)} className="btn-ghost"
+            title={saleMode ? 'Record work sold on this deal, which has no proposal to sign' : undefined}>
+            <Plus size={12} /> {saleMode ? 'Record sale' : 'Add extra'}
+          </button>
         </div>
       )}
     >
@@ -251,14 +262,17 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
       {/* Extras — ad-hoc charges added during production, to invoice later */}
       {!loading && pendingExtras.length > 0 && (
         <>
-          <SectionLabel>Extras — to invoice</SectionLabel>
+          <SectionLabel>{saleMode ? 'Sold — to invoice' : 'Extras — to invoice'}</SectionLabel>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {pendingExtras.map((e) => (
               <div key={e.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 10px', background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 6 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: '#C2410C', background: '#FFEDD5', padding: '1px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, flexShrink: 0 }}>Extra</span>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: '#C2410C', background: '#FFEDD5', padding: '1px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, flexShrink: 0 }}>{saleMode ? 'Sale' : 'Extra'}</span>
                   <span style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.description}</span>
-                  <span style={{ fontSize: 13, color: '#9A3412', flexShrink: 0 }}>· {formatGBP(e.amount)}{vatSuffix}</span>
+                  <span style={{ fontSize: 13, color: '#9A3412', flexShrink: 0 }}>· {formatGBP(e.amount)}{extraSuffix}</span>
+                  {e.paymentType === 'po_awaited' && (
+                    <span style={{ fontSize: 11, color: '#92400E', flexShrink: 0 }}>· awaiting PO</span>
+                  )}
                 </div>
                 <button onClick={() => deleteExtra(e.id)} className="btn-icon" aria-label="Remove extra" title="Remove extra">
                   <Trash2 size={14} />
@@ -279,7 +293,7 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                   <span style={{ fontSize: 10, fontWeight: 700, color: '#1D4ED8', background: '#DBEAFE', padding: '1px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, flexShrink: 0 }}>PO quote</span>
                   <span style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.description}</span>
-                  <span style={{ fontSize: 13, color: '#1E40AF', flexShrink: 0 }}>· {formatGBP(e.amount)}{vatSuffix}</span>
+                  <span style={{ fontSize: 13, color: '#1E40AF', flexShrink: 0 }}>· {formatGBP(e.amount)}{extraSuffix}</span>
                   {e.quoteNumber && <span style={{ fontSize: 11, color: BRAND.muted, flexShrink: 0 }}>· {e.quoteNumber}</span>}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
@@ -378,6 +392,8 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
         <AddExtraModal
           dealId={dealId}
           deals={deals}
+          variant={saleMode ? 'sale' : 'extra'}
+          defaultAmount={dealValue}
           onClose={() => setAddingExtra(false)}
           onCreated={() => { setAddingExtra(false); reloadExtras(); onChanged?.(); }}
         />

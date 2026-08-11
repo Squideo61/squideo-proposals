@@ -175,7 +175,9 @@ const accruesIn = (m, month) => m.enabled !== false && String(m.effective_from) 
 //   • EXTRA — each PAID extra ADDED AFTER the trigger, recognised in the month
 //     its cash landed (deal_extras.paid_at). Extras that existed at/before the
 //     trigger are folded into BASE, so they're never counted twice.
-// Deals with NO signed proposal earn nothing (no proposal balance to base on).
+// A deal with NO signed proposal has no proposal balance, so its BASE is zero —
+// but work recorded against it ("Record sale") still counts, and it's the whole
+// sale rather than an addition to one. Recognition still follows the cash.
 //
 // Returns { events, pending }:
 //   events  — [{ ownerEmail, dealId, company, title, month, amount, kind, date }]
@@ -185,6 +187,11 @@ const accruesIn = (m, month) => m.enabled !== false && String(m.effective_from) 
 //             yet paid) and unpaid extras. Nothing here is earned — it's what
 //             WILL be recognised, in the month the payment lands. See
 //             `pendingCommissionFor`.
+// What the base event is called. A deal with no signed proposal has no deposit
+// to speak of — its base is entirely recorded sales, so calling it a "deposit"
+// on the commission screen would read as a bug.
+const commissionKind = (d) => (d.isPo ? 'po_paid' : (d.net > 0 ? 'deposit' : 'sale'));
+
 async function loadRecognitionEvents() {
   const [sigRows, payRows, extraRows, invoicedRows] = await Promise.all([
     // Signed proposals (base candidates). data columns are JSONB → parsed objects.
@@ -224,7 +231,7 @@ async function loadRecognitionEvents() {
     // Extras (net amounts), with the durable paid date (falls back to updated_at).
     sql`SELECT e.id AS extra_id, e.deal_id, e.amount, e.status, e.created_at,
                COALESCE(e.paid_at, e.updated_at) AS paid_at,
-               d.owner_email, d.title, c.name AS company, d.company_id
+               d.owner_email, d.title, c.name AS company, d.company_id, d.stage
           FROM deal_extras e
           JOIN deals d ON d.id = e.deal_id
           LEFT JOIN companies c ON c.id = d.company_id`,
@@ -260,7 +267,17 @@ async function loadRecognitionEvents() {
 
   const extrasByDeal = new Map();
   for (const r of extraRows) {
-    if (isDemo(r)) continue;
+    if (EXCLUDED_IMPORT_DEAL_IDS.has(r.deal_id) || isDemo(r)) continue;
+    // Work sold on a deal that has no proposal ("Record sale") — the deal isn't
+    // in `deals` above, which is built from signatures, so the loop below would
+    // never visit it and the sale would earn nobody anything. Register it with
+    // no signed base: its whole value is the recorded lines.
+    if (!deals.has(r.deal_id) && r.owner_email) {
+      deals.set(r.deal_id, {
+        ownerEmail: r.owner_email, title: r.title, company: r.company,
+        stage: r.stage, isPo: false, signedAt: null, net: 0,
+      });
+    }
     if (!extrasByDeal.has(r.deal_id)) extrasByDeal.set(r.deal_id, []);
     extrasByDeal.get(r.deal_id).push({
       id: r.extra_id,
@@ -289,7 +306,7 @@ async function loadRecognitionEvents() {
       for (const x of dealExtras) if (x.createdAt && x.createdAt <= triggerDate) base += x.amount;
       base = round2(base);
       if (base > 0) {
-        const kind = d.isPo ? 'po_paid' : 'deposit';
+        const kind = commissionKind(d);
         events.push({ ownerEmail: d.ownerEmail, dealId, company: d.company, title: d.title,
           month: monthKey(triggerDate), amount: base, kind, date: triggerDate.toISOString(),
           key: `${dealId}:${kind}` });
@@ -304,7 +321,7 @@ async function loadRecognitionEvents() {
       for (const x of dealExtras) if (x.status !== 'paid') base += x.amount;
       base = round2(base);
       if (base > 0) {
-        const kind = d.isPo ? 'po_paid' : 'deposit';
+        const kind = commissionKind(d);
         pending.push({ ownerEmail: d.ownerEmail, dealId, company: d.company, title: d.title,
           amount: base, kind, date: (d.signedAt || new Date()).toISOString(),
           invoicedAt: invoicedAt.get(dealId) || null, key: `${dealId}:${kind}` });

@@ -900,6 +900,8 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
             dealId={dealId}
             proposals={proposals}
             contactName={company?.name || contact?.name || deal.title}
+            dealVatRate={deal.vatRate}
+            dealValue={deal.value}
             poNumber={detail?.purchaseOrder?.number || null}
             onChanged={() => {
               setOrderRefresh((n) => n + 1);

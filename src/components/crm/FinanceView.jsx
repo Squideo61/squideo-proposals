@@ -763,6 +763,9 @@ const PAYMENT_TYPE_META = {
   full: { label: 'Full up front', color: '#15803D', bg: '#ECFDF3' },
   po: { label: 'Purchase order', color: '#6D28D9', bg: '#F5F3FF' },
   extra: { label: 'Extra', color: '#C2410C', bg: '#FFF7ED' },
+  // Work recorded on a deal with no proposal — the sale itself, not an addition
+  // to a signed total, so it can be invoiced on its own.
+  sale: { label: 'Sale', color: '#15803D', bg: '#ECFDF3' },
   invoice: { label: 'Invoice', color: '#0E7490', bg: '#ECFEFF' },
 };
 
@@ -1130,6 +1133,7 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, excludedKeys
           deals={invTarget.companyId ? [{ id: invTarget.dealId, title: invTarget.title, stage: invTarget.stage || 'signed', company_id: invTarget.companyId }] : undefined}
           initialDealId={invTarget.dealId}
           initialReference={invTarget.reference || undefined}
+          initialLineItems={invTarget.lineItems}
           mode={invTarget.mode}
           onClose={() => setInvTarget(null)}
           onCreated={() => { setInvTarget(null); onChanged && onChanged(); }}
@@ -1340,6 +1344,7 @@ function PendingPayments({ pending, partners, partnerTotal, onOpenDeal, onOpenCo
           deals={invTarget.companyId ? [{ id: invTarget.dealId, title: invTarget.title, stage: invTarget.stage || 'signed', company_id: invTarget.companyId }] : undefined}
           initialDealId={invTarget.dealId}
           initialReference={invTarget.reference || undefined}
+          initialLineItems={invTarget.lineItems}
           mode={invTarget.mode}
           onClose={() => setInvTarget(null)}
           onCreated={() => { setInvTarget(null); onChanged && onChanged(); }}
@@ -3020,7 +3025,17 @@ function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoRece
     ...(canManage ? invoiceLines.map((l) => ({
       label: invoiceLines.length > 1 ? `Invoice ${PAYMENT_TYPE_META[l.type]?.label || 'amount'}` : 'Create invoice',
       icon: FileText,
-      onClick: () => onCreateInvoice({ dealId: d.dealId, companyId: d.companyId, title: d.title || d.company, stage: d.stage, mode: l.type === 'final' ? 'final' : undefined, reference: d.poNumber || undefined }),
+      onClick: () => onCreateInvoice({
+        dealId: d.dealId, companyId: d.companyId, title: d.title || d.company, stage: d.stage,
+        mode: l.type === 'final' ? 'final' : undefined,
+        reference: d.poNumber || undefined,
+        // A recorded sale bills as itself. `extraId` is what settles the record
+        // when the invoice is raised — without it the charge stays pending and
+        // the deal shows twice, once as the sale and once as the invoice.
+        lineItems: l.type === 'sale'
+          ? [{ description: l.label, quantity: 1, unitAmount: l.amount, vatRate: Math.round((d.vatRate || 0) * 100), extraId: l.id }]
+          : undefined,
+      }),
     })) : []),
     // Banking a payment doesn't wait on the row being predicted — money lands
     // when it lands, and this is the list you're looking at when it does.

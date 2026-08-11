@@ -145,6 +145,45 @@ describe('pending commission', () => {
     expect(m.pending.net).toBe(2400);
   });
 
+  // Work sold on a deal that never had a proposal (revisions to a pre-CRM job,
+  // say) is recorded against the deal instead of signed. It used to earn nobody
+  // anything: the report's deal list was built from signatures alone, so the
+  // deal was never even looked at.
+  const recordedSale = (dealId, amount, over = {}) => ({
+    extra_id: 'sale1', deal_id: dealId, amount, status: 'pending',
+    created_at: monthsAgo(1), paid_at: null, stage: 'signed',
+    owner_email: OWNER, title: 'AON revisions', company: 'AON', ...over,
+  });
+
+  it('forecasts a sale recorded on a deal with no proposal', async () => {
+    install({ sigs: [], extras: [recordedSale('aon', 285)] });
+    const m = member(await commissionForMonth(thisMonth));
+    // One forecast for the whole sale — not an "extra" on top of a base that
+    // doesn't exist, and not counted twice as both.
+    expect(m.pending.items).toHaveLength(1);
+    expect(m.pending.items[0]).toMatchObject({ dealId: 'aon', kind: 'sale', net: 285 });
+    expect(m.pending.net).toBe(285);
+  });
+
+  it('earns it once, in the month the money lands', async () => {
+    install({
+      sigs: [],
+      extras: [recordedSale('aon', 285, { status: 'paid', paid_at: inThisMonth })],
+      paid: [{ deal_id: 'aon', first_paid: inThisMonth }],
+    });
+    const m = member(await commissionForMonth(thisMonth));
+    expect(m.sales).toHaveLength(1);
+    expect(m.sales[0]).toMatchObject({ dealId: 'aon', kind: 'sale', net: 285 });
+    expect(m.commission.total).toBe(14.25); // 285 @ 5%
+    expect(m.pending.items).toEqual([]);    // nothing left to come
+  });
+
+  it('never forecasts a recorded sale on a lost deal', async () => {
+    install({ sigs: [], extras: [recordedSale('gone', 285, { stage: 'lost' })] });
+    const m = member(await commissionForMonth(thisMonth));
+    expect(m.pending.items).toEqual([]);
+  });
+
   it('quotes the same figure whichever month is on screen', async () => {
     install({
       sigs: [signed('paid-deal', 3625), signed('po-deal', 3000)],

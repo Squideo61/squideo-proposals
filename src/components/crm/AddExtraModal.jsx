@@ -9,6 +9,11 @@ import { formatGBP } from '../../utils.js';
 // Record an ad-hoc "extra" charge against a deal (extra video, human VO, extra
 // revisions…). Stage 1 is record-only: the extra is saved and shows as its own
 // pending line in Pending Payments, to be invoiced later.
+//
+// The same modal in `variant="sale"` records the whole sale on a deal that has
+// no signed proposal and never will — revisions to a job that pre-dates the CRM,
+// say. Nothing about the record differs; the words do, because "an extra on top
+// of the signed total" describes neither the money nor the deal.
 // How an extra is billed. Labels are the dropdown copy.
 const PAYMENT_OPTIONS = [
   { value: 'final', label: 'Add to the final invoice', hint: 'Sits on the deal and rides the 50% final invoice for the project.' },
@@ -17,15 +22,30 @@ const PAYMENT_OPTIONS = [
   { value: 'po', label: 'Purchase order — generate a quote to raise a PO', hint: 'Raises a Xero quote (reference “Pending PO”); turn it into an invoice from the Purchase Orders section once the PO lands.' },
 ];
 
+// Sale mode. There's no final invoice to ride, so "invoice later" is its own
+// option, and the PO route can't raise a quote against a project that was never
+// quoted — it just waits for the client's PO number.
+const SALE_PAYMENT_OPTIONS = [
+  { value: 'final', label: 'Invoice later', hint: 'Sits in Pending Payments as not-yet-invoiced until you raise the invoice.' },
+  { value: 'po_awaited', label: 'On a purchase order (not raised yet)', hint: 'Shows under Purchase Orders as “Pending PO”. Record the PO number when it arrives, then invoice against it.' },
+  { value: 'invoice_now', label: 'Create invoice now', hint: 'Raises a Xero invoice for this sale straight away.' },
+  { value: 'existing_invoice', label: 'Add to an existing invoice', hint: 'Appends this sale as a line on one of the deal’s open Xero invoices.' },
+];
+
 // An open Xero invoice can still take a new line; paid/voided ones can't.
 const isOpenInvoice = (inv) => inv && inv.xeroInvoiceId && (inv.status === 'issued' || inv.status === 'authorised');
 
-export function AddExtraModal({ dealId, deals, onClose, onCreated }) {
+export function AddExtraModal({ dealId, deals, onClose, onCreated, variant = 'extra', defaultAmount = null }) {
   const { showMsg } = useStore();
+  const saleMode = variant === 'sale';
+  const options = saleMode ? SALE_PAYMENT_OPTIONS : PAYMENT_OPTIONS;
   const dealOptions = (deals || []).filter((d) => d && d.id);
   const [selectedDealId, setSelectedDealId] = useState(dealId || (dealOptions[0]?.id ?? ''));
   const [description, setDescription] = useState('');
-  const [amount, setAmount] = useState('');
+  // Prefilled from the deal's value in sale mode, so the recorded sale and the
+  // pipeline figure agree — Marketing counts the deal's value, Finance counts
+  // this. Editable: it's a suggestion, not a rewrite.
+  const [amount, setAmount] = useState(saleMode && Number(defaultAmount) > 0 ? String(defaultAmount) : '');
   const [paymentType, setPaymentType] = useState('final');
   const [saving, setSaving] = useState(false);
   // Open invoices for the chosen deal — loaded only when "existing invoice" is
@@ -57,14 +77,16 @@ export function AddExtraModal({ dealId, deals, onClose, onCreated }) {
   const needsInvoice = paymentType === 'existing_invoice';
   const canSubmit = !!effectiveDealId && description.trim() && amountNum > 0 && !saving
     && (!needsInvoice || !!xeroInvoiceId);
-  const option = PAYMENT_OPTIONS.find((o) => o.value === paymentType) || PAYMENT_OPTIONS[0];
+  const option = options.find((o) => o.value === paymentType) || options[0];
   const submitLabel = paymentType === 'invoice_now' ? 'Create invoice'
     : paymentType === 'po' ? 'Generate PO quote'
     : paymentType === 'existing_invoice' ? 'Add to invoice'
+    : saleMode ? 'Record sale'
     : 'Add extra';
   const savingLabel = paymentType === 'invoice_now' ? 'Creating invoice…'
     : paymentType === 'po' ? 'Generating quote…'
     : paymentType === 'existing_invoice' ? 'Adding to invoice…'
+    : saleMode ? 'Recording…'
     : 'Adding…';
 
   async function handleSubmit(e) {
@@ -82,10 +104,11 @@ export function AddExtraModal({ dealId, deals, onClose, onCreated }) {
       showMsg?.(paymentType === 'po' ? 'PO quote raised'
         : paymentType === 'invoice_now' ? 'Invoice created'
         : paymentType === 'existing_invoice' ? 'Added to invoice'
+        : saleMode ? 'Sale recorded'
         : 'Extra added', 'success');
       onCreated?.(row);
     } catch (err) {
-      showMsg?.(err.message || 'Failed to add extra', 'error');
+      showMsg?.(err.message || (saleMode ? 'Failed to record the sale' : 'Failed to add extra'), 'error');
     } finally {
       setSaving(false);
     }
@@ -94,12 +117,14 @@ export function AddExtraModal({ dealId, deals, onClose, onCreated }) {
   return (
     <Modal onClose={onClose} showClose={false}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>Add extra charge</h2>
+        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>{saleMode ? 'Record a sale' : 'Add extra charge'}</h2>
         <button onClick={onClose} className="btn-icon" aria-label="Close"><X size={16} /></button>
       </div>
       <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <p style={{ margin: 0, fontSize: 12, color: BRAND.muted }}>
-          An extra charge added during production (e.g. an extra video or human VO) — on top of the signed total. Choose how it should be billed below.
+          {saleMode
+            ? 'Work sold on this deal, which has no proposal to sign. It counts as a sale straight away, sits in Pending Payments until it’s invoiced and paid, and earns the deal owner commission when the money lands.'
+            : 'An extra charge added during production (e.g. an extra video or human VO) — on top of the signed total. Choose how it should be billed below.'}
         </p>
 
         {!dealId && (
@@ -124,7 +149,7 @@ export function AddExtraModal({ dealId, deals, onClose, onCreated }) {
             type="text"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="e.g. Human VO, additional revisions"
+            placeholder={saleMode ? 'e.g. Revisions to the AON explainer' : 'e.g. Human VO, additional revisions'}
             className="input"
             autoFocus
           />
@@ -146,7 +171,7 @@ export function AddExtraModal({ dealId, deals, onClose, onCreated }) {
         <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           <span style={{ fontSize: 12, fontWeight: 600, color: BRAND.muted }}>How will this be paid?</span>
           <select value={paymentType} onChange={(e) => setPaymentType(e.target.value)} className="input">
-            {PAYMENT_OPTIONS.map((o) => (
+            {options.map((o) => (
               <option key={o.value} value={o.value}>{o.label}</option>
             ))}
           </select>

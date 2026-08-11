@@ -994,6 +994,10 @@ async function fetchExtraRows(since, until, withMeta) {
 async function fetchStandaloneInvoiceRows(since, until, includeExcluded = false) {
   try {
     await ensureInvoiceExcludeColumn();
+    // Must run before the join below: this function swallows its own errors, so
+    // a missing deal_extras table would silently drop EVERY standalone invoice
+    // out of the sales figures rather than failing loudly.
+    await ensureDealExtrasTable();
     const { notDemo } = await demoScope();
     const rows = await sql`
       SELECT mi.id, mi.invoice_number, mi.amount, mi.subtotal_ex_vat, mi.tax_amount,
@@ -1001,7 +1005,8 @@ async function fetchStandaloneInvoiceRows(since, until, includeExcluded = false)
              COALESCE(mi.issued_at, mi.created_at) AS at,
              COALESCE(mi.deal_id, pr.deal_id) AS deal_id,
              COALESCE(mi.company_id, dd.company_id, dp.company_id) AS company_id,
-             COALESCE(c.name, ddc.name, dpc.name) AS company
+             COALESCE(c.name, ddc.name, dpc.name) AS company,
+             ex.net AS extras_net
         FROM manual_invoices mi
         LEFT JOIN proposals pr  ON pr.id  = mi.proposal_id
         LEFT JOIN deals dd      ON dd.id  = mi.deal_id
@@ -1009,6 +1014,15 @@ async function fetchStandaloneInvoiceRows(since, until, includeExcluded = false)
         LEFT JOIN companies c   ON c.id   = mi.company_id
         LEFT JOIN companies ddc ON ddc.id = dd.company_id
         LEFT JOIN companies dpc ON dpc.id = dp.company_id
+        -- Extras/recorded sales billed on this invoice are already counted as
+        -- sales by fetchExtraRows; invoiceSplit nets them off so raising the
+        -- invoice doesn't count the same money twice.
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(SUM(de.amount), 0) AS net
+            FROM deal_extras de
+           WHERE mi.xero_invoice_id IS NOT NULL
+             AND de.xero_invoice_id = mi.xero_invoice_id
+        ) ex ON TRUE
        WHERE mi.status IN ('issued', 'paid')
          AND (${includeExcluded} OR NOT COALESCE(mi.exclude_from_stats, false))
          AND COALESCE(mi.issued_at, mi.created_at) >= ${since}
@@ -1048,11 +1062,21 @@ async function fetchVideoCreditSalesRows(since, until) {
 
 // Net/VAT/gross for a standalone-invoice row: prefer the stored ex-VAT subtotal +
 // tax, else treat `amount` as gross with no VAT split available.
+//
+// Any extras/recorded sales billed on the invoice are netted off first — they
+// counted as sales the day they were recorded (fetchExtraRows), so counting the
+// invoice gross too would report the same money twice. An invoice that is
+// nothing but extras comes back at zero and its callers drop it; a mixed one
+// keeps the part that isn't an extra.
 function invoiceSplit(r) {
   const gross = Number(r.amount) || 0;
   const net = r.subtotal_ex_vat != null ? Number(r.subtotal_ex_vat) : gross;
   const vat = r.tax_amount != null ? Number(r.tax_amount) : Math.max(0, gross - net);
-  return { net: round2(net), vat: round2(vat), gross: round2(net + vat) };
+  const extrasNet = Number(r.extras_net) || 0;
+  if (extrasNet <= 0 || net <= 0) return { net: round2(net), vat: round2(vat), gross: round2(net + vat) };
+  const adjNet = Math.max(0, net - extrasNet);
+  const adjVat = round2(vat * (adjNet / net)); // same rate, smaller base
+  return { net: round2(adjNet), vat: adjVat, gross: round2(adjNet + adjVat) };
 }
 
 // Monthly "cash generated" by NEW BUSINESS for a year: every deal signed valued
@@ -1096,6 +1120,7 @@ async function salesFinanceReport(year) {
     const b = monthsMap[monthKey(new Date(r.at))];
     if (!b) continue;
     const { net, vat, gross } = invoiceSplit(r);
+    if (net <= 0.005) continue; // wholly extras — already counted above
     b.net += net; b.vat += vat; b.gross += gross;
   }
   const months = Object.entries(monthsMap).map(([month, v]) => ({
@@ -1182,6 +1207,7 @@ async function salesLedgerReport(action) {
   for (const r of invRows) {
     if (!r.at) continue;
     const { net, vat, gross } = invoiceSplit(r);
+    if (net <= 0.005) continue; // wholly extras — already listed as 'extra' rows
     rows.push({
       at: new Date(r.at).toISOString(),
       net, vat, gross,
@@ -1262,6 +1288,7 @@ async function trendReport(action) {
     const b = buckets[monthKey(new Date(r.at))];
     if (!b) continue;
     const { net } = invoiceSplit(r);
+    if (net <= 0.005) continue; // wholly extras — the extras loop above has it
     b.cashGenerated += net;
     if (r.status !== 'paid') b.pps += net;
   }
@@ -1324,7 +1351,9 @@ async function pendingPaymentsReport() {
       JOIN deals d ON d.id = p.deal_id
      WHERE (s.data->>'total') ~ '^[0-9]+(\\.[0-9]+)?$'
   `).filter((r) => !isDemo(r));
-  if (!sigRows.length) {
+  // Nothing signed anywhere. Recorded sales (extras on deals with no proposal)
+  // still have to show, so only take this shortcut when there are none either.
+  if (!sigRows.length && !(await outstandingExtrasByDeal()).size) {
     const manual = await fetchManualPending();
     const other = await fetchRecurringOther();
     const otherTotal = round2(other.reduce((s, x) => s + (Number(x.amountExVat) || 0), 0));
@@ -1441,7 +1470,7 @@ async function pendingPaymentsReport() {
   await ensureDealPo();
   const infoRows = await sql`
     SELECT d.id, d.title, d.stage, d.company_id, c.name AS company_name,
-           d.po_number, d.po_received_at
+           d.po_number, d.po_received_at, d.vat_rate
       FROM deals d LEFT JOIN companies c ON c.id = d.company_id
      WHERE d.id = ANY(${dealIds})
   `;
@@ -1454,7 +1483,18 @@ async function pendingPaymentsReport() {
     // each line is tagged invoiced / not-invoiced so a not-yet-invoiced portion
     // (e.g. a 50% final) shows and can be invoiced from the list. The Live Sales
     // Sheet import is legacy now — the CRM deal is the source of truth.
-    const isPo = !!poByDeal.get(did);
+    const inf = info.get(did) || {};
+    // A deal with no signed proposal — work sold on a job that never had one
+    // ("Record sale" on the deal). Its money comes entirely from its recorded
+    // lines, so committed/plan/VAT all have to come from somewhere else.
+    const hasCommitted = committed.has(did);
+    const dealExtras = extrasByDeal.get(did) || [];
+    // PO route: from the signature normally, else from how the sale was
+    // recorded (or a PO already logged against the deal).
+    const isPo = !!poByDeal.get(did) || (!hasCommitted && (
+      dealExtras.some((e) => e.paymentType === 'po_awaited' || e.paymentType === 'po')
+      || !!inf.po_number
+    ));
     const inc = committed.get(did) || 0;
     const paidInc = paid.get(did) || 0;
     // The full outstanding on signed work (signed − paid) — both invoiced and
@@ -1462,10 +1502,16 @@ async function pendingPaymentsReport() {
     const outstandingInc = Math.max(0, inc - paidInc);
     const invUnpaidInc = Math.max(0, Math.min(invoicedDue.get(did) || 0, outstandingInc));
     // All unpaid extras (pending + invoiced) show; tagged by their own status.
-    const extras = extrasByDeal.get(did) || [];
+    const extras = dealExtras;
     const extrasNet = round2(extras.reduce((s, e) => s + (Number(e.amount) || 0), 0));
     if (outstandingInc <= 0.005 && extrasNet <= 0.005) continue;
-    const rate = rateByDeal.get(did) || 0;
+    // The proposal's rate for signed work. A recorded sale has no proposal to
+    // read one from, so it falls back to the deal's own rate (20% when unset,
+    // matching dealVatPercent in extras.js). Scoped to !hasCommitted so no
+    // existing signed row can change value.
+    const rate = hasCommitted
+      ? (rateByDeal.get(did) || 0)
+      : (inf.vat_rate != null ? Number(inf.vat_rate) : 0.2);
     const net = (v) => round2(rate > 0 ? v / (1 + rate) : v);
     const outstandingNet = net(outstandingInc);
     const invUnpaidNet = net(invUnpaidInc);
@@ -1495,14 +1541,20 @@ async function pendingPaymentsReport() {
     }
     for (const e of extras) {
       const amt = round2(Number(e.amount) || 0);
-      if (amt > 0.005) lines.push({ type: 'extra', id: e.id, label: e.description, amount: amt, status: e.status, invoiced: e.status === 'invoiced' });
+      // On a deal with a signed total these are extras ON TOP of it, and they
+      // must ride its final invoice. On a deal with no proposal the line IS the
+      // sale, so it's labelled as one — which is also what lets the UI invoice
+      // it directly (canInvoice excludes 'extra').
+      if (amt > 0.005) lines.push({ type: hasCommitted ? 'extra' : 'sale', id: e.id, label: e.description, amount: amt, status: e.status, invoiced: e.status === 'invoiced' });
     }
 
-    const inf = info.get(did) || {};
     // Gross (inc-VAT) outstanding the client actually pays — used to pre-fill a
     // direct "mark paid" against the signed deal. Extras are net £, grossed at
-    // the deal's VAT rate.
-    const extrasGross = round2(extrasNet * (1 + rate));
+    // their own VAT rate where they carry one, else the deal's.
+    const extrasGross = round2(extras.reduce((s, e) => {
+      const amt = Number(e.amount) || 0;
+      return s + amt * (1 + (e.vatRate == null ? rate : e.vatRate));
+    }, 0));
     const item = {
       dealId: did,
       proposalId: proposalIdByDeal.get(did) || null,
@@ -1515,6 +1567,9 @@ async function pendingPaymentsReport() {
       paid: net(paidInc),
       outstanding: round2(outstandingNet + extrasNet),
       outstandingGross: round2(outstandingInc + extrasGross),
+      // The rate to bill a line at, so an invoice raised from this row carries
+      // the right VAT (a recorded sale has no proposal to read it from).
+      vatRate: rate,
       lines,
       // PO tracking. PO-route deals show a "Pending PO" pill until poReceivedAt
       // is set, then "PO <number>". Any other deal can also have a PO uploaded
