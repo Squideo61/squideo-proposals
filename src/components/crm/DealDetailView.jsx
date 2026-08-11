@@ -4,7 +4,7 @@ import { AlertTriangle, ArrowLeft, Building2, Calendar, CheckSquare, ChevronDown
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
-import { formatGBP, formatRelativeTime, formatDuration, useIsMobile, formatProposalNumber, decodeHtmlEntities, fileSizeLabel } from '../../utils.js';
+import { formatGBP, formatRelativeTime, formatDuration, useIsMobile, formatProposalNumber, decodeHtmlEntities, fileSizeLabel, proposalSignedTotalExVat, proposalQuotedExVat } from '../../utils.js';
 import { sanitizeEmailBody } from '../../utils/emailImages.js';
 import { ActionMenu, Badge, CallLink, Modal, RefBadge, FormRow } from '../ui.jsx';
 import { EmailComposerModal } from './EmailComposer.jsx';
@@ -3642,6 +3642,16 @@ function proposalCreatedMs(p) {
   return Number.isFinite(local) ? local : 0;
 }
 
+// What a proposal is worth, ex VAT — the same figure the proposals list shows,
+// so the two can't disagree about the same proposal. Once signed that's what the
+// client actually agreed to, extras and discounts included; basePrice alone
+// quotes the headline and misses both.
+function proposalFigureExVat(p) {
+  return p?._signature
+    ? proposalSignedTotalExVat(p, p._signature)
+    : proposalQuotedExVat(p);
+}
+
 function CreateOrLinkProposalModal({ deal, contact, company, onClose, onCreate, onLink }) {
   const { state } = useStore();
   const [query, setQuery] = useState('');
@@ -3698,7 +3708,7 @@ function CreateOrLinkProposalModal({ deal, contact, company, onClose, onCreate, 
   const renderRow = (p) => {
     const num = formatProposalNumber(p._number);
     const signed = !!p._signature;
-    const price = p.totalExVat ?? p.basePrice;
+    const price = proposalFigureExVat(p);
     return (
       <button
         key={p.id}
@@ -3730,27 +3740,31 @@ function CreateOrLinkProposalModal({ deal, contact, company, onClose, onCreate, 
     );
   };
 
-  // A proposal already on another deal. Moving an unsigned one is just a
-  // re-point (the server re-parents it and tidies up any shadow deal it left).
-  // A SIGNED one carries the money — the old deal's committed value, order
-  // summary and commission all read from it — so that stays a decision to make
-  // deliberately, not a click in a search box.
+  // A proposal already on another deal. Moving it re-points it here (the server
+  // re-parents it and tidies up any shadow deal it left behind). A signed one
+  // takes its money with it — the old deal's value, order summary and the
+  // commission that reads off it — which is exactly what you want when a job was
+  // sold on one deal and belongs on its own, so it's allowed, and the confirm
+  // says what travels rather than the button quietly refusing.
   const renderAttachedRow = (p) => {
     const num = formatProposalNumber(p._number);
     const signed = !!p._signature;
-    const price = p.totalExVat ?? p.basePrice;
+    const price = proposalFigureExVat(p);
     const onDeal = state.deals?.[p._dealId];
     const dealName = onDeal?.title || 'another deal';
+    const onDealLabel = onDeal?.title ? `“${dealName}”` : 'another deal';
     return (
       <button
         key={p.id}
-        disabled={signed || !!linkingId}
-        title={signed
-          ? 'Signed proposals stay with the deal they were signed on — that deal’s value, order and commission all come from it.'
-          : `Move this proposal from “${dealName}” onto this deal`}
+        disabled={!!linkingId}
+        title={`Move this proposal from ${onDealLabel} onto this deal`}
         onClick={() => {
-          if (signed || linkingId) return;
-          if (!window.confirm(`“${p.clientName || p.contactBusinessName || 'This proposal'}” is on ${onDeal?.title ? `“${dealName}”` : 'another deal'}.\n\nMove it onto this deal instead?`)) return;
+          if (linkingId) return;
+          const what = num || p.clientName || p.contactBusinessName || 'This proposal';
+          const consequence = signed
+            ? `\n\nIt's signed, so its value, order summary and commission move with it — ${onDealLabel} keeps its stage but loses the proposal.`
+            : '';
+          if (!window.confirm(`${what} is on ${onDealLabel}.\n\nMove it onto this deal?${consequence}`)) return;
           setLinkingId(p.id);
           onLink(p.id, p._dealId);
         }}
@@ -3758,8 +3772,8 @@ function CreateOrLinkProposalModal({ deal, contact, company, onClose, onCreate, 
           display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
           width: '100%', padding: '8px 10px', background: BRAND.paper,
           border: '1px solid ' + BRAND.border, borderRadius: 6,
-          cursor: signed || linkingId ? 'default' : 'pointer', textAlign: 'left', fontFamily: 'inherit',
-          opacity: signed ? 0.65 : (linkingId && linkingId !== p.id ? 0.5 : 1),
+          cursor: linkingId ? 'default' : 'pointer', textAlign: 'left', fontFamily: 'inherit',
+          opacity: linkingId && linkingId !== p.id ? 0.5 : 1,
         }}
       >
         <div style={{ minWidth: 0, flex: 1 }}>
@@ -3769,12 +3783,12 @@ function CreateOrLinkProposalModal({ deal, contact, company, onClose, onCreate, 
             {signed ? <Badge color="green">Signed</Badge> : <Badge color="grey">Unsigned</Badge>}
           </div>
           <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 2 }}>
-            On {onDeal?.title ? `“${dealName}”` : 'another deal'}
+            On {onDealLabel}
             {price != null ? ` · ${formatGBP(price)} ex VAT` : ''}
           </div>
         </div>
-        <span style={{ fontSize: 12, color: signed ? BRAND.muted : BRAND.blue, fontWeight: 600, whiteSpace: 'nowrap' }}>
-          {linkingId === p.id ? 'Moving…' : (signed ? 'Signed' : 'Move here')}
+        <span style={{ fontSize: 12, color: BRAND.blue, fontWeight: 600, whiteSpace: 'nowrap' }}>
+          {linkingId === p.id ? 'Moving…' : 'Move here'}
         </span>
       </button>
     );
