@@ -3435,7 +3435,16 @@ function EditDealModal({ deal, onClose }) {
   // Save. Read from the live detail so chips update as they're added/removed.
   const [pickingExtra, setPickingExtra] = useState(false);
   const [creatingExtra, setCreatingExtra] = useState(null); // { email?, name? } prefill
-  const secondaryContacts = state.dealDetail?.[deal.id]?.secondaryContacts || [];
+  const [editingContact, setEditingContact] = useState(null); // the contact being edited
+  // Anyone promoted to primary in this form is still a secondary in the saved
+  // detail until Save lands, so drop them from the chips — nobody should appear
+  // as both.
+  const secondaryContacts = (state.dealDetail?.[deal.id]?.secondaryContacts || [])
+    .filter((c) => c.id !== primaryContactId);
+
+  // Open the shared contact editor, preferring the full CRM record (phone,
+  // title, company, notes) over the slimmed-down chip the deal carries.
+  const editContact = (c) => { if (c) setEditingContact(state.contacts?.[c.id] || c); };
 
   const users = Object.values(state.users || {});
 
@@ -3542,7 +3551,7 @@ function EditDealModal({ deal, onClose }) {
           <span>Primary contact</span>
           {!addingContact ? (
             <>
-              <ContactSearchPicker value={primaryContactId} onChange={setPrimaryContactId} />
+              <ContactSearchPicker value={primaryContactId} onChange={setPrimaryContactId} onEdit={editContact} />
               <button type="button" onClick={() => { setAddingContact(true); setNewContactCompanyId(companyId || ''); setContactErr(''); }} className="btn-ghost" style={{ alignSelf: 'flex-start', fontSize: 12, marginTop: 2 }}>+ New contact</button>
             </>
           ) : (
@@ -3575,7 +3584,14 @@ function EditDealModal({ deal, onClose }) {
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
             {secondaryContacts.length === 0 && <span style={{ fontSize: 12, color: BRAND.muted }}>None yet</span>}
             {secondaryContacts.map((c) => (
-              <ContactChip key={c.id} contact={c} label="secondary" removable onRemove={() => actions.removeDealContact(deal.id, c.id)} />
+              <ContactChip
+                key={c.id}
+                contact={c}
+                label="secondary"
+                removable
+                onRemove={() => actions.removeDealContact(deal.id, c.id)}
+                onEdit={() => editContact(c)}
+              />
             ))}
             <button type="button" onClick={() => setPickingExtra(true)} className="btn-ghost" style={{ fontSize: 12, padding: '4px 10px' }}>
               <Plus size={12} /> Add contact
@@ -3616,6 +3632,19 @@ function EditDealModal({ deal, onClose }) {
           prefill={creatingExtra}
           onClose={() => setCreatingExtra(null)}
           onCreated={() => setCreatingExtra(null)}
+        />
+      )}
+      {editingContact && (
+        <ContactModal
+          contact={editingContact}
+          dealContext={{
+            isPrimary: editingContact.id === primaryContactId,
+            // Promotion is part of this form, so it just moves the picker —
+            // Save applies it (and the server demotes the old primary to a
+            // secondary, so nobody is dropped).
+            onMakePrimary: () => { setPrimaryContactId(editingContact.id); setEditingContact(null); },
+          }}
+          onClose={() => { setEditingContact(null); actions.loadDealDetail(deal.id); }}
         />
       )}
     </Modal>
@@ -4114,7 +4143,7 @@ function ContactChip({ contact, label, removable, onRemove, onEdit }) {
       }}
       onMouseEnter={clickable ? (e) => { e.currentTarget.style.background = '#F4F8FB'; e.currentTarget.style.borderColor = BRAND.blue; } : undefined}
       onMouseLeave={clickable ? (e) => { e.currentTarget.style.background = 'white'; e.currentTarget.style.borderColor = BRAND.border; } : undefined}
-      title={subtitle ? `${display} · ${subtitle} — click to edit` : `${display} — click to edit`}
+      title={[subtitle ? `${display} · ${subtitle}` : display, clickable ? ' — click to edit' : ''].join('')}
     >
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {display}

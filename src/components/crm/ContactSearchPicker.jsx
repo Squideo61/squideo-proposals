@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Mail, Search, X } from 'lucide-react';
+import { Mail, Pencil, Search, X } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 
@@ -49,9 +49,14 @@ export function useSuggestedContact(emails) {
 // an email thread, say. Any that match a contact are offered first, before
 // anything has been typed, so the obvious answer is one click away instead of
 // somewhere in an alphabetical list of hundreds.
+//
+// `onEdit` (optional) adds a pencil next to the chosen contact, for forms that
+// can open the contact editor — fixing a typo'd email shouldn't mean leaving the
+// form for the Contacts page.
 export function ContactSearchPicker({
   value = '',
   onChange,
+  onEdit = null,
   suggestEmails = [],
   limit = 8,
   autoFocus = false,
@@ -125,6 +130,17 @@ export function ContactSearchPicker({
             <div style={{ fontSize: 11.5, color: BRAND.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selected.email}</div>
           )}
         </div>
+        {onEdit && (
+          <button
+            type="button"
+            className="btn-icon"
+            aria-label="Edit contact"
+            title="Edit this contact's details"
+            onClick={() => onEdit(selected)}
+          >
+            <Pencil size={13} />
+          </button>
+        )}
         <button
           type="button"
           className="btn-icon"
