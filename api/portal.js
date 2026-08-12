@@ -2018,8 +2018,15 @@ async function downloadRoute(req, res, user) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
   const scope = req.query.scope ? String(req.query.scope) : null;
   const id = req.query.id ? String(req.query.id) : null;
+  // Every scope names its file with `id` except a delivered cut, which is
+  // identified by the project video it belongs to — the library page sends
+  // dealId + videoId and no id at all. Requiring `id` here 400'd every cut tile
+  // before it reached its branch below: no playback, no download.
+  const videoId = req.query.videoId ? String(req.query.videoId) : null;
   const wantDownload = req.query.download === '1';
-  if (!scope || !id) return res.status(400).json({ error: 'scope and id required' });
+  if (!scope || (!id && !(scope === 'cut' && videoId))) {
+    return res.status(400).json({ error: 'scope and id required' });
+  }
 
   // Worth knowing who actually took delivery, and of what.
   //
@@ -2134,12 +2141,12 @@ async function downloadRoute(req, res, user) {
   if (scope === 'cut') {
     const deal = await requireDealInOrg(res, req.query.dealId ? String(req.query.dealId) : null, user.companyIds);
     if (!deal) return;
-    const videoId = req.query.videoId ? String(req.query.videoId) : id;
+    const cutVideoId = videoId || id;
     const rows = await sql`
       SELECT rver.blob_url, pv.title
         FROM project_videos pv
         JOIN revision_versions rver ON rver.video_id = pv.revision_video_id
-       WHERE pv.id = ${videoId} AND pv.deal_id = ${deal.id}
+       WHERE pv.id = ${cutVideoId} AND pv.deal_id = ${deal.id}
          AND pv.production_stage = 'delivered' AND rver.blob_url IS NOT NULL
        ORDER BY rver.version_number DESC, rver.created_at DESC
        LIMIT 1
