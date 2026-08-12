@@ -1053,7 +1053,8 @@ async function sendVideoForReview(res, videoId, user) {
     revisionProjectId: revProjectId,
     revisionVideoId: revVideoId,
     shareToken,
-    reviewUrl: `${REVISION_PUBLIC_BASE}/?revision=${shareToken}`,
+    // &item= so the link opens THIS video, not the project's first one.
+    reviewUrl: `${REVISION_PUBLIC_BASE}/?revision=${shareToken}&item=${revVideoId}`,
   });
 }
 
@@ -1195,7 +1196,7 @@ async function sendStoryboardForReview(res, videoId, user) {
     storyboardProjectId: projectId,
     storyboardId,
     shareToken,
-    reviewUrl: `${REVISION_PUBLIC_BASE}/?storyboard=${shareToken}`,
+    reviewUrl: `${REVISION_PUBLIC_BASE}/?storyboard=${shareToken}&item=${storyboardId}`,
   });
 }
 

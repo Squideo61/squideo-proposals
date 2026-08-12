@@ -51,7 +51,9 @@ const sbApi = {
   },
 };
 
-export default function Storyboard({ token }) {
+// itemId/draftId: see Review.jsx — which storyboard (and draft) this link was
+// sent about, since the token covers the whole project.
+export default function Storyboard({ token, itemId = null, draftId = null }) {
   const { user, showToast } = usePortal();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
@@ -82,7 +84,8 @@ export default function Storyboard({ token }) {
         <div style={{ padding: 40, textAlign: 'center', color: BRAND.muted, fontSize: 14 }}>Loading storyboard…</div>
       ) : (
         <div style={{ flex: 1, minHeight: 0, background: BRAND.paper, color: BRAND.ink }}>
-          <StoryboardRevision token={token} data={data} api={sbApi} showMsg={showToast} identity={identity} embedded />
+          <StoryboardRevision token={token} data={data} api={sbApi} showMsg={showToast} identity={identity} embedded
+            initialStoryboardId={itemId} initialVersionId={draftId} />
         </div>
       )}
     </div>

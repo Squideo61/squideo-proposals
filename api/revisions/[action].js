@@ -409,7 +409,10 @@ async function projectDetail(res, id) {
     SELECT id, video_id, version_number, label, filename, mime_type, size_bytes,
            blob_url, uploaded_by, created_at, completed_at, completed_by
     FROM revision_versions WHERE project_id = ${id}
-    ORDER BY version_number DESC
+    -- created_at breaks the tie: deleting and re-uploading a draft can reuse a
+    -- version_number, and the newest row still has to come first — the viewer
+    -- opens whatever leads this list.
+    ORDER BY version_number DESC, created_at DESC
   `;
   const views = await sql`
     SELECT version_id, viewer_name, viewer_email, view_count, first_viewed_at, last_viewed_at
@@ -753,7 +756,7 @@ async function publicView(req, res) {
   const versions = await sql`
     SELECT id, video_id, version_number, label, mime_type, blob_url, created_at
     FROM revision_versions WHERE project_id = ${project.id}
-    ORDER BY version_number DESC
+    ORDER BY version_number DESC, created_at DESC
   `;
   const comments = await sql`
     SELECT rc.id, rc.version_id, rc.parent_id, rc.timecode_seconds,

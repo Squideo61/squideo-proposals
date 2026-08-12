@@ -449,8 +449,11 @@ export function RevisionsView({ onBack, projectId, onOpenProject, onCloseProject
   );
 }
 
-function CopyLinkButton({ token, showMsg }) {
-  const url = PUBLIC_BASE + '/?revision=' + token;
+// The token covers the whole project, so pass the video being looked at and the
+// link opens on it — without one it opens whichever video is waiting on the
+// client most recently.
+function CopyLinkButton({ token, videoId = null, showMsg }) {
+  const url = PUBLIC_BASE + '/?revision=' + token + (videoId ? '&item=' + videoId : '');
   return (
     <button
       onClick={() => navigator.clipboard.writeText(url).then(() => showMsg('Revision link copied')).catch(() => {})}
@@ -546,7 +549,7 @@ function ProjectDetail({ projectId, onBack }) {
             projectId={projectId} kind="revision"
             onLinked={() => actions.loadRevisionDetail(projectId)} />
           <button onClick={addVideo} className="btn-ghost"><Plus size={14} /> Add video</button>
-          <CopyLinkButton token={detail.shareToken} showMsg={showMsg} />
+          <CopyLinkButton token={detail.shareToken} videoId={activeVideo?.id || null} showMsg={showMsg} />
         </div>
       </header>
 

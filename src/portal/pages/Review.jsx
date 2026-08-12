@@ -54,7 +54,10 @@ const revApi = {
   },
 };
 
-export default function Review({ token }) {
+// itemId/draftId come from #/review/<token>?item=…&draft=… — which video (and
+// draft) the row or notification that brought them here was about. The token is
+// project-wide, so without them the viewer picks the newest draft awaiting them.
+export default function Review({ token, itemId = null, draftId = null }) {
   const { user, showToast } = usePortal();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
@@ -85,7 +88,8 @@ export default function Review({ token }) {
         <div style={{ padding: 40, textAlign: 'center', color: BRAND.muted, fontSize: 14 }}>Loading review…</div>
       ) : (
         <div style={{ flex: 1, minHeight: 0, background: BRAND.paper, color: BRAND.ink }}>
-          <VideoRevision token={token} data={data} api={revApi} showMsg={showToast} identity={identity} embedded />
+          <VideoRevision token={token} data={data} api={revApi} showMsg={showToast} identity={identity} embedded
+            initialVideoId={itemId} initialVersionId={draftId} />
         </div>
       )}
     </div>

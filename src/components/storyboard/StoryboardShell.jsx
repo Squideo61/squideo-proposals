@@ -9,12 +9,16 @@ import { PortalReturnBar } from '../revision/PortalReturnBar.jsx';
 // (/?storyboard=<share_token>). Mirrors RevisionShell: load once, render the
 // viewer, surface a friendly message if the link is dead.
 // An optional &draft=<versionId> opens the viewer on that specific draft — the
-// per-draft "Copy link" buttons in the CRM produce those.
+// per-draft "Copy link" buttons in the CRM produce those — and &item=<id> on a
+// particular storyboard's newest draft. Without either, the viewer opens the
+// newest draft still waiting on the client.
 export function StoryboardShell({ token }) {
   const { actions, showMsg, toast } = useStore();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
-  const draftId = new URLSearchParams(window.location.search).get('draft');
+  const params = new URLSearchParams(window.location.search);
+  const draftId = params.get('draft');
+  const storyboardId = params.get('item');
 
   useEffect(() => {
     let alive = true;
@@ -34,7 +38,8 @@ export function StoryboardShell({ token }) {
   return (
     <div style={{ background: BRAND.paper, color: BRAND.ink }}>
       <PortalReturnBar />
-      <StoryboardRevision token={token} data={data} api={actions} showMsg={showMsg} initialVersionId={draftId} />
+      <StoryboardRevision token={token} data={data} api={actions} showMsg={showMsg}
+        initialStoryboardId={storyboardId} initialVersionId={draftId} />
       <Toast msg={toast} />
     </div>
   );

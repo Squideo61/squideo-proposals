@@ -3,6 +3,7 @@ import { MessageSquare, Send, Clapperboard, Paperclip, X, FileDown, CheckCircle2
 import { BRAND } from '../../theme.js';
 import { useIsMobile } from '../../utils.js';
 import { ConflictBanner } from './ConflictBanner.jsx';
+import { pickReviewDefault, newestVersion } from '../../lib/reviewDefaults.js';
 
 const NAME_KEY = 'squideo.revision.name';
 const EMAIL_KEY = 'squideo.revision.email';
@@ -68,7 +69,8 @@ function CommentAttachment({ url, name, type }) {
  * fn. When `identity` ({ name, email }) is supplied — a logged-in portal user —
  * the name/email gate is skipped and their verified details are used instead.
  */
-export function VideoRevision({ token, data, api, showMsg, identity = null, embedded = false }) {
+export function VideoRevision({ token, data, api, showMsg, identity = null, embedded = false,
+  initialVideoId = null, initialVersionId = null }) {
   const preIdentified = !!(identity && isEmail(identity.email || ''));
   const videoRef = useRef(null);
   const composerRef = useRef(null);
@@ -103,13 +105,21 @@ export function VideoRevision({ token, data, api, showMsg, identity = null, embe
   }
 
   // ── Video + draft selection ─────────────────────────────────────────────────
+  // One share token covers every video on the project, so which video to open
+  // is decided here. `initialVideoId`/`initialVersionId` come from the link
+  // (&item=/&draft=); without them we open the newest draft still waiting on
+  // the client rather than the project's first-ever video. See reviewDefaults.
   const videos = data.videos || [];
-  const [videoId, setVideoId] = useState(videos[0]?.id || null);
+  const initial = useMemo(() => pickReviewDefault(videos, {
+    itemId: initialVideoId, versionId: initialVersionId,
+    isAwaiting: v => !v.approvedAt && !v.feedbackSubmittedAt,
+  }), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const [videoId, setVideoId] = useState(initial.itemId);
   const activeVideo = videos.find(v => v.id === videoId) || videos[0] || null;
   const versions = activeVideo?.versions || [];
-  const [versionId, setVersionId] = useState(versions[0]?.id || null);
+  const [versionId, setVersionId] = useState(initial.versionId);
   // Keep a valid draft selected as the video changes.
-  const version = versions.find(v => v.id === versionId) || versions[0] || null;
+  const version = versions.find(v => v.id === versionId) || newestVersion(activeVideo) || null;
 
   const [comments, setComments] = useState(data.comments || []);
   const [activeViewers, setActiveViewers] = useState(data.activeViewers || []);
@@ -149,7 +159,7 @@ export function VideoRevision({ token, data, api, showMsg, identity = null, embe
   function selectVideo(id) {
     setVideoId(id);
     const v = videos.find(x => x.id === id);
-    setVersionId(v?.versions?.[0]?.id || null);
+    setVersionId(newestVersion(v)?.id || null);
   }
 
   const versionComments = useMemo(() => {

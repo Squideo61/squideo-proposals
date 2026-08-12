@@ -57,6 +57,7 @@ import { buildNotificationEmail } from './quote-requests.js';
 import { ensurePortalTables } from './_lib/portal/db.js';
 import { logPortalActivity } from './_lib/portal/activity.js';
 import { isFinalReleaseUnlocked, advanceDeliveredIfUnlocked } from './_lib/crm/delivery.js';
+import { portalReviewLinkFor } from './_lib/crm/clientReview.js';
 import {
   companyCreditBalance,
   videoCreditPricingParams,
@@ -330,6 +331,21 @@ async function gatherDealStates(dealIds) {
        ORDER BY v.sort_order ASC, v.created_at ASC
     `,
     sql`
+      // Ordered so the portal's list of reviews reads in video order rather than
+      // whatever the planner returned — the "ready to review" banner used to
+      // name an arbitrary video because of it. client_submitted_at (which the
+      // banner picks the most recent by) is added by the revisions router's
+      // self-heal, so fall back to the column-free query on a database that
+      // hasn't had it yet rather than losing every link.
+      SELECT COALESCE(rp.deal_id, dd.id) AS deal_id, rp.share_token, rp.approved_at AS project_approved_at,
+             rv.id AS video_id, rv.title AS video_title, rv.approved_at, rv.feedback_submitted_at,
+             rv.client_submitted_version, rv.client_submitted_at
+        FROM revision_projects rp
+        JOIN revision_videos rv ON rv.project_id = rp.id
+        LEFT JOIN deals dd ON dd.revision_project_id = rp.id
+       WHERE rp.deal_id = ANY(${dealIds}) OR dd.id = ANY(${dealIds})
+       ORDER BY rv.sort_order, rv.created_at
+    `.catch(() => sql`
       SELECT COALESCE(rp.deal_id, dd.id) AS deal_id, rp.share_token, rp.approved_at AS project_approved_at,
              rv.id AS video_id, rv.title AS video_title, rv.approved_at, rv.feedback_submitted_at,
              rv.client_submitted_version
@@ -337,18 +353,20 @@ async function gatherDealStates(dealIds) {
         JOIN revision_videos rv ON rv.project_id = rp.id
         LEFT JOIN deals dd ON dd.revision_project_id = rp.id
        WHERE rp.deal_id = ANY(${dealIds}) OR dd.id = ANY(${dealIds})
-    `.catch(() => []),
+       ORDER BY rv.sort_order, rv.created_at
+    `).catch(() => []),
     // approved_version (which draft the approval covers) is added by the
     // storyboards router's self-heal, so fall back to the column-free query on a
     // database that hasn't had it applied yet rather than losing every link.
     sql`
       SELECT COALESCE(sp.deal_id, dd.id) AS deal_id, sp.share_token, sb.id AS storyboard_id, sb.title AS storyboard_title,
              sb.approved_at, sb.approved_version, sb.feedback_submitted_at,
-             sb.client_submitted_version
+             sb.client_submitted_version, sb.client_submitted_at
         FROM storyboard_projects sp
         JOIN storyboards sb ON sb.project_id = sp.id
         LEFT JOIN deals dd ON dd.storyboard_project_id = sp.id
        WHERE sp.deal_id = ANY(${dealIds}) OR dd.id = ANY(${dealIds})
+       ORDER BY sb.sort_order, sb.created_at
     `.catch(() => sql`
       SELECT COALESCE(sp.deal_id, dd.id) AS deal_id, sp.share_token, sb.id AS storyboard_id, sb.title AS storyboard_title,
              sb.approved_at, sb.feedback_submitted_at,
@@ -357,6 +375,7 @@ async function gatherDealStates(dealIds) {
         JOIN storyboards sb ON sb.project_id = sp.id
         LEFT JOIN deals dd ON dd.storyboard_project_id = sp.id
        WHERE sp.deal_id = ANY(${dealIds}) OR dd.id = ANY(${dealIds})
+       ORDER BY sb.sort_order, sb.created_at
     `).catch(() => []),
     sql`
       SELECT DISTINCT ON (deal_id) deal_id, starts_at, meet_url, client_timezone
@@ -410,8 +429,13 @@ async function gatherDealStates(dealIds) {
     videos.get(v.deal_id).push(v);
   }
 
-  const revPending = new Map(); // dealId -> { shareToken, videoTitle }
-  const revLinks = new Map();   // dealId -> [{ shareToken, title, approved, feedbackSubmitted }]
+  // The banner names ONE video, so of several waiting it takes the one sent
+  // most recently — that's the one the client was last asked about, and its id
+  // rides along on the link so the viewer opens it rather than video 1.
+  const sentAt = (r) => new Date(r?.client_submitted_at || 0).getTime() || 0;
+  const pendingSentAt = new Map(); // dealId -> timestamp of the row currently held
+  const revPending = new Map(); // dealId -> { shareToken, videoId, videoTitle }
+  const revLinks = new Map();   // dealId -> [{ shareToken, videoId, title, approved, feedbackSubmitted }]
   for (const r of revRows) {
     if (!revLinks.has(r.deal_id)) revLinks.set(r.deal_id, []);
     // Only surface a review the client has actually been sent (a draft uploaded
@@ -425,12 +449,17 @@ async function gatherDealStates(dealIds) {
         approved: !!r.approved_at,
         feedbackSubmitted: !!r.feedback_submitted_at,
       });
-      if (!r.approved_at && !r.feedback_submitted_at && !revPending.has(r.deal_id)) {
-        revPending.set(r.deal_id, { shareToken: r.share_token, videoTitle: r.video_title });
+      if (!r.approved_at && !r.feedback_submitted_at
+        && sentAt(r) >= (pendingSentAt.get(r.deal_id) ?? -1)) {
+        pendingSentAt.set(r.deal_id, sentAt(r));
+        revPending.set(r.deal_id, {
+          shareToken: r.share_token, videoId: r.video_id, videoTitle: r.video_title,
+        });
       }
     }
   }
 
+  const sbPendingSentAt = new Map(); // see pendingSentAt above
   const sbPending = new Map();
   const sbLinks = new Map();
   for (const r of sbRows) {
@@ -444,12 +473,17 @@ async function gatherDealStates(dealIds) {
         && (r.approved_version == null || r.approved_version >= (r.client_submitted_version ?? 0));
       sbLinks.get(r.deal_id).push({
         shareToken: r.share_token,
+        storyboardId: r.storyboard_id,
         title: r.storyboard_title,
         approved,
         feedbackSubmitted: !!r.feedback_submitted_at,
       });
-      if (!approved && !r.feedback_submitted_at && !sbPending.has(r.deal_id)) {
-        sbPending.set(r.deal_id, { shareToken: r.share_token, storyboardTitle: r.storyboard_title });
+      if (!approved && !r.feedback_submitted_at
+        && sentAt(r) >= (sbPendingSentAt.get(r.deal_id) ?? -1)) {
+        sbPendingSentAt.set(r.deal_id, sentAt(r));
+        sbPending.set(r.deal_id, {
+          shareToken: r.share_token, storyboardId: r.storyboard_id, storyboardTitle: r.storyboard_title,
+        });
       }
     }
   }
@@ -1165,14 +1199,14 @@ async function authRoutes(req, res) {
             portalUserId: user.id, companyId: inv.company_id, dealId: deal.id,
             key: 'portal.storyboard_ready', title: 'Your storyboard is ready to review',
             body: `A storyboard on ${deal.title} is ready for your feedback.`,
-            link: `#/storyboard/${sb.shareToken}`,
+            link: portalReviewLinkFor('storyboard', sb.shareToken, sb.storyboardId),
           });
           const rv = states.revPending.get(deal.id);
           if (rv) await notifyPortalUser({
             portalUserId: user.id, companyId: inv.company_id, dealId: deal.id,
             key: 'portal.revision_ready', title: 'Your video is ready to review',
             body: `A video on ${deal.title} is ready for your feedback.`,
-            link: `#/review/${rv.shareToken}`,
+            link: portalReviewLinkFor('video', rv.shareToken, rv.videoId),
           });
         }
       }

@@ -71,7 +71,9 @@ export function deriveNextStep({
         ? `“${revisionPending.videoTitle}” is ready for your review`
         : 'A new cut is ready for your review',
       detail: 'Watch the latest draft, drop timecoded comments right on the video, then send your feedback (or approve it!).',
-      cta: { label: 'Watch & give feedback', href: `/?revision=${encodeURIComponent(revisionPending.shareToken)}` },
+      // &item= so the CTA opens the video it just named in the headline.
+      cta: { label: 'Watch & give feedback', href: `/?revision=${encodeURIComponent(revisionPending.shareToken)}`
+        + (revisionPending.videoId ? `&item=${encodeURIComponent(revisionPending.videoId)}` : '') },
     };
   }
 
@@ -83,7 +85,8 @@ export function deriveNextStep({
         ? `Storyboard “${storyboardPending.storyboardTitle}” is ready for review`
         : 'Your storyboard is ready for review',
       detail: 'Review each frame, pin comments where you’d like changes, then send your feedback or approve.',
-      cta: { label: 'Review storyboard', href: `/?storyboard=${encodeURIComponent(storyboardPending.shareToken)}` },
+      cta: { label: 'Review storyboard', href: `/?storyboard=${encodeURIComponent(storyboardPending.shareToken)}`
+        + (storyboardPending.storyboardId ? `&item=${encodeURIComponent(storyboardPending.storyboardId)}` : '') },
     };
   }
 

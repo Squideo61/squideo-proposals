@@ -15,8 +15,19 @@ import { sendMail, APP_URL } from '../email.js';
 import { performGmailSend } from './gmail.js';
 
 // The anonymous client review links (same format the "Copy link" buttons use).
-export const reviewUrlFor = (kind, shareToken) => (shareToken
+// A share token covers the whole project, so `itemId` — the revision_videos /
+// storyboards row this link is about — is what makes the viewer open the right
+// video rather than the project's first one. Optional only so callers without
+// an item in hand still get a working link.
+export const reviewUrlFor = (kind, shareToken, itemId = null) => (shareToken
   ? `${APP_URL}/?${kind === 'storyboard' ? 'storyboard' : 'revision'}=${shareToken}`
+    + (itemId ? `&item=${itemId}` : '')
+  : null);
+
+// The portal twin of the above (#/review/<token>?item=<id>).
+export const portalReviewLinkFor = (kind, shareToken, itemId = null) => (shareToken
+  ? `#/${kind === 'storyboard' ? 'storyboard' : 'review'}/${shareToken}`
+    + (itemId ? `?item=${itemId}` : '')
   : null);
 
 async function logDealEvent(dealId, eventType, payload, actorEmail) {
@@ -71,7 +82,7 @@ export async function submitRevisionToClient({ revisionVideoId, actorEmail, emai
       key: 'portal.revision_ready',
       title: 'Your video is ready to review',
       body: `A new version of "${row.title}" is ready for your feedback.`,
-      link: `#/review/${row.share_token}`,
+      link: portalReviewLinkFor('video', row.share_token, revisionVideoId),
     });
     await logDealEvent(row.deal_id, 'revision_submitted_to_client',
       { video: row.title, version: row.max_ver }, actorEmail);
@@ -123,7 +134,7 @@ export async function submitStoryboardToClient({ storyboardId, actorEmail, email
       key: 'portal.storyboard_ready',
       title: 'Your storyboard is ready to review',
       body: `A new version of "${row.title}" is ready for your feedback.`,
-      link: `#/storyboard/${row.share_token}`,
+      link: portalReviewLinkFor('storyboard', row.share_token, storyboardId),
     });
     await logDealEvent(row.deal_id, 'storyboard_submitted_to_client',
       { storyboard: row.title, version: row.max_ver }, actorEmail);
@@ -185,7 +196,7 @@ export async function reviewEmailContext({ kind, itemId, actorEmail }) {
     companyName: row.company_name || null,
     companyId: row.company_id || null,
     dealId: row.deal_id || null,
-    reviewUrl: reviewUrlFor(kind, row.share_token),
+    reviewUrl: reviewUrlFor(kind, row.share_token, itemId),
     version: row.max_ver,
     clientSubmittedVersion: row.client_submitted_version ?? null,
     hasDraft: row.max_ver != null,

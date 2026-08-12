@@ -6,6 +6,7 @@ import { loadPdf } from '../../lib/pdf.js';
 import { PdfPage } from './PdfPage.jsx';
 import { PdfThumb } from './PdfThumb.jsx';
 import { ConflictBanner } from '../revision/ConflictBanner.jsx';
+import { pickReviewDefault, newestVersion } from '../../lib/reviewDefaults.js';
 
 const NAME_KEY = 'squideo.storyboard.name';
 const EMAIL_KEY = 'squideo.storyboard.email';
@@ -103,7 +104,8 @@ function CommentAttachment({ url, name, type }) {
  * draft PDF versions. Reviewers must enter their name + email before viewing,
  * then comment per-slide (optionally pinned to a spot) and approve.
  */
-export function StoryboardRevision({ token, data, api, showMsg, identity = null, embedded = false, initialVersionId = null }) {
+export function StoryboardRevision({ token, data, api, showMsg, identity = null, embedded = false,
+  initialStoryboardId = null, initialVersionId = null }) {
   const preIdentified = !!(identity && isEmail(identity.email || ''));
   // Phones get a stacked layout: the desktop three-column split (148px slide
   // rail + slide + 380px thread) leaves the slide a few pixels wide on a 390px
@@ -136,18 +138,25 @@ export function StoryboardRevision({ token, data, api, showMsg, identity = null,
   }
 
   // ── Storyboard + draft selection ────────────────────────────────────────────
+  // A per-draft link (…&draft=<versionId>) opens straight on that draft, and
+  // …&item=<storyboardId> on that storyboard's newest draft. Without either —
+  // and one share token covers every storyboard on the project — we open the
+  // newest draft still waiting on the client rather than the first storyboard
+  // ever created. See reviewDefaults.
   const storyboards = data.storyboards || [];
-  // A per-draft link (…&draft=<versionId>) opens straight on that draft. If the
-  // draft isn't visible to this viewer — not submitted yet, or deleted — we fall
-  // back to the newest one they can see.
-  const deepLink = storyboards
-    .map(s => ({ storyboardId: s.id, version: (s.versions || []).find(v => v.id === initialVersionId) }))
-    .find(x => x.version) || null;
-  const [storyboardId, setStoryboardId] = useState(deepLink?.storyboardId || storyboards[0]?.id || null);
+  const initial = useMemo(() => pickReviewDefault(storyboards, {
+    itemId: initialStoryboardId, versionId: initialVersionId,
+    // An approval only closes the draft it was given for, so a storyboard with
+    // a newer draft since is still awaiting the client.
+    isAwaiting: s => !s.feedbackSubmittedAt
+      && !(s.approvedAt && (s.approvedVersion == null
+        || (newestVersion(s)?.versionNumber ?? 0) <= s.approvedVersion)),
+  }), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const [storyboardId, setStoryboardId] = useState(initial.itemId);
   const activeStoryboard = storyboards.find(s => s.id === storyboardId) || storyboards[0] || null;
   const versions = activeStoryboard?.versions || [];
-  const [versionId, setVersionId] = useState(deepLink?.version.id || versions[0]?.id || null);
-  const version = versions.find(v => v.id === versionId) || versions[0] || null;
+  const [versionId, setVersionId] = useState(initial.versionId);
+  const version = versions.find(v => v.id === versionId) || newestVersion(activeStoryboard) || null;
 
   const [comments, setComments] = useState(data.comments || []);
   const [activeViewers, setActiveViewers] = useState(data.activeViewers || []);
@@ -194,7 +203,7 @@ export function StoryboardRevision({ token, data, api, showMsg, identity = null,
   function selectStoryboard(id) {
     setStoryboardId(id);
     const s = storyboards.find(x => x.id === id);
-    setVersionId(s?.versions?.[0]?.id || null);
+    setVersionId(newestVersion(s)?.id || null);
     setPageNumber(1);
     setDraftPin(null);
   }
@@ -655,8 +664,8 @@ export function StoryboardRevision({ token, data, api, showMsg, identity = null,
               color: '#16A34A', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center',
               justifyContent: 'center', gap: 6 }}>
               <CheckCircle2 size={16} />
-              {versions[0] && versions[0].id !== version.id
-                ? `Approved — this draft is finalised. Open ${draftLabel(versions[0])} above to review the latest.`
+              {newestVersion(activeStoryboard) && newestVersion(activeStoryboard).id !== version.id
+                ? `Approved — this draft is finalised. Open ${draftLabel(newestVersion(activeStoryboard))} above to review the latest.`
                 : 'Approved — this storyboard is finalised.'}
             </div>
           ) : (

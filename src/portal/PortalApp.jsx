@@ -50,10 +50,16 @@ const SIDEBAR_W = 224;
 const SIDEBAR_GAP = 26;
 const SHELL_MAX = MAX_WIDTH + SIDEBAR_W + SIDEBAR_GAP;
 
+// #/view/param?a=b — the query is optional and only the review pages use it
+// (?item=/?draft= say which video/storyboard/draft a link was sent about), but
+// it's parsed centrally so it never leaks into `param`.
 function parseHash() {
-  const h = (window.location.hash || '').replace(/^#\/?/, '');
+  const raw = (window.location.hash || '').replace(/^#\/?/, '');
+  const qi = raw.indexOf('?');
+  const h = qi === -1 ? raw : raw.slice(0, qi);
+  const query = new URLSearchParams(qi === -1 ? '' : raw.slice(qi + 1));
   const [view, ...rest] = h.split('/');
-  return { view: view || 'home', param: rest.join('/') || null };
+  return { view: view || 'home', param: rest.join('/') || null, query };
 }
 
 export function navigate(hash) {
@@ -460,8 +466,8 @@ function AuthedApp() {
   let page;
   switch (route.view) {
     case 'project': page = <ProjectDetail dealId={route.param} />; break;
-    case 'review': page = <Review token={route.param} />; break;
-    case 'storyboard': page = <Storyboard token={route.param} />; break;
+    case 'review': page = <Review token={route.param} itemId={route.query?.get('item') || null} draftId={route.query?.get('draft') || null} />; break;
+    case 'storyboard': page = <Storyboard token={route.param} itemId={route.query?.get('item') || null} draftId={route.query?.get('draft') || null} />; break;
     case 'course': page = <Course slug={route.param} />; break;
     case 'brief': page = <Brief />; break;
     case 'demo': page = <DemoProject stage={route.param} />; break;

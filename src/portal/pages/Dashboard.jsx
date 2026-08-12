@@ -142,6 +142,16 @@ function SampleProjectCard({ config, progress }) {
   );
 }
 
+// The item/draft half of a standalone review link, as a hash query.
+function reviewQuery(href) {
+  const parts = [];
+  for (const key of ['item', 'draft']) {
+    const m = href?.match(new RegExp(`[?&]${key}=([^&]+)`));
+    if (m) parts.push(`${key}=${m[1]}`);
+  }
+  return parts.length ? `?${parts.join('&')}` : '';
+}
+
 export function runCta(cta, dealId) {
   if (!cta) return;
   if (cta.action === 'po-number') {
@@ -156,10 +166,13 @@ export function runCta(cta, dealId) {
   // standalone /?revision= / /?storyboard= links (right for emails), but a
   // logged-in client should stay in the portal chrome (with its back button)
   // rather than being dumped onto the standalone viewer.
+  // …carrying &item=/&draft= across the rewrite, since they're what says WHICH
+  // video and draft the CTA was about. Dropping them opened the project's
+  // oldest video instead.
   const rev = cta.href?.match(/[?&]revision=([^&]+)/);
-  if (rev) { window.location.hash = `#/review/${decodeURIComponent(rev[1])}`; return; }
+  if (rev) { window.location.hash = `#/review/${decodeURIComponent(rev[1])}${reviewQuery(cta.href)}`; return; }
   const sb = cta.href?.match(/[?&]storyboard=([^&]+)/);
-  if (sb) { window.location.hash = `#/storyboard/${decodeURIComponent(sb[1])}`; return; }
+  if (sb) { window.location.hash = `#/storyboard/${decodeURIComponent(sb[1])}${reviewQuery(cta.href)}`; return; }
   if (cta.href) window.location.href = cta.href; // proposal deep-links
 }
 

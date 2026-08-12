@@ -514,7 +514,9 @@ async function projectDetail(res, id) {
     SELECT id, storyboard_id, version_number, label, filename, mime_type, size_bytes, page_count,
            blob_url, uploaded_by, created_at, completed_at, completed_by
     FROM storyboard_versions WHERE project_id = ${id}
-    ORDER BY version_number DESC
+    -- created_at breaks the tie: see the revisions router's note on reused
+    -- version numbers after a delete + re-upload.
+    ORDER BY version_number DESC, created_at DESC
   `;
   const views = await sql`
     SELECT version_id, viewer_name, viewer_email, view_count, first_viewed_at, last_viewed_at
@@ -879,7 +881,7 @@ async function publicView(req, res) {
   const versions = await sql`
     SELECT id, storyboard_id, version_number, label, mime_type, page_count, blob_url, created_at
     FROM storyboard_versions WHERE project_id = ${project.id}
-    ORDER BY version_number DESC
+    ORDER BY version_number DESC, created_at DESC
   `;
   const comments = await sql`
     SELECT sc.id, sc.version_id, sc.parent_id, sc.page_number, sc.anchor_x, sc.anchor_y, sc.body,

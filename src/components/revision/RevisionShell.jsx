@@ -8,10 +8,17 @@ import { PortalReturnBar } from './PortalReturnBar.jsx';
 // Public, unauthenticated entry point for a client revision link
 // (/?revision=<share_token>). Mirrors PublicClientShell: load once, render the
 // viewer, surface a friendly message if the link is dead.
+// The token covers every video on the project, so an optional &item=<videoId>
+// (and &draft=<versionId>) says which one the link was sent about — emails and
+// portal rows now carry it. Without it the viewer opens the newest draft still
+// waiting on the client.
 export function RevisionShell({ token }) {
   const { actions, showMsg, toast } = useStore();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
+  const params = new URLSearchParams(window.location.search);
+  const videoId = params.get('item');
+  const draftId = params.get('draft');
 
   useEffect(() => {
     let alive = true;
@@ -35,7 +42,8 @@ export function RevisionShell({ token }) {
       <PortalReturnBar />
       {/* Anonymous share-token page: the CRM store IS the data adapter, and no
           identity is pre-set so the name/email gate is shown. */}
-      <VideoRevision token={token} data={data} api={actions} showMsg={showMsg} />
+      <VideoRevision token={token} data={data} api={actions} showMsg={showMsg}
+        initialVideoId={videoId} initialVersionId={draftId} />
       <Toast msg={toast} />
     </div>
   );

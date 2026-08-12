@@ -194,7 +194,9 @@ export default function ProjectDetail({ dealId }) {
             {(project.reviews || []).map((r, i) => (
               <div key={`rev-${i}`} style={{ display: 'flex', flexDirection: 'column' }}>
                 <a
-                  href={`#/review/${encodeURIComponent(r.shareToken)}`}
+                  // Every row on a project shares one token, so name the video —
+                  // otherwise clicking "Video 3" opens video 1.
+                  href={`#/review/${encodeURIComponent(r.shareToken)}${r.videoId ? `?item=${encodeURIComponent(r.videoId)}` : ''}`}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 12, padding: '11px 14px',
                     border: `1px solid ${BRAND.border}`,
@@ -245,7 +247,7 @@ export default function ProjectDetail({ dealId }) {
             {(project.storyboards || []).map((s, i) => (
               <a
                 key={`sb-${i}`}
-                href={`#/storyboard/${encodeURIComponent(s.shareToken)}`}
+                href={`#/storyboard/${encodeURIComponent(s.shareToken)}${s.storyboardId ? `?item=${encodeURIComponent(s.storyboardId)}` : ''}`}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 12, padding: '11px 14px',
                   border: `1px solid ${BRAND.border}`, borderRadius: 10, textDecoration: 'none',
