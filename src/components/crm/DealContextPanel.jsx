@@ -1098,8 +1098,8 @@ function PrimaryContactRow({ detail }) {
         id = c?.id;
       }
       if (!id) throw new Error('Could not resolve contact');
+      // saveDeal refetches the detail itself when the primary changes.
       await actions.saveDeal(detail.id, { primaryContactId: id });
-      await actions.loadDealDetail(detail.id);
       showMsg('Primary contact updated');
       close();
     } catch (e) {

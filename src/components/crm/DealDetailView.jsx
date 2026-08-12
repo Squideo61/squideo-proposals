@@ -4030,12 +4030,12 @@ function SecondaryContactsRow({ dealId, primaryContact, secondaryContacts, defau
   const edit = (c) => setEditing((c && state.contacts?.[c.id]) || c);
 
   // Promote the edited contact to this deal's primary. The server demotes the
-  // old primary to a secondary, so no one is dropped.
+  // old primary to a secondary, so no one is dropped; saveDeal refetches the
+  // contact lists.
   const makePrimary = async (contactId) => {
     try {
       await actions.saveDeal(dealId, { primaryContactId: contactId });
       setEditing(null);
-      actions.loadDealDetail(dealId);
     } catch (e) {
       showMsg(e?.message || 'Could not set primary contact');
     }
@@ -4063,7 +4063,9 @@ function SecondaryContactsRow({ dealId, primaryContact, secondaryContacts, defau
           onEdit={() => edit(primaryContact)}
         />
       )}
-      {secondaryContacts.map((c) => (
+      {/* Never chip the primary twice — they have their own chip above, and a
+          just-promoted contact can still be in this list until it refetches. */}
+      {secondaryContacts.filter((c) => c.id !== primaryContact?.id).map((c) => (
         <ContactChip
           key={c.id}
           contact={c}

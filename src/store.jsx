@@ -1946,7 +1946,7 @@ export function StoreProvider({ children }) {
       return api.put('/api/crm/intro-calls/rules', { rules });
     },
     saveDeal(dealId, patch) {
-      return mutate(
+      const done = mutate(
         { kind: 'deal', id: dealId, patch, errorMsg: 'Failed to save deal' },
         () => api.patch('/api/crm/deals/' + encodeURIComponent(dealId), patch),
         undefined,
@@ -1957,6 +1957,15 @@ export function StoreProvider({ children }) {
           (vals) => actions.saveDeal(dealId, vals),
         ),
       );
+      // Changing the primary contact rewrites the deal's contact list server-side
+      // (the new primary leaves the secondary list, the old primary is demoted
+      // into it), and none of that comes back in the deal patch. Without a
+      // refetch the same person shows as PRIMARY *and* as a stale secondary chip,
+      // and the demoted one vanishes until the page is reloaded.
+      if (patch && 'primaryContactId' in patch && stateRef.current.dealDetail?.[dealId]) {
+        return done.then((resp) => actions.loadDealDetail(dealId).then(() => resp));
+      }
+      return done;
     },
     moveDealStage(dealId, stage, lostReason) {
       const patch = { stage, stageChangedAt: new Date().toISOString(), lostReason: lostReason || null };
