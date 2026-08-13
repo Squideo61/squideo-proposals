@@ -187,7 +187,22 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
     dealTitle: deal?.title,
     contactEmail: contact?.email || null,
   });
+  // Nothing assigned yet: say so out loud and take them to the Team picker,
+  // which is far enough down the page to be missed. Highlight clears itself.
+  const teamRef = useRef(null);
+  const [teamFlash, setTeamFlash] = useState(false);
+  useEffect(() => {
+    if (!teamFlash) return undefined;
+    const t = setTimeout(() => setTeamFlash(false), 2500);
+    return () => clearTimeout(t);
+  }, [teamFlash]);
+  const pointAtTeam = () => {
+    showMsg('No team member assigned — add someone to Team first. They host the client’s kick-off call.');
+    setTeamFlash(true);
+    teamRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
   const sendIntroEmail = async () => {
+    if (!hasTeam) { pointAtTeam(); return; }
     setIntroBusy(true);
     try {
       await launchIntroEmail({ actions, dealId: deal?.id, dealTitle: deal?.title });
@@ -408,11 +423,14 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
             className="btn"
             title="Add a task to this deal"
           ><Plus size={14} /> Add task</button>
+          {/* Stays clickable with no team assigned: the click explains why it
+              can't send and jumps to the Team picker. A dead button teaches
+              nobody — the server still refuses the send either way. */}
           {introReady && (
             <button
               onClick={sendIntroEmail}
               className="btn"
-              disabled={introBusy || !hasTeam}
+              disabled={introBusy}
               style={{ background: '#7C3AED', borderColor: '#7C3AED', color: '#fff', opacity: hasTeam ? 1 : 0.55 }}
               title={hasTeam
                 ? "Draft the client's intro email with their portal link — unlocks their portal tasks (PO, voiceover, kick-off call)"
@@ -594,7 +612,20 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
           )}
           {!productionOnly && <Field label="Last activity">{formatRelativeTime(deal.lastActivityAt)}</Field>}
         </div>
-        <div style={{ marginTop: 16 }}>
+        {/* Ref + flash so "Send intro email" can point at the fix when the deal
+            has no team yet, instead of leaving a dead button and a tooltip. */}
+        <div
+          ref={teamRef}
+          style={{
+            marginTop: 16,
+            borderRadius: 8,
+            padding: teamFlash ? 8 : 0,
+            margin: teamFlash ? '16px -8px 0' : '16px 0 0',
+            background: teamFlash ? '#FEF3C7' : 'transparent',
+            boxShadow: teamFlash ? '0 0 0 2px #F59E0B' : 'none',
+            transition: 'background 200ms, box-shadow 200ms',
+          }}
+        >
           <div style={{ fontSize: 11, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>Team</div>
           <AssigneePicker
             users={Object.entries(state.users || {}).map(([email, u]) => ({ email, ...u }))}
