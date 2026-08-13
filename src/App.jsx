@@ -200,6 +200,24 @@ function AppShell() {
     else navigate(fallbackView);
   }, [navigate]);
 
+  // A proposal raised off a deal belongs to that deal — the deal page is where
+  // the salesperson was and where everything else about the job lives. Returns
+  // the linked deal's id, or null for a standalone proposal (or one whose deal
+  // isn't in this user's scope, e.g. a freelancer's trimmed store).
+  const proposalDealId = useCallback((proposalId) => {
+    const dealId = state.proposals?.[proposalId]?._dealId;
+    return dealId && state.deals?.[dealId] ? dealId : null;
+  }, [state.proposals, state.deals]);
+
+  // Back from a proposal preview: to the deal when there is one, otherwise the
+  // usual history-aware back. Preview is often opened in its own tab, where
+  // plain history-back has nowhere to go and drops the user in the list.
+  const backFromProposal = useCallback((proposalId, fallbackView) => {
+    const dealId = proposalDealId(proposalId);
+    if (dealId) navigate('deal', dealId);
+    else goBack(fallbackView);
+  }, [proposalDealId, navigate, goBack]);
+
   // Navigate from an in-app notification's hash link (e.g. '#/admin/users',
   // '#/deal/<id>'). Mirrors parseHash but works off the supplied string.
   const openLink = useCallback((link) => {
@@ -503,7 +521,12 @@ function AppShell() {
               />
             );
           })() : view === 'client' && activeId ? (
-            <ClientView id={activeId} onBack={() => goBack('production')} onEdit={() => navigate('builder', activeId)} />
+            <ClientView
+              id={activeId}
+              onBack={() => backFromProposal(activeId, 'production')}
+              backLabel={proposalDealId(activeId) ? 'Back to deal' : 'Back'}
+              onEdit={() => navigate('builder', activeId)}
+            />
           ) : freelancer ? (
             // Freelancers have no board — the catch-all is their "My Projects" list.
             <ProjectsOverviewView onBack={null} onOpenProject={(id) => navigate('project', id)} />
@@ -823,7 +846,8 @@ function AppShell() {
       {view === 'client' && activeId && (
         <ClientView
           id={activeId}
-          onBack={() => goBack('list')}
+          onBack={() => backFromProposal(activeId, 'list')}
+          backLabel={proposalDealId(activeId) ? 'Back to deal' : 'Back'}
           onEdit={() => navigate('builder', activeId)}
         />
       )}

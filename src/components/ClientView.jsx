@@ -150,7 +150,7 @@ function validityLabel(dateStr, days, expiryDateISO) {
   return expiry.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned }) {
+export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStripe = false, onSigned }) {
   const { state, actions, showMsg } = useStore();
   const data = state.proposals[id];
   const isPreview = !useRealStripe;
@@ -744,7 +744,9 @@ export function ClientView({ id, onBack, onEdit, useRealStripe = false, onSigned
         // status bar where taps don't land. On mobile the action buttons drop
         // their labels to icons so everything fits one tidy row.
         <div style={{ position: 'sticky', top: 0, background: 'white', borderBottom: '1px solid ' + BRAND.border, padding: isMobile ? '8px 12px' : '12px 24px', paddingTop: `calc(${isMobile ? 8 : 12}px + env(safe-area-inset-top))`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, zIndex: 100 }}>
-          {onBack ? <button onClick={onBack} className="btn-ghost" style={{ flexShrink: 0 }}><ChevronLeft size={16} /> Back</button> : <div />}
+          {/* Label says where Back actually lands ("Back to deal" for a proposal
+              raised off one) — on mobile it stays the bare chevron for room. */}
+          {onBack ? <button onClick={onBack} className="btn-ghost" style={{ flexShrink: 0 }}><ChevronLeft size={16} /> {isMobile ? 'Back' : backLabel}</button> : <div />}
           {!isMobile && (
             <div style={{ fontSize: 12, color: '#92400E', fontWeight: 700, letterSpacing: 0.5 }}>
               PREVIEW MODE
