@@ -1974,11 +1974,18 @@ function ExpandedMessage({ email, dealId = null, defaultOpen = false, isLast = f
               <Paperclip size={12} />
             </span>
           )}
+          {/* Relative time alone can't separate messages sent the same day — a
+              templated reply sent twice reads as "3d ago" twice, with the same
+              recipient and the same opening 200 characters. The clock time is
+              what actually tells them apart when scanning. */}
           <span
             style={{ marginLeft: hasAttachments ? 0 : 'auto', fontSize: 11, color: BRAND.muted, flexShrink: 0 }}
             title={email.sentAt ? new Date(email.sentAt).toLocaleString('en-GB', { dateStyle: 'full', timeStyle: 'short' }) : undefined}
           >
             {formatRelativeTime(email.sentAt)}
+            {email.sentAt && !isNaN(new Date(email.sentAt).getTime())
+              ? ' · ' + new Date(email.sentAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+              : ''}
           </span>
           <span style={{ fontSize: 11, color: BRAND.muted, flexShrink: 0 }}>{open ? '▾' : '▸'}</span>
         </button>
