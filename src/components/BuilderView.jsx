@@ -7,7 +7,7 @@ import { Field, Modal, Section } from './ui.jsx';
 import { LogoUploader } from './LogoUploader.jsx';
 import { TeamMemberEditor } from './TeamMemberEditor.jsx';
 import { ExtrasBankManager } from './ExtrasBankManager.jsx';
-import { extraHasVariants, extraUnitPrice, extraNetUnitPrice, extrasDiscountRate, formatFreeSubtitlesValue, resolveExtraPricing, DEFAULT_PROPOSAL, VARIANT_ELIGIBLE_IDS } from '../defaults.js';
+import { extraHasVariants, extraUnitPrice, extraNetUnitPrice, extrasDiscountRate, formatFreeSubtitlesValue, resolveExtraPricing, applyInclusionTokens, DEFAULT_PROPOSAL, VARIANT_ELIGIBLE_IDS } from '../defaults.js';
 import { InclusionsBankManager } from './InclusionsBankManager.jsx';
 import { ClientLinkPanel } from './crm/ClientLinkPanel.jsx';
 
@@ -1158,7 +1158,7 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
             <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 4 }}>
               {isCreditOnly
                 ? 'Sets the base price below. Edit the base price to override with a negotiated total. Extras that scale with length also use this figure.'
-                : "Doesn't change the base price — it's what extras priced per additional minute (voiceover, subtitles, portrait…) scale off."}
+                : "Doesn't change the base price — it's what extras priced per additional minute (voiceover, subtitles, portrait…) scale off, and what the script word allowance in Included is multiplied by."}
             </div>
           </Field>
         )}
@@ -1453,6 +1453,26 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
               }}
               placeholder="Description shown to client (optional)"
             />
+            {/* A written "up to N words" is an allowance PER MINUTE — the client
+                view multiplies it by the proposal's length. Easy to write the
+                already-multiplied figure by mistake (210 for a 90-second video,
+                which then shows as 315), so show what the client actually reads
+                whenever the text resolves to something different. */}
+            {(() => {
+              const shownTitle = applyInclusionTokens(inc.title, contentMinutes) || '';
+              const shownDesc = applyInclusionTokens(inc.description, contentMinutes) || '';
+              const descChanged = shownDesc !== (inc.description || '');
+              if (shownTitle === inc.title && !descChanged) return null;
+              return (
+                <div style={{ marginTop: 8, padding: '7px 9px', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 8, fontSize: 12, color: '#1E3A5F', lineHeight: 1.5 }}>
+                  <strong style={{ fontWeight: 700 }}>Client sees:</strong> {shownTitle}
+                  {descChanged ? <> — {shownDesc}</> : null}
+                  <div style={{ color: '#3B6392', marginTop: 2 }}>
+                    The written figure is the allowance <em>per minute</em>, scaled by the {creditMinutesLabel} this proposal covers.
+                  </div>
+                </div>
+              );
+            })()}
           </div>
           );
         })}

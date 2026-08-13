@@ -9,7 +9,14 @@
       "Bash(exit 0)",
       "Bash(npx vitest *)",
       "Bash(npx vite *)",
-      "PowerShell(Set-Location \"C:\\\\Users\\\\Adam Shelton\\\\Desktop\\\\squideo-web\"; npx tsc --noEmit 2>&1 | Select-Object -First 5; npm run build 2>&1 | Select-Object -Last 2; $c = Get-NetTCPConnection -LocalPort 3100 -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { $c.OwningProcess | Select-Object -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue } }; Start-Process -FilePath \"cmd\" -ArgumentList \"/c\",\"npx next start -p 3100\" -WindowStyle Hidden; \"serving\")"
+      "PowerShell(Set-Location \"C:\\\\Users\\\\Adam Shelton\\\\Desktop\\\\squideo-web\"; npx tsc --noEmit 2>&1 | Select-Object -First 5; npm run build 2>&1 | Select-Object -Last 2; $c = Get-NetTCPConnection -LocalPort 3100 -State Listen -ErrorAction SilentlyContinue; if \\($c\\) { $c.OwningProcess | Select-Object -Unique | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue } }; Start-Process -FilePath \"cmd\" -ArgumentList \"/c\",\"npx next start -p 3100\" -WindowStyle Hidden; \"serving\")",
+      "Bash(cd \"/c/Users/Adam Shelton/Desktop/squideo-web\" && grep -oE \"^\\\\s+[a-zA-Z]+\\\\??:\" node_modules/@payloadcms/storage-vercel-blob/dist/index.d.ts 2>/dev/null | tr -d ' :?' | sort -u | head -20)",
+      "Bash(npx next *)",
+      "Bash(node scripts/probe-rows.mjs)",
+      "Bash(node -e ' *)",
+      "Bash(node scripts/13-sections.mjs)",
+      "Bash(node scripts/13-sections.mjs --only=corporate-explainer-videos)",
+      "Bash(python -c ' *)"
     ]
   }
 }
