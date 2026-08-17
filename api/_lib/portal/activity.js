@@ -502,21 +502,26 @@ export async function dealSteps(dealId) {
          ORDER BY created_at DESC LIMIT 1`.catch(() => []),
   ]);
 
+  // A milestone reads back as an accomplishment once it's happened, but as the
+  // thing we're still waiting for until then — the same row doubles as the
+  // "next: …" line on the org card, so "Paid in full" on an unpaid deal would
+  // claim money that hasn't landed.
+  const milestone = (key, done, doneLabel, todoLabel, at) => (
+    { key, label: done ? doneLabel : todoLabel, done, at: done ? at : null }
+  );
+
   const steps = [];
-  steps.push({ key: 'signed', label: 'Signed the proposal', done: !!sig?.signed_at, at: sig?.signed_at || null });
+  steps.push(milestone('signed', !!sig?.signed_at, 'Signed the proposal', 'Sign the proposal', sig?.signed_at || null));
   const isPo = sig?.pay_option === 'po' || d2?.payment_terms === 'po';
   if (isPo) {
-    steps.push({ key: 'po', label: 'Submitted purchase order', done: !!d2?.po_number, at: d2?.po_received_at || null });
+    steps.push(milestone('po', !!d2?.po_number, 'Submitted purchase order', 'Submit purchase order', d2?.po_received_at || null));
   } else {
     // Only a 50/50 signer owes a *deposit* — a pay-in-full signer's first
     // payment is the whole balance, so don't call it a deposit.
     const is5050 = sig?.pay_option === '5050' || d2?.payment_terms === '50_50';
-    steps.push({
-      key: 'deposit',
-      label: is5050 ? 'Paid the deposit' : 'Paid in full',
-      done: !!dep?.paid_at,
-      at: dep?.paid_at || null,
-    });
+    steps.push(is5050
+      ? milestone('deposit', !!dep?.paid_at, 'Paid the deposit', 'Pay the deposit', dep?.paid_at || null)
+      : milestone('deposit', !!dep?.paid_at, 'Paid in full', 'Pay in full', dep?.paid_at || null));
   }
   // The launched kick-off tasks (skip 'po' — handled above as a milestone).
   for (const t of tasks) {
