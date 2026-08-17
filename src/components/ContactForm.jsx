@@ -253,8 +253,17 @@ export function ContactForm(props = {}) {
                   <polyline points="22 4 12 14.01 9 11.01" />
                 </svg>
               </div>
-              <h2 className="step-title">{userName ? `Thanks ${userName}!` : cfg.successTitle}</h2>
-              <p className="step-description">{cfg.successDescription}</p>
+              {/* A handover, not the confirmation — see QuoteRequestForm for
+                  why. Thanking someone twice for one submission reads as a
+                  glitch. Unchanged when no redirect is configured. */}
+              {cfg.successRedirectUrl ? (
+                <p className="step-description">One moment — taking you to your confirmation.</p>
+              ) : (
+                <>
+                  <h2 className="step-title">{userName ? `Thanks ${userName}!` : cfg.successTitle}</h2>
+                  <p className="step-description">{cfg.successDescription}</p>
+                </>
+              )}
             </div>
           ) : (
             <div className="form-step active">

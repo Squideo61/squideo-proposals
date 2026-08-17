@@ -1063,8 +1063,28 @@ export function QuoteRequestForm(props = {}) {
                   <polyline points="22 4 12 14.01 9 11.01" />
                 </svg>
               </div>
-              <h2 className="step-title">{personalisedTitle('success')}</h2>
-              <p className="step-description">{cfg.successDescription}</p>
+              {/*
+                * When we are about to redirect, this is a HANDOVER, not the
+                * confirmation. Showing the full "Thank you" here and then a
+                * second thank-you page 1.2 seconds later reads as a glitch —
+                * the visitor is thanked twice for one submission and cannot
+                * tell whether it went through once or twice.
+                *
+                * The tick and the confetti stay, because the moment of success
+                * should land immediately. Only the wording changes: it now says
+                * what is about to happen instead of competing with the page it
+                * is about to hand over to.
+                *
+                * Standalone (no redirect configured) is unchanged.
+                */}
+              {cfg.successRedirectUrl ? (
+                <p className="step-description">One moment — taking you to your confirmation.</p>
+              ) : (
+                <>
+                  <h2 className="step-title">{personalisedTitle('success')}</h2>
+                  <p className="step-description">{cfg.successDescription}</p>
+                </>
+              )}
             </div>
           )}
 
