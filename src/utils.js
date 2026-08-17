@@ -214,6 +214,27 @@ export const formatMailDate = (iso) => {
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
 };
 
+// How a task's due time reads on a row: today's is the one you act on, so it
+// leads with the time and says so — "16:00 today", "16:00 tomorrow",
+// "16:00 yesterday". Anything further out keeps the full date + time
+// ("17 Aug 2026, 16:00"), since the day is the useful part there.
+// Tasks always carry a real time (the picker defaults to 08:00), so the clock
+// half is never noise. Callers prefix their own "Due ".
+export const formatTaskDue = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  // Compare calendar days, not a 24h window: 23:00 tonight and 01:00 tomorrow
+  // are hours apart but belong to different days, which is how people read it.
+  const startOfDay = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((startOfDay(d) - startOfDay(new Date())) / 86400000);
+  if (days === 0) return `${time} today`;
+  if (days === 1) return `${time} tomorrow`;
+  if (days === -1) return `${time} yesterday`;
+  return d.toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+};
+
 export const formatDuration = (s) => {
   s = Math.max(0, Math.round(Number(s) || 0));
   if (s < 60) return s + 's';

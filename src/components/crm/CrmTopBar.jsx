@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, BarChart3, Bell, CalendarDays, ChevronDown, Clapperboard, CheckSquare, Coins, FileText, Gauge, Globe, Images, KanbanSquare, LayoutDashboard, LayoutGrid, Mail, MailQuestion, Megaphone, Menu, PoundSterling, Search, Settings, Square, Undo2, Redo2, UserCog, X } from 'lucide-react';
 import { BRAND, APP_MAX_WIDTH } from '../../theme.js';
 import { useStore } from '../../store.jsx';
-import { useIsMobile } from '../../utils.js';
+import { useIsMobile, formatTaskDue } from '../../utils.js';
 import { permissionsInclude } from '../../lib/permissions.js';
 import { navFlags } from '../../lib/viewAccess.js';
 import { Logo } from '../ui.jsx';
@@ -719,18 +719,15 @@ function MobileNavDrawer({ sections, showContacts, contactsActive, navigate, onC
   );
 }
 
-// A short, friendly due label for a header row: "Overdue", "Due 14:30" (today)
-// or a date for anything that slipped from an earlier day.
+// A short, friendly due label for a header row: "Due 16:00 today" for the ones
+// still ahead of you, "Overdue · 14:30 today" / "Overdue · 09:00 yesterday" for
+// the ones that have slipped. Shares formatTaskDue with the Tasks page and the
+// deal panels so a task reads the same wherever you meet it.
 function dueLabel(iso) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
-  const now = new Date();
-  const isToday = d.toDateString() === now.toDateString();
-  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  if (d.getTime() < now.getTime()) {
-    return isToday ? `Overdue · ${time}` : `Overdue · ${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`;
-  }
-  return `Due ${time}`;
+  const when = formatTaskDue(iso);
+  return d.getTime() < Date.now() ? `Overdue · ${when}` : `Due ${when}`;
 }
 
 // The Tasks header control: a pill that, on a plain left-click, opens a popover

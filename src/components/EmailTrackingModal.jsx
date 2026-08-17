@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { X, Eye, MousePointerClick, ArrowUpRight, CheckSquare } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
-import { formatRelativeTime } from '../utils.js';
+import { formatRelativeTime, formatTaskDue } from '../utils.js';
 import { sanitizeEmailBody } from '../utils/emailImages.js';
 
 // Short, human date for the message header (e.g. "3 Jun 2026, 14:30").
@@ -109,7 +109,7 @@ export function EmailTrackingModal({ threadId, onClose, onOpenDeal }) {
                     <div style={{ fontSize: 13, color: BRAND.ink, marginTop: 2 }}>{nextTask.title}</div>
                     {nextTask.dueAt && (
                       <div style={{ fontSize: 11.5, color: new Date(nextTask.dueAt) < new Date() ? '#DC2626' : BRAND.muted, marginTop: 1 }}>
-                        Due {new Date(nextTask.dueAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}
+                        Due {formatTaskDue(nextTask.dueAt)}
                       </div>
                     )}
                   </div>

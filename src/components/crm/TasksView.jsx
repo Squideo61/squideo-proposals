@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, CheckSquare, ChevronDown, Pencil, Plus, Square, Trash2 } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
-import { useIsMobile } from '../../utils.js';
+import { useIsMobile, formatTaskDue } from '../../utils.js';
 import { permissionsInclude } from '../../lib/permissions.js';
 import { AvatarGroup } from '../Avatar.jsx';
 import { ActionMenu } from '../ui.jsx';
@@ -269,7 +269,7 @@ function TaskRow({ task, actions, state, onOpenDeal, onEdit }) {
         <div style={{ fontSize: 12, marginTop: 2, display: 'flex', gap: 10, flexWrap: 'wrap', color: BRAND.muted }}>
           {task.dueAt && (
             <span style={{ color: overdue ? '#DC2626' : BRAND.muted, fontWeight: overdue ? 600 : 400 }}>
-              Due {new Date(task.dueAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}
+              Due {formatTaskDue(task.dueAt)}
             </span>
           )}
           {deal && (

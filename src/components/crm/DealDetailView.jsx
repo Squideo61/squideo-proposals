@@ -4,7 +4,7 @@ import { AlertTriangle, ArrowLeft, Building2, Calendar, CheckSquare, ChevronDown
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
-import { formatGBP, formatRelativeTime, formatDuration, useIsMobile, formatProposalNumber, decodeHtmlEntities, fileSizeLabel, proposalSignedTotalExVat, proposalQuotedExVat } from '../../utils.js';
+import { formatGBP, formatRelativeTime, formatTaskDue, formatDuration, useIsMobile, formatProposalNumber, decodeHtmlEntities, fileSizeLabel, proposalSignedTotalExVat, proposalQuotedExVat } from '../../utils.js';
 import { sanitizeEmailBody } from '../../utils/emailImages.js';
 import { ActionMenu, Badge, CallLink, Modal, RefBadge, FormRow } from '../ui.jsx';
 import { EmailComposerModal } from './EmailComposer.jsx';
@@ -1209,7 +1209,7 @@ function TaskRow({ task, onToggle, onEdit }) {
         </div>
         {task.dueAt && (
           <div style={{ fontSize: 11, color: overdue ? '#DC2626' : BRAND.muted, fontWeight: overdue ? 600 : 400, marginTop: 2 }}>
-            Due {new Date(task.dueAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}
+            Due {formatTaskDue(task.dueAt)}
           </div>
         )}
       </button>

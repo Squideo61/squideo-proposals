@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ExternalLink, Plus, X, Search, FileText, ChevronDown, Check, Pencil, Folder, ArrowRightLeft, Flame } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
+import { formatTaskDue } from '../../utils.js';
 import { STAGE_COLOURS, PIPELINE_STAGES } from '../../lib/stages.js';
 import { Avatar, AvatarGroup } from '../Avatar.jsx';
 import { CallLink, RefBadge } from '../ui.jsx';
@@ -455,7 +456,7 @@ function TaskMini({ task, onEdit, showAssignees }) {
         style={{ flex: 1, minWidth: 0, textAlign: 'left', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12.5, color: BRAND.ink }}
       >
         <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{task.title}</div>
-        {task.dueAt && <div style={{ fontSize: 11, color: BRAND.muted }}>Due {new Date(task.dueAt).toLocaleDateString('en-GB')}</div>}
+        {task.dueAt && <div style={{ fontSize: 11, color: BRAND.muted }}>Due {formatTaskDue(task.dueAt)}</div>}
       </button>
       {showAssignees && assignees.length > 0 && (
         <div style={{ flexShrink: 0 }}><AvatarGroup emails={assignees} max={2} size={18} /></div>

@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { CalendarDays, CheckSquare, AlertTriangle, Bell, ChevronRight, Clapperboard } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
-import { useIsMobile } from '../../utils.js';
+import { useIsMobile, formatTaskDue } from '../../utils.js';
 import { todayStr, fmtDayLabel } from '../../lib/scheduleCalendar.js';
 
 const KIND_LABEL = { storyboard: 'Storyboard / Visuals', production: 'Production' };
@@ -91,7 +91,7 @@ export function ProductionDashboardView({ onOpenSchedule, onOpenTasks, onOpenVid
             <Row key={t.id} onClick={onOpenTasks}>
               <div>
                 <div style={{ fontWeight: 600 }}>{t.title}</div>
-                <div style={{ fontSize: 12, color: BRAND.muted }}>{t.dueAt ? new Date(t.dueAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}</div>
+                <div style={{ fontSize: 12, color: BRAND.muted }}>{formatTaskDue(t.dueAt)}</div>
               </div>
             </Row>
           ))}
