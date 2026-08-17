@@ -11,6 +11,20 @@ import { PortalStepsActivity } from './PortalStepsActivity.jsx';
 import { PortalOpenButtons } from './PortalOpenButtons.jsx';
 import InviteComposer from '../InviteComposer.jsx';
 
+// Where an invite came from. `invited_by` holds a staff email for anything
+// sent by hand, a `system:` marker for the automatic ones, and the client's own
+// address when a portal user invited a colleague from their Team page — which
+// is the case worth naming, because it's the only way an invite lands on a
+// company nobody here chose.
+function inviteOrigin(invitedBy) {
+  const by = (invitedBy || '').trim();
+  if (!by) return 'origin not recorded';
+  if (by === 'system:signature') return 'sent automatically on signing';
+  if (by.startsWith('system:')) return `sent automatically (${by.slice(7)})`;
+  if (/@squideo\.(co\.uk|com)$/i.test(by)) return `invited by ${by}`;
+  return `invited by ${by} — a portal user, not Squideo`;
+}
+
 const formatBytes = (n) => {
   if (!n || n < 1024) return `${n || 0} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
@@ -199,9 +213,21 @@ export function PortalMembersCard({ companyId }) {
           </div>
           {invites.map((i) => (
             <div key={i.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', fontSize: 12.5 }}>
-              <Mail size={12} color={BRAND.muted} />
-              <span style={{ flex: 1, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{i.email}</span>
-              {i.expired && <span style={{ color: '#DC2626', fontSize: 11 }}>expired</span>}
+              <Mail size={12} color={BRAND.muted} style={{ flexShrink: 0 }} />
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ display: 'block', color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {i.email}
+                </span>
+                {/* Who put this here. An invite on the wrong company is only
+                    ever explicable from its origin, and until now the origin
+                    was recorded and then never shown — leaving "how did that
+                    get there?" unanswerable from the screen it's on. */}
+                <span style={{ display: 'block', fontSize: 11, color: BRAND.muted }}>
+                  {inviteOrigin(i.invitedBy)}
+                  {i.createdAt ? ` · ${formatRelativeTime(i.createdAt)}` : ''}
+                </span>
+              </span>
+              {i.expired && <span style={{ color: '#DC2626', fontSize: 11, flexShrink: 0 }}>expired</span>}
               <button
                 className="btn-ghost"
                 disabled={busy}
