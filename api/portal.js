@@ -35,10 +35,11 @@
 import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import Stripe from 'stripe';
-import { put, del, head, getDownloadUrl } from '@vercel/blob';
+import { put, del, head } from '@vercel/blob';
 import { handleUpload } from '@vercel/blob/client';
 import sql, { batchWrite } from './_lib/db.js';
 import { streamBlob } from './_lib/blobStream.js';
+import { streamPrivateBlob } from './_lib/blobPrivate.js';
 import { sendMail, APP_URL } from './_lib/email.js';
 import {
   sendNotification,
@@ -2106,32 +2107,30 @@ async function downloadRoute(req, res, user) {
     return res.status(200).end(img.bytes);
   }
 
-  // Org/brand documents — signed private-blob URL, 302 redirect.
+  // Org/brand documents — streamed, not redirected. These live in the PRIVATE
+  // store, where a blob URL in the browser is a 403 no matter how it's dressed
+  // up (getDownloadUrl only appends ?download=1; it does not sign anything).
   if (scope === 'company') {
     const rows = await sql`
-      SELECT blob_url, filename, company_id FROM portal_company_files WHERE id = ${id}
+      SELECT blob_url, mime_type, filename, company_id FROM portal_company_files WHERE id = ${id}
     `;
     const f = rows[0];
     if (!f || !user.companyIds.includes(f.company_id)) return res.status(404).json({ error: 'File not found' });
     noteDownload(f.filename);
-    const url = await getDownloadUrl(f.blob_url);
-    res.setHeader('Location', url);
-    return res.status(302).end();
+    return streamPrivateBlob(res, f.blob_url, { filename: f.filename, mimeType: f.mime_type });
   }
 
-  // Per-project documents (portal uploads on deal_files).
+  // Per-project documents (portal uploads on deal_files) — same private store.
   if (scope === 'deal') {
     const rows = await sql`
-      SELECT f.blob_url, f.filename, d.company_id
+      SELECT f.blob_url, f.mime_type, f.filename, d.company_id
         FROM deal_files f JOIN deals d ON d.id = f.deal_id
        WHERE f.id = ${id} AND f.source = 'portal'
     `;
     const f = rows[0];
     if (!f || !f.blob_url || !user.companyIds.includes(f.company_id)) return res.status(404).json({ error: 'File not found' });
     noteDownload(f.filename);
-    const url = await getDownloadUrl(f.blob_url);
-    res.setHeader('Location', url);
-    return res.status(302).end();
+    return streamPrivateBlob(res, f.blob_url, { filename: f.filename, mimeType: f.mime_type });
   }
 
   // Delivered review cut — the approved final cut, streamed from the revision

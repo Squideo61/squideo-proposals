@@ -16,8 +16,8 @@
 //   POST /api/crm/portal-admin?op=offer-delete    — { id }
 //   POST /api/crm/portal-admin?op=set-discount    — { dealId, discount }
 
-import { getDownloadUrl } from '@vercel/blob';
 import sql from '../_lib/db.js';
+import { streamPrivateBlob, bytesUrl } from '../_lib/blobPrivate.js';
 import { cors, requirePermission } from '../_lib/middleware.js';
 import { PORTAL_ADMIN_PERMS, portalPreviewPerms } from '../_lib/permissions.js';
 import { makeId, trimOrNull, lowerOrNull, numberOrNull, ensureDealContactsTable } from '../_lib/crm/shared.js';
@@ -323,6 +323,16 @@ export default async function handler(req, res) {
       const companyId = trimOrNull(req.query.companyId);
       const dealId = trimOrNull(req.query.dealId);
       const contactId = trimOrNull(req.query.contactId);
+
+      // The bytes half of `brand-file-url` below — the tab that URL opens lands
+      // back here, session cookie and all, and we relay the private blob.
+      if (trimOrNull(req.query.op) === 'brand-file') {
+        const fileId = trimOrNull(req.query.id);
+        if (!fileId) return res.status(400).json({ error: 'id required' });
+        const [f] = await sql`SELECT blob_url, mime_type, filename FROM portal_company_files WHERE id = ${fileId}`;
+        if (!f || !f.blob_url) return res.status(404).json({ error: 'File not found' });
+        return streamPrivateBlob(res, f.blob_url, { filename: f.filename, mimeType: f.mime_type });
+      }
 
       // Portal profile for a contact (the Client-portal card on a contact page).
       if (contactId) {
@@ -803,15 +813,18 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true, email: pu.email });
     }
 
-    // Resolve a short-lived download URL for a client-uploaded brand/document
-    // file (private blob). Mirrors the staff deal-file download in deals.js.
+    // Resolve a download URL for a client-uploaded brand/document file (private
+    // blob). Mirrors the staff deal-file download in deals.js: the URL points
+    // back at our own GET op, which streams the bytes.
     if (op === 'brand-file-url') {
       const id = trimOrNull(body.id);
       if (!id) return res.status(400).json({ error: 'id required' });
       const [f] = await sql`SELECT blob_url, filename FROM portal_company_files WHERE id = ${id}`;
       if (!f || !f.blob_url) return res.status(404).json({ error: 'File not found' });
-      const downloadUrl = await getDownloadUrl(f.blob_url);
-      return res.status(200).json({ downloadUrl, filename: f.filename });
+      return res.status(200).json({
+        downloadUrl: bytesUrl(`/api/crm/portal-admin?op=brand-file&id=${encodeURIComponent(id)}`),
+        filename: f.filename,
+      });
     }
 
     if (op === 'offer-create') {

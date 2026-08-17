@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
-import { put, del, getDownloadUrl } from '@vercel/blob';
+import { put, del } from '@vercel/blob';
 import sql from '../db.js';
+import { streamPrivateBlob, wantsBytes, bytesUrl } from '../blobPrivate.js';
 import { isValidStage } from '../dealStage.js';
 import { makeId, trimOrNull, lowerOrNull, numberOrNull, ensureMessageDealsTable, ensureMessageDealBlocksTable, ensureDealContactsTable, ensureDealReference, driveFilesEnabled } from './shared.js';
 import { serialiseTask } from './tasks.js';
@@ -849,10 +850,15 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
 
   if (action === 'po-files' && subaction && req.method === 'GET') {
     await ensureDealPo();
-    const [f] = await sql`SELECT blob_url, filename FROM deal_po_files WHERE id = ${subaction} AND deal_id = ${id}`;
+    const [f] = await sql`SELECT blob_url, mime_type, filename FROM deal_po_files WHERE id = ${subaction} AND deal_id = ${id}`;
     if (!f) return res.status(404).json({ error: 'File not found' });
-    const downloadUrl = await getDownloadUrl(f.blob_url);
-    return res.status(200).json({ downloadUrl, filename: f.filename });
+    if (wantsBytes(req)) {
+      return streamPrivateBlob(res, f.blob_url, { filename: f.filename, mimeType: f.mime_type });
+    }
+    return res.status(200).json({
+      downloadUrl: bytesUrl(`/api/crm/deals/${encodeURIComponent(id)}/po-files/${encodeURIComponent(subaction)}`),
+      filename: f.filename,
+    });
   }
 
   if (action === 'po-files' && subaction && req.method === 'DELETE') {
@@ -876,11 +882,16 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     const [deal] = await sql`SELECT company_id FROM deals WHERE id = ${id}`;
     if (!deal?.company_id) return res.status(404).json({ error: 'File not found' });
     const [f] = await sql`
-      SELECT blob_url, filename FROM portal_company_files
+      SELECT blob_url, mime_type, filename FROM portal_company_files
        WHERE id = ${subaction} AND company_id = ${deal.company_id}`;
     if (!f) return res.status(404).json({ error: 'File not found' });
-    const downloadUrl = await getDownloadUrl(f.blob_url);
-    return res.status(200).json({ downloadUrl, filename: f.filename });
+    if (wantsBytes(req)) {
+      return streamPrivateBlob(res, f.blob_url, { filename: f.filename, mimeType: f.mime_type });
+    }
+    return res.status(200).json({
+      downloadUrl: bytesUrl(`/api/crm/deals/${encodeURIComponent(id)}/client-uploads/${encodeURIComponent(subaction)}`),
+      filename: f.filename,
+    });
   }
 
   // Used by the in-Gmail Boxes RouteView — every thread attached to this deal.
@@ -1174,7 +1185,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
   if (action === 'files' && subaction && subaction !== 'from-email' && req.method === 'GET') {
     await ensureDealFileDriveColumns();
     const rows = await sql`
-      SELECT blob_url, drive_file_id, web_view_link, filename
+      SELECT blob_url, mime_type, drive_file_id, web_view_link, filename
         FROM deal_files WHERE id = ${subaction} AND deal_id = ${id}
     `;
     if (!rows.length) return res.status(404).json({ error: 'File not found' });
@@ -1188,8 +1199,13 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       if (!link) return res.status(502).json({ error: 'Could not resolve Drive link' });
       return res.status(200).json({ downloadUrl: link, filename: f.filename });
     }
-    const downloadUrl = await getDownloadUrl(f.blob_url);
-    return res.status(200).json({ downloadUrl, filename: f.filename });
+    if (wantsBytes(req)) {
+      return streamPrivateBlob(res, f.blob_url, { filename: f.filename, mimeType: f.mime_type });
+    }
+    return res.status(200).json({
+      downloadUrl: bytesUrl(`/api/crm/deals/${encodeURIComponent(id)}/files/${encodeURIComponent(subaction)}`),
+      filename: f.filename,
+    });
   }
 
   if (action === 'files' && subaction && subaction !== 'from-email' && req.method === 'DELETE') {

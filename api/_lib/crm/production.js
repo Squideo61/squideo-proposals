@@ -16,7 +16,7 @@
 //   POST   /api/crm/production/video/:videoId/submit-revision   { email? } — submit + covering email
 //   POST   /api/crm/production/video/:videoId/submit-storyboard { email? }
 import crypto from 'node:crypto';
-import { put, del, getDownloadUrl } from '@vercel/blob';
+import { put, del } from '@vercel/blob';
 import { handleUpload } from '@vercel/blob/client';
 import { waitUntil } from '@vercel/functions';
 import sql from '../db.js';
