@@ -1,15 +1,20 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Search, X, Briefcase, Building2, User, FileText, CornerDownLeft } from 'lucide-react';
+import { Search, X, Briefcase, Building2, User, FileText, LayoutGrid, CornerDownLeft } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatProposalNumber, realCompany } from '../../utils.js';
 
-// CRM-wide search in the top bar: type to find deals, companies, contacts and
-// proposals across the whole workspace, then jump straight to one. Results are
-// matched client-side from the store (which the CRM shell already keeps loaded),
-// grouped by type, keyboard-navigable, and openable with Enter or a click.
-// Cmd/Ctrl+K focuses it from anywhere.
+// CRM-wide search in the top bar: type to find projects, deals, companies,
+// contacts and proposals across the whole workspace, then jump straight to one.
+// Results are matched client-side from the store (which the CRM shell already
+// keeps loaded), grouped by type, keyboard-navigable, and openable with Enter or
+// a click. Cmd/Ctrl+K focuses it from anywhere.
+// Projects lead: once a deal is good-to-go it's a production project, and
+// listing it under "Deals" made an active project read as an open sales
+// opportunity. Both still open the same page — this is about which one you're
+// looking at.
 const GROUPS = [
+  { type: 'project', label: 'Projects', icon: LayoutGrid },
   { type: 'deal', label: 'Deals', icon: Briefcase },
   { type: 'company', label: 'Companies', icon: Building2 },
   { type: 'contact', label: 'Contacts', icon: User },
@@ -48,7 +53,11 @@ export function GlobalSearch({ navigate, isMobile, hideTrigger = false, openSign
     const companies = state.companies || {};
     const contacts = state.contacts || {};
 
-    const deals = Object.values(state.deals || {})
+    // One pass over the deals, then split on whether the deal has entered
+    // production. Same test the deal page uses to switch to its project view:
+    // `productionPhase` is set by the good-to-go gate and never cleared, and
+    // videoCount covers a project whose deal row predates that column.
+    const dealMatches = Object.values(state.deals || {})
       .filter(Boolean)
       .map((d) => {
         const company = d.companyId ? companies[d.companyId] : null;
@@ -59,14 +68,21 @@ export function GlobalSearch({ navigate, isMobile, hideTrigger = false, openSign
         return score ? { score, recency: new Date(d.lastActivityAt || 0).getTime(), item: d, company } : null;
       })
       .filter(Boolean)
-      .sort((a, b) => b.score - a.score || b.recency - a.recency)
-      .slice(0, PER_GROUP)
-      .map(({ item, company }) => ({
-        type: 'deal', id: item.id, icon: Briefcase,
-        title: item.title || 'Untitled deal',
-        subtitle: [item.reference, realCompany(company?.name)].filter(Boolean).join(' · ') || null,
-        go: () => navigate('deal', item.id),
-      }));
+      .sort((a, b) => b.score - a.score || b.recency - a.recency);
+
+    // Both rows navigate to the same deal page — a project IS a deal that's in
+    // production — so this only changes which heading it sits under.
+    const dealRow = (type, icon) => ({ item, company }) => ({
+      type, id: item.id, icon,
+      title: item.title || 'Untitled deal',
+      subtitle: [item.reference, realCompany(company?.name)].filter(Boolean).join(' · ') || null,
+      go: () => navigate('deal', item.id),
+    });
+    const isProject = (d) => !!d.productionPhase || (d.videoCount || 0) > 0;
+    const projects = dealMatches.filter((x) => isProject(x.item))
+      .slice(0, PER_GROUP).map(dealRow('project', LayoutGrid));
+    const deals = dealMatches.filter((x) => !isProject(x.item))
+      .slice(0, PER_GROUP).map(dealRow('deal', Briefcase));
 
     const companyList = Object.values(companies)
       .filter(Boolean)
@@ -113,7 +129,7 @@ export function GlobalSearch({ navigate, isMobile, hideTrigger = false, openSign
         go: () => navigate('builder', item.id),
       }));
 
-    const byType = { deal: deals, company: companyList, contact: contactList, proposal: proposalList };
+    const byType = { project: projects, deal: deals, company: companyList, contact: contactList, proposal: proposalList };
     // Flatten in group order, tagging the first row of each group so we can draw
     // a header above it. activeIndex walks this flat list.
     const flat = [];
@@ -229,7 +245,7 @@ export function GlobalSearch({ navigate, isMobile, hideTrigger = false, openSign
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                     onKeyDown={onKeyDown}
-                    placeholder="Search deals, companies, contacts…"
+                    placeholder="Search projects, deals, companies…"
                     style={{ paddingLeft: 36, paddingRight: query ? 32 : 12, width: '100%', boxSizing: 'border-box' }}
                   />
                   {query && (
@@ -263,7 +279,7 @@ export function GlobalSearch({ navigate, isMobile, hideTrigger = false, openSign
         onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
         onFocus={() => setOpen(true)}
         onKeyDown={onKeyDown}
-        placeholder="Search deals, companies, contacts…"
+        placeholder="Search projects, deals, companies…"
         style={{ paddingLeft: 36, paddingRight: query ? 32 : 12, height: 38, width: '100%' }}
       />
       {query && (
