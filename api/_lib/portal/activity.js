@@ -508,7 +508,15 @@ export async function dealSteps(dealId) {
   if (isPo) {
     steps.push({ key: 'po', label: 'Submitted purchase order', done: !!d2?.po_number, at: d2?.po_received_at || null });
   } else {
-    steps.push({ key: 'deposit', label: 'Paid the deposit', done: !!dep?.paid_at, at: dep?.paid_at || null });
+    // Only a 50/50 signer owes a *deposit* — a pay-in-full signer's first
+    // payment is the whole balance, so don't call it a deposit.
+    const is5050 = sig?.pay_option === '5050' || d2?.payment_terms === '50_50';
+    steps.push({
+      key: 'deposit',
+      label: is5050 ? 'Paid the deposit' : 'Paid in full',
+      done: !!dep?.paid_at,
+      at: dep?.paid_at || null,
+    });
   }
   // The launched kick-off tasks (skip 'po' — handled above as a milestone).
   for (const t of tasks) {
