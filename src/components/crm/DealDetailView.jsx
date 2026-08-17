@@ -1855,7 +1855,7 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
         />
       )}
       {expanded && (
-        <div style={{ marginTop: 8, marginLeft: 22, paddingLeft: 12, borderLeft: '2px solid ' + BRAND.border, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ marginTop: 8, marginLeft: 22, paddingLeft: 12, borderLeft: '2px solid ' + BRAND.border, display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
           {messages.map((m, i) => (
             <ExpandedMessage
               key={m.gmailMessageId}
@@ -1970,8 +1970,8 @@ function ExpandedMessage({ email, dealId = null, defaultOpen = false, isLast = f
   ].filter(Boolean);
 
   return (
-    <div style={{ background: '#FAFBFC', border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 12 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: open ? 8 : 0 }}>
+    <div style={{ background: '#FAFBFC', border: '1px solid ' + BRAND.border, borderRadius: 8, padding: 12, minWidth: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: open ? 8 : 0, minWidth: 0 }}>
         <button
           type="button"
           onClick={() => setOpen(o => !o)}
@@ -1988,7 +1988,12 @@ function ExpandedMessage({ email, dealId = null, defaultOpen = false, isLast = f
             background: accent + '22', color: accent,
             fontSize: 10, fontWeight: 700, flexShrink: 0,
           }}>{inbound ? 'IN' : 'OUT'}</span>
-          <span style={{ flexShrink: 0, fontSize: 12, color: BRAND.ink }}>
+          {/* Shrinkable + ellipsised: a long address on a half-width column
+              (the video page puts Emails beside Comments) would otherwise set a
+              floor on how narrow this row can get. */}
+          <span style={{ minWidth: 0, flexShrink: 1, fontSize: 12, color: BRAND.ink,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            title={counterparty || ''}>
             {inbound ? 'From' : 'To'} <strong>{counterparty || '—'}</strong>
           </span>
           {!open && email.snippet && (
@@ -2057,7 +2062,10 @@ function ExpandedMessage({ email, dealId = null, defaultOpen = false, isLast = f
         )}
       </div>
       {open && (
-        <div style={{ borderTop: '1px solid ' + BRAND.border, paddingTop: 8, fontSize: 13, lineHeight: 1.5, maxHeight: 320, overflowY: 'auto', wordBreak: 'break-word' }}>
+        // overflowX is explicit (not left to the visible→auto fallback) so a
+        // sender's fixed-width signature table scrolls inside this box rather
+        // than widening the column the thread sits in.
+        <div style={{ borderTop: '1px solid ' + BRAND.border, paddingTop: 8, fontSize: 13, lineHeight: 1.5, maxHeight: 320, overflowY: 'auto', overflowX: 'auto', wordBreak: 'break-word' }}>
           {/* Full recipient list so every addressee — including everyone Cc'd —
               is visible, not just the first To. */}
           <div style={{ fontSize: 11.5, color: BRAND.muted, marginBottom: 8, lineHeight: 1.5 }}>

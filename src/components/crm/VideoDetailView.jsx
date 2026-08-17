@@ -207,9 +207,14 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal, on
           <MilestonesCard video={video} videoId={videoId} onOpenReview={onOpenReview} onOpenStoryboardReview={onOpenStoryboardReview} />
           {/* Emails + Comments sit side-by-side, full width, growing with their
               content — so the team can read a long comment thread without the
-              cramped scroll the old right-column panel forced. */}
+              cramped scroll the old right-column panel forced.
+              minmax(0, 1fr) — NOT 1fr — because a plain `1fr` track floors at its
+              content's min-content width, and an expanded email thread (wide
+              signature tables, long unbroken links) then blew the Emails column
+              far past the column, spilling under the sticky right panel and
+              squeezing Comments off the page. */}
           {video.dealId && (
-            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 16, alignItems: 'start' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) minmax(0, 1fr)', gap: 16, alignItems: 'start' }}>
               <DealConversation dealId={video.dealId} isMobile={isMobile} sections={['emails']} />
               <DealConversation dealId={video.dealId} isMobile={isMobile} sections={['comments']} />
             </div>

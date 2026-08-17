@@ -73,7 +73,10 @@ export function DealConversation({ dealId, isMobile, sections = ['emails', 'acti
   if (!deal) return null;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 16 }}>
+    // minWidth: 0 so the panel can't outgrow the grid/flex track it's placed in —
+    // wide email content scrolls inside its own message box instead of pushing
+    // the whole column sideways.
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 16, minWidth: 0 }}>
       {sections.includes('emails') && (
       <Card title="Emails" count={emails.length} action={
         <button onClick={openComposerForDeal} className="btn-ghost"><Mail size={12} /> Send email</button>
