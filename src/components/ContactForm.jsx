@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { resolveRedirect } from '../lib/embedRedirect.js';
 import {
   COUNTRIES,
   formatPhoneNumber,
@@ -216,8 +217,14 @@ export function ContactForm(props = {}) {
         // of the iframe when embedded on squideo.com; falls through to the
         // current window if top isn't reachable.
         setTimeout(() => {
-          try { (window.top || window).location.href = cfg.successRedirectUrl; }
-          catch { window.location.href = cfg.successRedirectUrl; }
+          // Back to whoever embedded us, when that origin is allowlisted — see
+
+          // lib/embedRedirect.js. Unchanged in production.
+
+          const dest = resolveRedirect(cfg.successRedirectUrl);
+
+          try { (window.top || window).location.href = dest; }
+          catch { window.location.href = dest; }
         }, 1200);
       }
     } catch (err) {
