@@ -1918,6 +1918,13 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS production_start_date DATE`.catch(() => {});
       await sql`UPDATE deals SET production_start_date = ${trimOrNull(body.productionStartDate)}, updated_at = NOW() WHERE id = ${id}`;
     }
+    // The client's hard deadline for the project (nullable). Writes the same
+    // delivery_deadline the production board and the client portal read, so a
+    // date set at the sales stage carries straight through to production.
+    if ('deliveryDeadline' in body) {
+      await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS delivery_deadline DATE`.catch(() => {});
+      await sql`UPDATE deals SET delivery_deadline = ${trimOrNull(body.deliveryDeadline)}, updated_at = NOW() WHERE id = ${id}`;
+    }
     // Production schedule (the doc-style plan; one JSON blob per project).
     // Self-heal the column so the edit works on a workspace that hasn't hit a
     // production path yet. Stored whole; read back via SELECT * on detail.

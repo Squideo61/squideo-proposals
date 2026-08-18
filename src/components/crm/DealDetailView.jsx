@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AlertTriangle, ArrowLeft, Building2, Calendar, CheckSquare, ChevronDown, ChevronRight, ChevronUp, Clock, CreditCard, Download, Edit2, ExternalLink, Eye, FileText, Flame, Folder, FolderPlus, Forward, Link2, Mail, MessageSquare, MoreVertical, Paperclip, Phone, Play, Plus, RefreshCw, Reply, ReplyAll, Rocket, Square, Trash2, Unlink, User, Video, Wallet, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Building2, Calendar, CalendarClock, CheckSquare, ChevronDown, ChevronRight, ChevronUp, Clock, CreditCard, Download, Edit2, ExternalLink, Eye, FileText, Flame, Folder, FolderPlus, Forward, Link2, Mail, MessageSquare, MoreVertical, Paperclip, Phone, Play, Plus, RefreshCw, Reply, ReplyAll, Rocket, Square, Trash2, Unlink, User, Video, Wallet, X } from 'lucide-react';
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
@@ -584,6 +584,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
                 : <span style={{ color: BRAND.muted }}>—</span>}
             </Field>
           )}
+          <DeadlineField deal={deal} onSave={(v) => actions.saveDeal(dealId, { deliveryDeadline: v })} />
           {!hideFinancials && projectVideos.length > 0 && deal.productionEnteredAt && (
             <Field icon={Calendar} label={deal.paymentOption === '5050' ? 'Deposit paid' : deal.paymentOption === 'po' ? 'PO confirmed' : 'Paid'}>
               {new Date(deal.productionEnteredAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
@@ -1170,6 +1171,77 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
         />
       )}
     </div>
+  );
+}
+
+// "Due in 12 days" / "3 days overdue" for a yyyy-mm-dd deadline. Null once the
+// project is delivered — a wrapped-up job shouldn't keep flashing red.
+function deadlineNote(iso, delivered) {
+  if (delivered) return null;
+  const due = new Date(iso + 'T00:00:00');
+  if (isNaN(due)) return null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const days = Math.round((due - today) / 86400000);
+  if (days < 0) return { overdue: true, text: `${-days} day${days === -1 ? '' : 's'} overdue` };
+  if (days === 0) return { overdue: true, text: 'Due today' };
+  if (days === 1) return { overdue: false, text: 'Due tomorrow' };
+  return { overdue: false, text: `Due in ${days} days` };
+}
+
+// The date the client needs the project by (an event, a campaign launch). Only
+// some deals have one, so it stays a quiet "add" until it's set rather than
+// sitting empty on every deal. Writes the deal's delivery_deadline — the same
+// field the production board and the client's portal read.
+function DeadlineField({ deal, onSave }) {
+  const value = (deal.deliveryDeadline || '').slice(0, 10);
+  const [adding, setAdding] = useState(false);
+
+  if (!value && !adding) {
+    return (
+      <Field icon={CalendarClock} label="Deadline">
+        <button
+          className="btn-ghost"
+          style={{ fontSize: 13, padding: 0 }}
+          onClick={() => setAdding(true)}
+          title="Set the date this project has to be delivered by"
+        >
+          <Plus size={12} /> Add deadline
+        </button>
+      </Field>
+    );
+  }
+
+  const delivered = deal.productionPhase === 'completed' || deal.productionPhase === 'after_care';
+  const note = value ? deadlineNote(value, delivered) : null;
+  return (
+    <Field icon={CalendarClock} label="Deadline">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        <input
+          type="date"
+          autoFocus={!value}
+          value={value}
+          onChange={(e) => { setAdding(false); onSave(e.target.value || null); }}
+          onBlur={() => { if (!value) setAdding(false); }}
+          style={{ padding: '6px 8px', borderRadius: 8, border: '1px solid ' + BRAND.border, background: 'white', fontSize: 14, color: BRAND.ink }}
+        />
+        {value && (
+          <button
+            className="btn-ghost"
+            style={{ padding: 4, lineHeight: 0 }}
+            title="Clear the deadline"
+            onClick={() => { setAdding(false); onSave(null); }}
+          >
+            <X size={12} />
+          </button>
+        )}
+      </div>
+      {note && (
+        <div style={{ fontSize: 11, marginTop: 3, color: note.overdue ? '#DC2626' : BRAND.muted, fontWeight: note.overdue ? 700 : 400 }}>
+          {note.text}
+        </div>
+      )}
+    </Field>
   );
 }
 
