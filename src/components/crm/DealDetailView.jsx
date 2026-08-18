@@ -584,7 +584,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
                 : <span style={{ color: BRAND.muted }}>—</span>}
             </Field>
           )}
-          <DeadlineField deal={deal} onSave={(v) => actions.saveDeal(dealId, { deliveryDeadline: v })} />
+          <DeadlineField deal={deal} onEdit={productionOnly ? null : () => setEditing(true)} />
           {!hideFinancials && projectVideos.length > 0 && deal.productionEnteredAt && (
             <Field icon={Calendar} label={deal.paymentOption === '5050' ? 'Deposit paid' : deal.paymentOption === 'po' ? 'PO confirmed' : 'Paid'}>
               {new Date(deal.productionEnteredAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
@@ -1191,19 +1191,18 @@ function deadlineNote(iso, delivered) {
 
 // The date the client needs the project by (an event, a campaign launch). Only
 // some deals have one, so it stays a quiet "add" until it's set rather than
-// sitting empty on every deal. Writes the deal's delivery_deadline — the same
-// field the production board and the client's portal read.
-function DeadlineField({ deal, onSave }) {
+// sitting empty on every deal. Read-only here — a date this load-bearing is
+// edited in the Edit deal form, not by a stray click on the deal page.
+function DeadlineField({ deal, onEdit }) {
   const value = (deal.deliveryDeadline || '').slice(0, 10);
-  const [adding, setAdding] = useState(false);
-
-  if (!value && !adding) {
+  if (!value) {
+    if (!onEdit) return null;
     return (
       <Field icon={CalendarClock} label="Deadline">
         <button
           className="btn-ghost"
           style={{ fontSize: 13, padding: 0 }}
-          onClick={() => setAdding(true)}
+          onClick={onEdit}
           title="Set the date this project has to be delivered by"
         >
           <Plus size={12} /> Add deadline
@@ -1213,34 +1212,29 @@ function DeadlineField({ deal, onSave }) {
   }
 
   const delivered = deal.productionPhase === 'completed' || deal.productionPhase === 'after_care';
-  const note = value ? deadlineNote(value, delivered) : null;
-  return (
-    <Field icon={CalendarClock} label="Deadline">
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-        <input
-          type="date"
-          autoFocus={!value}
-          value={value}
-          onChange={(e) => { setAdding(false); onSave(e.target.value || null); }}
-          onBlur={() => { if (!value) setAdding(false); }}
-          style={{ padding: '6px 8px', borderRadius: 8, border: '1px solid ' + BRAND.border, background: 'white', fontSize: 14, color: BRAND.ink }}
-        />
-        {value && (
-          <button
-            className="btn-ghost"
-            style={{ padding: 4, lineHeight: 0 }}
-            title="Clear the deadline"
-            onClick={() => { setAdding(false); onSave(null); }}
-          >
-            <X size={12} />
-          </button>
-        )}
-      </div>
+  const note = deadlineNote(value, delivered);
+  const shown = new Date(value + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  const body = (
+    <>
+      <div style={{ fontWeight: 600 }}>{shown}</div>
       {note && (
-        <div style={{ fontSize: 11, marginTop: 3, color: note.overdue ? '#DC2626' : BRAND.muted, fontWeight: note.overdue ? 700 : 400 }}>
+        <div style={{ fontSize: 11, marginTop: 2, color: note.overdue ? '#DC2626' : BRAND.muted, fontWeight: note.overdue ? 700 : 400 }}>
           {note.text}
         </div>
       )}
+    </>
+  );
+  return (
+    <Field icon={CalendarClock} label="Deadline">
+      {onEdit ? (
+        <button
+          onClick={onEdit}
+          title="Change or clear the deadline in Edit deal"
+          style={{ border: 'none', background: 'none', padding: 0, margin: 0, font: 'inherit', color: 'inherit', textAlign: 'left', cursor: 'pointer' }}
+        >
+          {body}
+        </button>
+      ) : body}
     </Field>
   );
 }
@@ -3536,6 +3530,8 @@ function EditDealModal({ deal, onClose }) {
   const [importingXero, setImportingXero] = useState(false);
   const [primaryContactId, setPrimaryContactId] = useState(deal.primaryContactId || '');
   const [ownerEmail, setOwnerEmail] = useState(deal.ownerEmail || '');
+  // The client's hard deadline (deals.delivery_deadline) — blank on most deals.
+  const [deadline, setDeadline] = useState((deal.deliveryDeadline || '').slice(0, 10));
   const [notes, setNotes] = useState(deal.notes || '');
   const [submitting, setSubmitting] = useState(false);
 
@@ -3620,6 +3616,7 @@ function EditDealModal({ deal, onClose }) {
       companyId: companyId || null,
       primaryContactId: primaryContactId || null,
       ownerEmail: ownerEmail || null,
+      deliveryDeadline: deadline || null,
       notes: notes || null,
     });
     setSubmitting(false);
@@ -3723,6 +3720,10 @@ function EditDealModal({ deal, onClose }) {
                 drop a marketer who's somehow already the set owner). */}
             {users.filter(u => u.role !== 'marketing' || u.email === ownerEmail).map(u => <option key={u.email} value={u.email}>{u.name || u.email}</option>)}
           </select>
+        </FormRow>
+        <FormRow label="Deadline">
+          <input className="input" type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
+          <span style={{ fontSize: 11, color: BRAND.muted }}>Only if the client has a date they need it by — shows on the deal, the production board and their portal.</span>
         </FormRow>
         <FormRow label="Notes"><textarea className="input" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} style={{ fontFamily: 'inherit', resize: 'vertical' }} /></FormRow>
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
