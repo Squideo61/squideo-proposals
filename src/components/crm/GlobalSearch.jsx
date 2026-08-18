@@ -113,20 +113,24 @@ export function GlobalSearch({ navigate, isMobile, hideTrigger = false, openSign
         go: () => navigate('contact', item.id),
       }));
 
-    const proposalList = Object.values(state.proposals || {})
-      .filter(Boolean)
-      .map((p) => {
+    // Entries, not values: a proposal's id is the key it's stored under — the
+    // stored blob itself carries no `id` field. Reading item.id gave undefined,
+    // so clicking a proposal navigated to #/builder with no id and the route
+    // guard rendered nothing (a blank page).
+    const proposalList = Object.entries(state.proposals || {})
+      .filter(([, p]) => !!p)
+      .map(([id, p]) => {
         const number = p._number ? formatProposalNumber(p._number) : '';
-        return { score: scoreFields([p.clientName, p.contactBusinessName, number], q), item: p, number };
+        return { score: scoreFields([p.clientName, p.contactBusinessName, number], q), id, item: p, number };
       })
       .filter((x) => x.score)
       .sort((a, b) => b.score - a.score)
       .slice(0, PER_GROUP)
-      .map(({ item, number }) => ({
-        type: 'proposal', id: item.id, icon: FileText,
+      .map(({ id, item, number }) => ({
+        type: 'proposal', id, icon: FileText,
         title: item.clientName || 'Untitled proposal',
         subtitle: [number, item.contactBusinessName].filter(Boolean).join(' · ') || null,
-        go: () => navigate('builder', item.id),
+        go: () => navigate('builder', id),
       }));
 
     const byType = { project: projects, deal: deals, company: companyList, contact: contactList, proposal: proposalList };
@@ -169,8 +173,9 @@ export function GlobalSearch({ navigate, isMobile, hideTrigger = false, openSign
   // Parent-driven open (mobile header burger). Ignore the initial 0.
   useEffect(() => { if (openSignal) setMobileOpen(true); }, [openSignal]);
 
+  // A row with no id would navigate to an id-less route, which renders blank.
   const choose = (r) => {
-    if (!r) return;
+    if (!r || !r.id) return;
     r.go();
     setQuery('');
     setOpen(false);
