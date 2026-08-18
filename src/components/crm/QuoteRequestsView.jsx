@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Ban, Check, FileText, Mail, MailQuestion, Paperclip, Phone, X } from 'lucide-react';
+import { ArrowLeft, Ban, Check, FileText, Mail, MailQuestion, Paperclip, Phone, Undo2, X } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatRelativeTime, useIsMobile } from '../../utils.js';
@@ -66,6 +66,24 @@ export function QuoteRequestsView({ onBack, onOpenDeal, onOpenContact }) {
     } else {
       showMsg('Could not qualify');
     }
+  };
+
+  // The escape hatch for a mis-click. Ctrl+Z covers it in the same session,
+  // but the undo stack doesn't survive a reload — and a wrongly qualified lead
+  // is usually spotted later, on the deal it shouldn't have created.
+  const handleUnqualify = async (req) => {
+    if (busyId) return;
+    const who = req.name || req.email || 'this lead';
+    if (!window.confirm(`Undo qualifying ${who}?
+
+The deal it created is deleted and the lead goes back in the inbox. Refused if that deal has already moved past Lead or picked up a proposal, task or video.`)) return;
+    setBusyId(req.id);
+    try {
+      await actions.unqualifyQuoteRequest(req.id);
+      showMsg('Qualify undone — back in the inbox');
+      setActive(null);
+    } catch { /* the store surfaces why */ }
+    setBusyId(null);
   };
 
   const handleClear = async (req) => {
@@ -191,6 +209,7 @@ export function QuoteRequestsView({ onBack, onOpenDeal, onOpenContact }) {
               busy={busyId === r.id}
               onOpen={() => openDetail(r)}
               onQualify={() => handleQualify(r)}
+              onUnqualify={() => handleUnqualify(r)}
               onDisqualify={() => handleDisqualify(r)}
               onSpam={() => handleSpam(r)}
               onClear={() => handleClear(r)}
@@ -209,6 +228,7 @@ export function QuoteRequestsView({ onBack, onOpenDeal, onOpenContact }) {
           busy={busyId === active.id}
           onClose={() => setActive(null)}
           onQualify={() => handleQualify(active)}
+          onUnqualify={() => handleUnqualify(active)}
           onDisqualify={() => handleDisqualify(active)}
           onSpam={() => handleSpam(active)}
           onClear={() => handleClear(active)}
@@ -221,7 +241,7 @@ export function QuoteRequestsView({ onBack, onOpenDeal, onOpenContact }) {
   );
 }
 
-function RequestRow({ request, first, busy, onOpen, onQualify, onDisqualify, onSpam, onClear, canClear, onOpenDeal }) {
+function RequestRow({ request, first, busy, onOpen, onQualify, onUnqualify, onDisqualify, onSpam, onClear, canClear, onOpenDeal }) {
   const isMobile = useIsMobile();
   const isQualified = request.status === 'qualified';
   const isCleared = request.status === 'cleared';
@@ -302,9 +322,14 @@ function RequestRow({ request, first, busy, onOpen, onQualify, onDisqualify, onS
       </button>
       <div style={{ display: 'flex', gap: 6, flexShrink: 0, flexWrap: 'wrap' }}>
         {isQualified ? (
-          request.dealId && (
-            <button onClick={() => onOpenDeal?.(request.dealId)} className="btn">Open deal</button>
-          )
+          <>
+            {request.dealId && (
+              <button onClick={() => onOpenDeal?.(request.dealId)} className="btn">Open deal</button>
+            )}
+            <button onClick={onUnqualify} disabled={busy} className="btn-ghost" title="Undo the qualify — deletes the deal it created and puts the lead back in the inbox">
+              <Undo2 size={14} /> Unqualify
+            </button>
+          </>
         ) : (
           <>
             <button onClick={onQualify} disabled={busy} className="btn">
@@ -332,7 +357,7 @@ function RequestRow({ request, first, busy, onOpen, onQualify, onDisqualify, onS
   );
 }
 
-function DetailModal({ request, reviewedContact, reviewedIsExisting, busy, onClose, onQualify, onDisqualify, onSpam, onClear, canClear, onOpenContact, onOpenDeal }) {
+function DetailModal({ request, reviewedContact, reviewedIsExisting, busy, onClose, onQualify, onUnqualify, onDisqualify, onSpam, onClear, canClear, onOpenContact, onOpenDeal }) {
   const isQualified = request.status === 'qualified';
   const isCleared = request.status === 'cleared';
   const isSpam = request.status === 'spam';
@@ -423,6 +448,9 @@ function DetailModal({ request, reviewedContact, reviewedIsExisting, busy, onClo
         <div style={{ marginTop: 16, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {request.dealId && <button onClick={() => onOpenDeal?.(request.dealId)} className="btn">Open deal</button>}
           <button onClick={() => onOpenContact?.(request.contactId)} className="btn-ghost">Open contact</button>
+          <button onClick={onUnqualify} disabled={busy} className="btn-ghost" title="Undo the qualify — deletes the deal it created and puts the lead back in the inbox">
+            <Undo2 size={14} /> Unqualify
+          </button>
         </div>
       )}
 

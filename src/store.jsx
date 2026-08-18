@@ -794,8 +794,13 @@ export function StoreProvider({ children }) {
       const entry = r.undo[r.undo.length - 1];
       r.busy = true; syncUndoState();
       suppressUndoRef.current = true;
-      try { await entry.undo(); } catch { /* surfaced via the action's own toast */ }
+      // A refused undo (the server won't unpick it) leaves the entry on the
+      // stack — reporting "Undone" for something that didn't happen is worse
+      // than no undo at all. The action toasts its own reason.
+      let ok = true;
+      try { await entry.undo(); } catch { ok = false; }
       suppressUndoRef.current = false;
+      if (!ok) { r.busy = false; syncUndoState(); return; }
       r.undo = r.undo.slice(0, -1);
       r.redo = [...r.redo, entry];
       r.busy = false; syncUndoState();
@@ -3210,10 +3215,53 @@ export function StoreProvider({ children }) {
                 companies: nextCompanies,
               };
             });
+            // Qualify is one click on a row of near-identical rows and it spawns
+            // a deal, so it belongs in the CRM's undo history like any other
+            // mutation. Redo re-qualifies (a fresh deal id — the old one is gone).
+            if (!suppressUndoRef.current) {
+              recordUndo({
+                label: `Qualify ${resp.request.name || resp.request.company || resp.request.email || 'lead'}`,
+                undo: () => actions.unqualifyQuoteRequest(id),
+                redo: () => actions.qualifyQuoteRequest(id),
+              });
+            }
           }
           return resp;
         })
         .catch(() => null);
+    },
+    // Reverses a qualify: the server deletes the deal it created and drops the
+    // lead back into the inbox. Refuses if the deal has moved on or picked up
+    // real work — that error is surfaced, and the undo entry stays put.
+    unqualifyQuoteRequest(id) {
+      return api.post('/api/quote-requests-admin/' + encodeURIComponent(id) + '/unqualify', {})
+        .then((resp) => {
+          const goneId = resp?.deletedDealId || null;
+          setState(s => {
+            const deals = { ...s.deals };
+            const dealDetail = { ...s.dealDetail };
+            if (goneId) { delete deals[goneId]; delete dealDetail[goneId]; }
+            return {
+              ...s,
+              deals,
+              dealDetail,
+              quoteRequests: resp?.request
+                ? s.quoteRequests.map(r => (r.id === id ? resp.request : r))
+                : s.quoteRequests,
+            };
+          });
+          // Qualifying opens the new deal, so that page is usually what's on
+          // screen when the undo lands — send it back to the leads inbox
+          // rather than leaving a dead deal route behind.
+          if (goneId && window.location.hash.includes(goneId)) {
+            window.location.hash = '#/quote-requests';
+          }
+          return resp;
+        })
+        .catch((err) => {
+          showMsg(err?.message || 'Could not undo the qualify');
+          throw err;
+        });
     },
     clearQuoteRequest(id) {
       // Neutral "remove from the inbox" — keeps the lead (and its contact/files)

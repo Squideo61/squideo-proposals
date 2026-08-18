@@ -6,7 +6,7 @@ import { serialiseCompany } from './_lib/crm/companies.js';
 import { serialiseDeal } from './_lib/crm/deals.js';
 import { getRole } from './_lib/userRoles.js';
 import { hasPermission } from './_lib/permissions.js';
-import { qualifyQuoteRequest, disqualifyQuoteRequest, markQuoteRequestSpam, clearQuoteRequest, clearNewQuoteRequests } from './_lib/quoteRequestActions.js';
+import { qualifyQuoteRequest, unqualifyQuoteRequest, disqualifyQuoteRequest, markQuoteRequestSpam, clearQuoteRequest, clearNewQuoteRequests } from './_lib/quoteRequestActions.js';
 import { ensurePortalTables } from './_lib/portal/db.js';
 import { ensureLeadAttribution } from './_lib/leadAttribution.js';
 
@@ -425,6 +425,22 @@ export default async function handler(req, res) {
         contact: contactRow ? serialiseContact(contactRow) : null,
         deal: dealRow ? serialiseDeal(dealRow) : null,
         company: companyRows[0] ? serialiseCompany(companyRows[0]) : null,
+      });
+    }
+
+    // ── Unqualify (POST /:id/unqualify) — undo a mis-qualified lead ────────
+    if (req.method === 'POST' && action === 'unqualify') {
+      const result = await unqualifyQuoteRequest(id);
+      if (result.status === 'not_found') return res.status(404).json({ error: 'Not found' });
+      if (result.status === 'not_qualified') return res.status(409).json({ error: 'That lead is not qualified' });
+      if (result.status === 'deal_in_use') {
+        return res.status(409).json({ error: 'That deal has moved on — undoing would delete real work. Delete the deal by hand if you are sure.' });
+      }
+      const refreshed = await loadRequest(id);
+      return res.status(200).json({
+        request: serialiseQuoteRequest(refreshed.row, refreshed.files),
+        deletedDealId: result.dealId,
+        contactId: result.contactId,
       });
     }
 

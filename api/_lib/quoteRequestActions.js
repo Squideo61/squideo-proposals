@@ -246,6 +246,68 @@ export async function qualifyQuoteRequest(id, { actorEmail } = {}) {
   return { status: 'ok', contactId, dealId, companyId };
 }
 
+// Reverses a qualify: removes the deal it created and puts the lead back in
+// the inbox. For the "wrong row, wrong click" case — so it refuses once the
+// deal has become real work (moved past Lead, or picked up a proposal, task,
+// video or extra), where deleting it would take that work with it. The
+// contact stays (its email history hangs off it) but goes back to provisional
+// when this deal was the only thing it had, so the inbox row looks untouched.
+export async function unqualifyQuoteRequest(id) {
+  const loaded = await loadQuoteRequestForAction(id);
+  if (!loaded) return { status: 'not_found' };
+  if (loaded.row.status !== 'qualified') return { status: 'not_qualified' };
+
+  const dealId = loaded.row.deal_id;
+  const contactId = loaded.row.contact_id;
+
+  if (dealId) {
+    const [deal] = await sql`SELECT id, stage FROM deals WHERE id = ${dealId}`;
+    if (deal) {
+      if (deal.stage && deal.stage !== 'lead') return { status: 'deal_in_use', dealId };
+      // Any of these means someone has started working the deal — the delete
+      // would be destructive rather than a tidy-up. Each guarded so a table
+      // this workspace hasn't created yet never blocks the undo.
+      const counts = await Promise.all([
+        sql`SELECT 1 FROM proposals WHERE deal_id = ${dealId} LIMIT 1`.catch(() => []),
+        sql`SELECT 1 FROM tasks WHERE deal_id = ${dealId} LIMIT 1`.catch(() => []),
+        sql`SELECT 1 FROM project_videos WHERE deal_id = ${dealId} LIMIT 1`.catch(() => []),
+        sql`SELECT 1 FROM deal_extras WHERE deal_id = ${dealId} LIMIT 1`.catch(() => []),
+      ]);
+      if (counts.some((rows) => rows.length)) return { status: 'deal_in_use', dealId };
+
+      // Rows that don't cascade off the deal. Email-thread links go too — the
+      // thread itself is untouched, and re-qualifying re-links it.
+      await sql`DELETE FROM email_thread_deals WHERE deal_id = ${dealId}`.catch(() => {});
+      await sql`DELETE FROM deal_events WHERE deal_id = ${dealId}`.catch(() => {});
+      await sql`DELETE FROM deal_contacts WHERE deal_id = ${dealId}`.catch(() => {});
+      await sql`DELETE FROM deal_assignees WHERE deal_id = ${dealId}`.catch(() => {});
+      await sql`DELETE FROM deals WHERE id = ${dealId}`;
+    }
+  }
+
+  await sql`
+    UPDATE quote_requests
+       SET status = 'new',
+           deal_id = NULL
+     WHERE id = ${id}
+  `;
+
+  // Back to provisional only if this lead was all the contact had — a contact
+  // that predates the qualify (or is on other deals) is a real CRM record.
+  if (contactId) {
+    const others = await sql`SELECT 1 FROM deals WHERE primary_contact_id = ${contactId} LIMIT 1`.catch(() => []);
+    if (!others.length) {
+      await sql`
+        UPDATE contacts
+           SET provisional = TRUE, updated_at = NOW()
+         WHERE id = ${contactId} AND source = 'quote_request'
+      `.catch(() => {});
+    }
+  }
+
+  return { status: 'ok', dealId: dealId || null, contactId: contactId || null };
+}
+
 // Minimal HTML escape for the notification body (mirrors the helper used by the
 // cron emails) — keeps requester/actor names safe in the email markup.
 function escapeForHtml(s) {
