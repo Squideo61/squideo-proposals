@@ -127,7 +127,7 @@ export function portalProjectAddedHtml({ clientName, projectTitle, companyName, 
 // CRM before it goes out; both fall back to the standard copy. `message` is
 // plain text typed into a textarea — escaped, with blank lines becoming
 // paragraphs — so nothing typed there can inject markup into the email.
-export function portalTeamInviteHtml({ inviterName, companyName, inviteUrl, logoUrl = null, heading = null, message = null }) {
+export function portalTeamInviteHtml({ inviterName, companyName, inviteUrl, logoUrl = null, heading = null, message = null, toName = null, ccNames = [] }) {
   const headingText = (heading || '').trim()
     || `${inviterName || 'A colleague'} invited you to ${companyName || 'your team'}'s Squideo portal`;
   const messageText = (message || '').trim()
@@ -136,10 +136,22 @@ export function portalTeamInviteHtml({ inviterName, companyName, inviteUrl, logo
     .split(/\n{2,}/)
     .map((para) => `<p style="margin:0 0 18px;">${escapeHtml(para.trim()).replace(/\n/g, '<br>')}</p>`)
     .join('');
+  // When colleagues are copied in, the email has to say whose link this is.
+  // An invite is bound to ONE address: a CC who clicks the button would set up
+  // an account under the addressee's email, not their own. Rather than leave
+  // that as a trap, name it and tell them how to get their own.
+  const copied = (ccNames || []).filter(Boolean);
+  const ccNote = copied.length ? `
+    <p style="margin:0 0 18px;padding:12px 14px;background:#F4F7F9;border-radius:8px;font-size:13px;color:#4B5A66;">
+      Also copied: ${escapeHtml(copied.join(', '))}. This link sets up
+      ${escapeHtml(toName || 'the addressee')}'s account — if you'd like your own login,
+      just reply and we'll send one over.
+    </p>` : '';
   const inner = `
     <h2 style="margin:0 0 12px;font-size:19px;font-weight:700;">${escapeHtml(headingText)}</h2>
     ${paragraphs}
     <p style="margin:0 0 18px;">${ctaButton(inviteUrl, 'Join the portal')}</p>
+    ${ccNote}
     <p style="margin:0 0 6px;font-size:12px;color:#6B7785;">This invite expires in 14 days. If the button doesn't work, paste this into your browser:</p>
     <p style="margin:0;font-size:12px;color:#6B7785;word-break:break-all;">${escapeHtml(inviteUrl)}</p>
   `;

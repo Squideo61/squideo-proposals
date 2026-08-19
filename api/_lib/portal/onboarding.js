@@ -75,18 +75,31 @@ export async function createPortalInvite({ email, companyId, prefill = null, inv
 // `subject` / `message` are the wording the sender confirmed in the CRM before
 // sending; both fall back to the standard copy when absent (the automatic
 // post-signing invite passes neither).
-export async function sendTeamInvite({ email, companyId, companyName, inviterName, invitedBy, prefill = null, subject = null, message = null }) {
+export async function sendTeamInvite({ email, companyId, companyName, inviterName, invitedBy, prefill = null, subject = null, message = null, cc = [] }) {
   const { rawToken } = await createPortalInvite({ email, companyId, prefill, invitedBy });
   const logoUrl = await emailLogoUrl(companyId);
   const defaultSubject = `${inviterName || 'A colleague'} invited you to ${companyName || 'your team'}'s Squideo portal`;
   const body = (message || '').trim();
+  // Everyone else on the deal is copied in, so the client's team can see the
+  // portal has been opened without each of them being handed a login they
+  // didn't ask for. The link in this email belongs to `email` alone — an
+  // invite is bound to one address, so a CC who clicked it would end up
+  // creating the PRIMARY contact's account. portalTeamInviteHtml says so in
+  // as many words whenever `ccNames` is non-empty; don't send a CC without it.
+  const copied = (Array.isArray(cc) ? cc : [])
+    .map((c) => (typeof c === 'string' ? { email: c, name: null } : c))
+    .filter((c) => c && c.email && c.email.toLowerCase() !== String(email).toLowerCase());
+
   await sendMail({
     to: email,
+    cc: copied.map((c) => c.email),
     subject: (subject || '').trim() || defaultSubject,
     html: portalTeamInviteHtml({
       inviterName, companyName, inviteUrl: inviteUrlFor(rawToken), logoUrl,
       heading: (subject || '').trim() || null,
       message: body || null,
+      toName: prefill?.name || null,
+      ccNames: copied.map((c) => c.name || c.email),
     }),
     text: (body ? body + '\n\n' : `${defaultSubject}. `)
       + `Join here: ${inviteUrlFor(rawToken)} (expires in ${INVITE_DAYS} days)`,

@@ -2,7 +2,7 @@
 // the client sees in their portal (derived from the proposal, plus custom
 // upsells), tune the per-deal discount, and resend the portal welcome invite.
 // Backed by /api/crm/portal-admin.
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Check, Eye, EyeOff, Plus, Send, Sparkles, Trash2, UserPlus, X } from 'lucide-react';
 // (Eye/EyeOff mark an offer hidden or shown.)
 import { BRAND } from '../../theme.js';
@@ -14,17 +14,26 @@ import { Card, Empty } from './Card.jsx';
 import { Modal } from '../ui.jsx';
 import { PortalStepsActivity } from './PortalStepsActivity.jsx';
 import { PortalOpenButtons } from './PortalOpenButtons.jsx';
+import { pickInviteDefaults } from '../../lib/portalInviteRecipients.js';
 
 // Pick who gets a portal invite for this deal. Defaults to the deal's contacts
 // + proposal signer (anyone who doesn't already have access is pre-ticked);
 // extra emails can be typed in and optionally saved as CRM contacts.
 function InviteModal({ dealId, data, inviterName, onClose, onSent }) {
   const candidates = data?.candidates || [];
-  const [picked, setPicked] = useState(() => {
-    const s = new Set();
-    for (const c of candidates) if (!c.hasAccess) s.add(c.email);
-    return s;
-  });
+  // The invite is addressed to the deal's PRIMARY contact and nobody else by
+  // default. It used to tick everyone who lacked access, which on a deal with
+  // several contacts meant the main one was just another name on a list — and
+  // if the list came back in the wrong order (it could; the query wasn't
+  // ordered) they could be left off while a secondary got the invite.
+  //
+  // Falling back to the first candidate keeps deals with no primary set working
+  // exactly as before rather than opening the modal with nothing chosen.
+  // The rule itself lives in src/lib/portalInviteRecipients.js so it can be
+  // tested; this only holds what the sender has since changed.
+  const defaults = useMemo(() => pickInviteDefaults(candidates), [candidates]);
+  const [picked, setPicked] = useState(() => new Set(defaults.to ? [defaults.to.email] : []));
+  const [ccPicked, setCcPicked] = useState(() => new Set(defaults.cc));
   const [extras, setExtras] = useState([]); // [{ email, name, createContact }]
   const [newEmail, setNewEmail] = useState('');
   const [busy, setBusy] = useState(false);
@@ -40,7 +49,22 @@ function InviteModal({ dealId, data, inviterName, onClose, onSent }) {
     "Track your team's video projects, review drafts, share files and download finished videos — all in one place."
   );
 
-  const toggle = (email) => setPicked((prev) => {
+  const toggle = (email) => {
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(email)) next.delete(email); else next.add(email);
+      return next;
+    });
+    // Nobody is both addressed and copied — an invite of their own beats a
+    // carbon copy of someone else's.
+    setCcPicked((prev) => {
+      const next = new Set(prev);
+      next.delete(email);
+      return next;
+    });
+  };
+
+  const toggleCc = (email) => setCcPicked((prev) => {
     const next = new Set(prev);
     if (next.has(email)) next.delete(email); else next.add(email);
     return next;
@@ -67,8 +91,11 @@ function InviteModal({ dealId, data, inviterName, onClose, onSent }) {
     setBusy(true);
     setError(null);
     try {
+      const cc = candidates
+        .filter((c) => ccPicked.has(c.email) && !picked.has(c.email))
+        .map((c) => ({ email: c.email, name: c.name }));
       const r = await api.post('/api/crm/portal-admin?op=invite-deal', {
-        dealId, recipients, subject: subject.trim(), message: message.trim(),
+        dealId, recipients, cc, subject: subject.trim(), message: message.trim(),
       });
       onSent(`Portal invite sent to ${r.sent.length} ${r.sent.length === 1 ? 'person' : 'people'}`
         + (r.failed?.length ? ` — ${r.failed.length} failed` : ''));
@@ -86,8 +113,10 @@ function InviteModal({ dealId, data, inviterName, onClose, onSent }) {
     <Modal onClose={onClose} maxWidth={520}>
       <h3 style={{ margin: '0 0 4px', fontSize: 16, fontWeight: 700 }}>Invite to the client portal</h3>
       <div style={{ fontSize: 12.5, color: BRAND.muted, marginBottom: 16 }}>
-        They'll get an email to set up portal access for <strong>{data?.companyName || 'this organisation'}</strong> —
-        where they can track progress, review drafts and download videos.
+        The invite goes to the deal's primary contact, with the rest of the deal's
+        people copied in. Everyone ticked on the left gets their own login for{' '}
+        <strong>{data?.companyName || 'this organisation'}</strong>; anyone marked CC just
+        sees that it's happened.
       </div>
 
       {candidates.length === 0 && (
@@ -111,11 +140,37 @@ function InviteModal({ dealId, data, inviterName, onClose, onSent }) {
             style={{ width: 16, height: 16, flexShrink: 0 }}
           />
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 13.5, fontWeight: 600, color: BRAND.ink }}>{c.name || c.email}</div>
+            <div style={{ fontSize: 13.5, fontWeight: 600, color: BRAND.ink, display: 'flex', alignItems: 'center', gap: 7 }}>
+              {c.name || c.email}
+              {c.primary && (
+                <span style={{
+                  background: '#EAF6FB', color: '#0B6E93', border: '1px solid #BFE0EE', borderRadius: 999,
+                  padding: '1px 7px', fontSize: 10, fontWeight: 800, letterSpacing: 0.3, textTransform: 'uppercase',
+                }}>
+                  Primary
+                </span>
+              )}
+            </div>
             <div style={{ fontSize: 11.5, color: BRAND.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {c.name ? `${c.email} · ` : ''}{c.source}
             </div>
           </div>
+          {/* Copied in rather than invited. Only offered to people who aren't
+              already getting their own invite — being both is meaningless. */}
+          {!c.hasAccess && !picked.has(c.email) && (
+            <label
+              onClick={(e) => e.stopPropagation()}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700, color: ccPicked.has(c.email) ? BRAND.blue : BRAND.muted, flexShrink: 0, cursor: 'pointer' }}
+            >
+              <input
+                type="checkbox"
+                checked={ccPicked.has(c.email)}
+                onChange={() => toggleCc(c.email)}
+                style={{ width: 13, height: 13 }}
+              />
+              CC
+            </label>
+          )}
           {c.hasAccess && (
             <span style={{ fontSize: 10.5, fontWeight: 700, color: '#16A34A', display: 'inline-flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
               <Check size={12} /> HAS ACCESS

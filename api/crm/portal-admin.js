@@ -52,14 +52,29 @@ async function inviteCandidatesForDeal(dealId) {
   const companyId = deal?.company_id || null;
 
   const [contactRows, signerRows, memberRows, inviteRows] = await Promise.all([
+    // The deal's people, PRIMARY FIRST — load-bearing, not tidiness. The invite
+    // modal addresses whoever heads this list, and a bare UNION returns rows in
+    // whatever order the planner fancies, so a deal's main contact could lose
+    // their own invite to a secondary one that happened to sort first.
+    //
+    // The dedupe matters for the same reason: someone named as the deal's
+    // primary_contact_id AND listed in deal_contacts came back twice, once per
+    // role, and the caller keeps whichever it meets first. DISTINCT ON prefers
+    // the primary row, so nobody is demoted by their own duplicate.
     sql`
-      SELECT c.id, c.name, c.email, 'primary' AS role
-        FROM deals d JOIN contacts c ON c.id = d.primary_contact_id
-       WHERE d.id = ${dealId} AND c.email IS NOT NULL
-      UNION
-      SELECT c.id, c.name, c.email, COALESCE(dc.role, 'secondary') AS role
-        FROM deal_contacts dc JOIN contacts c ON c.id = dc.contact_id
-       WHERE dc.deal_id = ${dealId} AND c.email IS NOT NULL
+      SELECT id, name, email, role FROM (
+        SELECT DISTINCT ON (LOWER(email)) id, name, email, role FROM (
+          SELECT c.id, c.name, c.email, 'primary' AS role
+            FROM deals d JOIN contacts c ON c.id = d.primary_contact_id
+           WHERE d.id = ${dealId} AND c.email IS NOT NULL
+          UNION ALL
+          SELECT c.id, c.name, c.email, COALESCE(dc.role, 'secondary') AS role
+            FROM deal_contacts dc JOIN contacts c ON c.id = dc.contact_id
+           WHERE dc.deal_id = ${dealId} AND c.email IS NOT NULL
+        ) all_contacts
+        ORDER BY LOWER(email), (role = 'primary') DESC
+      ) deduped
+      ORDER BY (role = 'primary') DESC, name ASC NULLS LAST
     `,
     sql`
       SELECT s.name, s.email FROM proposals p JOIN signatures s ON s.proposal_id = p.id
@@ -80,7 +95,7 @@ async function inviteCandidatesForDeal(dealId) {
   const pending = new Set(inviteRows.map((r) => String(r.email).toLowerCase()));
 
   const byEmail = new Map();
-  const add = (email, name, source) => {
+  const add = (email, name, source, primary = false) => {
     const key = String(email || '').trim().toLowerCase();
     if (!key) return;
     if (byEmail.has(key)) return; // first source wins (contacts before signer)
@@ -88,11 +103,14 @@ async function inviteCandidatesForDeal(dealId) {
       email: key,
       name: name || null,
       source,
+      primary,
       hasAccess: members.has(key),
       invitePending: pending.has(key),
     });
   };
-  for (const c of contactRows) add(c.email, c.name, c.role === 'primary' ? 'Primary contact' : 'Deal contact');
+  for (const c of contactRows) {
+    add(c.email, c.name, c.role === 'primary' ? 'Primary contact' : 'Deal contact', c.role === 'primary');
+  }
   if (signerRows[0]) add(signerRows[0].email, signerRows[0].name, 'Signed the proposal');
 
   return {
@@ -610,6 +628,13 @@ export default async function handler(req, res) {
     if (op === 'invite-deal') {
       const dealId = trimOrNull(body.dealId);
       const recipients = Array.isArray(body.recipients) ? body.recipients : [];
+      // Copied in on every invite this send produces — the deal's other contacts,
+      // so the client's team sees the portal has been opened without each of them
+      // being handed a login. See sendTeamInvite for why the email names whose
+      // link it is.
+      const cc = (Array.isArray(body.cc) ? body.cc : [])
+        .map((c) => ({ email: lowerOrNull(typeof c === 'string' ? c : c?.email), name: trimOrNull(c?.name) }))
+        .filter((c) => c.email && /^[^s@]+@[^s@]+.[^s@]+$/.test(c.email));
       if (!dealId) return res.status(400).json({ error: 'dealId required' });
       if (!recipients.length) return res.status(400).json({ error: 'Pick at least one person to invite' });
 
@@ -668,6 +693,10 @@ export default async function handler(req, res) {
             // the standard copy.
             subject: trimOrNull(body.subject)?.slice(0, 200) || null,
             message: trimOrNull(body.message)?.slice(0, 4000) || null,
+            // Never copy someone in on their own invite, or on an invite going
+            // to someone they're being invited alongside — each recipient in
+            // this loop gets their own email with their own link.
+            cc: cc.filter((c) => !recipients.some((r) => lowerOrNull(r?.email) === c.email)),
           });
           sent.push(email);
         } catch (err) {
