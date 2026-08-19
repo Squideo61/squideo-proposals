@@ -5,6 +5,32 @@ import { useStore } from '../../store.jsx';
 import { formatRelativeTime, useIsMobile } from '../../utils.js';
 import { CallLink, Modal } from '../ui.jsx';
 
+/*
+ * Which form on squideo.com the lead came off — 'free-script' reads as
+ * "Free script".
+ *
+ * Derived from the slug rather than looked up, because the slugs are set by the
+ * marketing site and a map here would show a stale label, or none, for any form
+ * added after this file was last touched. A slug that reads badly is a slug
+ * worth renaming at source.
+ *
+ * Null for the quote and contact forms, which are the default path and do not
+ * want a badge saying so on every row.
+ */
+const formSourceLabel = (slug) => {
+  if (!slug) return null;
+  const words = String(slug).split('-').filter(Boolean);
+  if (!words.length) return null;
+  return words.join(' ').replace(/^./, (c) => c.toUpperCase());
+};
+
+/* Neutral against the cyan "Portal" and green "Has credit" pills — this says
+   where a lead came from, not that anything about it needs acting on. */
+const FORM_PILL = {
+  background: '#64748B22', color: '#475569', fontSize: 10, fontWeight: 700,
+  padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.4,
+};
+
 export function QuoteRequestsView({ onBack, onOpenDeal, onOpenContact }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
@@ -277,6 +303,9 @@ function RequestRow({ request, first, busy, onOpen, onQualify, onUnqualify, onDi
               Portal{request.portalDiscount ? ' · 10%' : ''}
             </span>
           )}
+          {formSourceLabel(request.formSource) && (
+            <span style={FORM_PILL}>{formSourceLabel(request.formSource)}</span>
+          )}
           {request.useCredit && (
             <span style={{ background: '#16A34A22', color: '#15803D', fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.4 }}>
               Has credit
@@ -372,6 +401,11 @@ function DetailModal({ request, reviewedContact, reviewedIsExisting, busy, onClo
           {request.source === 'portal' && (
             <span style={{ background: '#2BB8E622', color: '#0B6E93', fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.4 }}>
               Portal{request.portalDiscount ? ' · 10% discount' : ''}
+            </span>
+          )}
+          {formSourceLabel(request.formSource) && (
+            <span title="The form on squideo.com this lead came off." style={FORM_PILL}>
+              {formSourceLabel(request.formSource)}
             </span>
           )}
           {/* Set two ways: the "New video" form has a tick box, and a submitted

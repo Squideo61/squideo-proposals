@@ -9,9 +9,11 @@ import { qualifyQuoteRequest, disqualifyQuoteRequest } from './_lib/quoteRequest
 import { getRoleForUser } from './_lib/userRoles.js';
 import { hasPermission } from './_lib/permissions.js';
 import { pickAttribution, ensureLeadAttribution } from './_lib/leadAttribution.js';
+import { pickFormSource, pickFormLabel, ensureFormSource } from './_lib/quoteRequestForms.js';
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
 const NOTIFY_TO = process.env.QUOTE_REQUEST_NOTIFY_TO || 'adam@squideo.co.uk';
+
 
 export const config = {
   api: { bodyParser: false },
@@ -84,6 +86,7 @@ export function buildNotificationEmail(qr, files, { qualifyUrl, disqualifyUrl, c
     ['Budget', qr.budget],
     ['Country', qr.country_name],
     ['Opted in to marketing', qr.opt_in ? 'Yes' : 'No'],
+    ['Form', qr.form_source],
     ['Source', qr.source_url],
   ].filter(([, v]) => v != null && v !== '');
 
@@ -475,6 +478,11 @@ export default async function handler(req, res) {
     await ensureLeadAttribution().catch((e) => console.warn('[quote-requests] attr ensure failed', e?.message));
     const attr = pickAttribution(body) || {};
 
+    // Which of the marketing site's forms this came off, if any.
+    await ensureFormSource();
+    const formSource = pickFormSource(body.formSource);
+    const formLabel = formSource ? pickFormLabel(body.formLabel) : null;
+
     const qr = {
       id,
       form_session_id: trimOrNull(body.formSessionId),
@@ -492,13 +500,17 @@ export default async function handler(req, res) {
       user_agent: userAgent,
       ip_address: ip,
       created_at: createdAt,
+      // Not written by the INSERT below (that binds `formSource` directly) —
+      // carried on the object so the team notification can show which form it
+      // was without a second lookup.
+      form_source: formSource,
     };
 
     await sql`
       INSERT INTO quote_requests (
         id, form_session_id, name, email, phone, country_code, country_name,
         company, project_details, timeline, budget, opt_in,
-        source_url, user_agent, ip_address, created_at,
+        source_url, user_agent, ip_address, created_at, form_source,
         attr_channel, attr_source, attr_medium, attr_campaign, attr_term, attr_content,
         attr_gclid, attr_gbraid, attr_wbraid, attr_fbclid, attr_msclkid,
         attr_campaign_id, attr_adgroup_id, attr_keyword, attr_matchtype, attr_network,
@@ -507,7 +519,7 @@ export default async function handler(req, res) {
         ${qr.id}, ${qr.form_session_id}, ${qr.name}, ${qr.email}, ${qr.phone},
         ${qr.country_code}, ${qr.country_name}, ${qr.company}, ${qr.project_details},
         ${qr.timeline}, ${qr.budget}, ${qr.opt_in}, ${qr.source_url},
-        ${qr.user_agent}, ${qr.ip_address}, ${qr.created_at},
+        ${qr.user_agent}, ${qr.ip_address}, ${qr.created_at}, ${formSource},
         ${attr.attr_channel ?? null}, ${attr.attr_source ?? null}, ${attr.attr_medium ?? null},
         ${attr.attr_campaign ?? null}, ${attr.attr_term ?? null}, ${attr.attr_content ?? null},
         ${attr.attr_gclid ?? null}, ${attr.attr_gbraid ?? null}, ${attr.attr_wbraid ?? null},
@@ -536,8 +548,11 @@ export default async function handler(req, res) {
 
     const subjectName = qr.name || qr.email || 'Anonymous';
     // Contact-form leads are the same lead, but labelled "enquiry" in the team
-    // notifications; everything else stays "quote request".
-    const leadLabel = trimOrNull(body.leadKind) === 'contact' ? 'enquiry' : 'quote request';
+    // notifications; everything else stays "quote request". A lead off one of
+    // the marketing site's own forms names itself — "New free script request"
+    // rather than a quote request nobody asked for.
+    const leadLabel = formLabel
+      || (trimOrNull(body.leadKind) === 'contact' ? 'enquiry' : 'quote request');
     const apiBase = APP_URL.replace(/\/$/, '');
     // "Open in CRM" routes through a server-side redirect that checks the
     // current state at click-time: once the request has been qualified, the

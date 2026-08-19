@@ -9,6 +9,7 @@ import { hasPermission } from './_lib/permissions.js';
 import { qualifyQuoteRequest, unqualifyQuoteRequest, disqualifyQuoteRequest, markQuoteRequestSpam, clearQuoteRequest, clearNewQuoteRequests } from './_lib/quoteRequestActions.js';
 import { ensurePortalTables } from './_lib/portal/db.js';
 import { ensureLeadAttribution } from './_lib/leadAttribution.js';
+import { ensureFormSource } from './_lib/quoteRequestForms.js';
 
 // Channels a lead can be logged under by hand. Off-web enquiries (email, phone,
 // referral) never pass through /track.js, so they carry no PPC attribution —
@@ -52,6 +53,9 @@ function serialiseQuoteRequest(r, files = []) {
     sourceUrl: r.source_url || null,
     status: r.status || 'new',
     source: r.source || 'web',
+    // Which form on squideo.com it came off ('free-script', 'linkedin-offer').
+    // Null for the quote and contact forms, which are the default path.
+    formSource: r.form_source || null,
     portalDiscount: r.portal_discount === true,
     useCredit: r.use_credit === true,
     contactId: r.contact_id || null,
@@ -72,7 +76,7 @@ async function loadRequest(id) {
   const rows = await sql`
     SELECT id, form_session_id, name, email, phone, country_code, country_name,
            company, project_details, timeline, budget, opt_in, source_url,
-           status, contact_id, deal_id, reviewed_at, created_at, source, portal_discount, use_credit
+           status, contact_id, deal_id, reviewed_at, created_at, source, form_source, portal_discount, use_credit
     FROM quote_requests WHERE id = ${id}
   `;
   if (!rows[0]) return null;
@@ -125,6 +129,8 @@ export default async function handler(req, res) {
 
   // Self-heal the portal columns (source / portal_discount) read below.
   await ensurePortalTables().catch((e) => console.warn('[quote-requests-admin] portal ensure failed', e?.message));
+  // …and form_source, which every SELECT below now names.
+  await ensureFormSource();
 
   try {
     // ── Bulk clear (POST, no id) — empties the "new" inbox non-destructively ──
@@ -266,7 +272,7 @@ export default async function handler(req, res) {
         ? await sql`
             SELECT id, form_session_id, name, email, phone, country_code, country_name,
                    company, project_details, timeline, budget, opt_in, source_url,
-                   status, contact_id, deal_id, reviewed_at, created_at, source, portal_discount, use_credit
+                   status, contact_id, deal_id, reviewed_at, created_at, source, form_source, portal_discount, use_credit
             FROM quote_requests
             ORDER BY created_at DESC
             LIMIT 500
@@ -274,7 +280,7 @@ export default async function handler(req, res) {
         : await sql`
             SELECT id, form_session_id, name, email, phone, country_code, country_name,
                    company, project_details, timeline, budget, opt_in, source_url,
-                   status, contact_id, deal_id, reviewed_at, created_at, source, portal_discount, use_credit
+                   status, contact_id, deal_id, reviewed_at, created_at, source, form_source, portal_discount, use_credit
             FROM quote_requests
             WHERE status = ${status}
             ORDER BY created_at DESC
