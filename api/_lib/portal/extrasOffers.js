@@ -42,7 +42,12 @@ export async function loadDealProposalState(dealId) {
 
 // Compute the live offer list for a deal. Returns [] when the deal has no
 // signed proposal (nothing to derive prices from) and no custom offers.
-export async function computePortalOffers(deal) {
+//
+// `includeHidden` keeps eye-hidden offers in the list, flagged `hidden: true`,
+// for the CRM card — staff need to see what they've hidden to be able to put it
+// back. It must stay false everywhere the CLIENT is served: a hidden offer is
+// one they can't see or buy, and resolveOfferForAccept relies on that.
+export async function computePortalOffers(deal, { includeHidden = false } = {}) {
   await ensurePortalTables();
   const state = await loadDealProposalState(deal.id);
   const proposalData = state?.data || null;
@@ -78,7 +83,7 @@ export async function computePortalOffers(deal) {
     const hasVariants = extraHasVariants(e);
     if (boughtIds.has(e.id) && !hasVariants) continue;
     const override = overridesById.get(String(e.id)) || null;
-    if (override?.hidden) continue;
+    if (override?.hidden && !includeHidden) continue;
     const listPrice = Number(e.price) || 0;
     if (listPrice <= 0) continue;
     const priced = override?.amount != null ? Number(override.amount) : round2(listPrice * (1 - discount));
@@ -91,12 +96,14 @@ export async function computePortalOffers(deal) {
       amount: round2(priced),
       hasQuantity: hasVariants,
       alreadyPurchased: boughtIds.has(e.id),
+      hidden: !!override?.hidden,
     });
   }
 
   // Staff custom upsells — amount is the final price; no further discount.
   for (const r of offersRows) {
-    if (r.kind !== 'custom' || r.hidden) continue;
+    if (r.kind !== 'custom') continue;
+    if (r.hidden && !includeHidden) continue;
     const amount = Number(r.amount);
     if (!Number.isFinite(amount) || amount <= 0) continue;
     out.push({
@@ -108,6 +115,7 @@ export async function computePortalOffers(deal) {
       amount: round2(amount),
       hasQuantity: false,
       alreadyPurchased: false,
+      hidden: !!r.hidden,
     });
   }
 

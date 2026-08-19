@@ -456,8 +456,10 @@ export default async function handler(req, res) {
           SELECT id, kind, proposal_extra_id, title, description, amount, hidden, created_by, created_at
             FROM portal_extra_offers WHERE deal_id = ${dealId} ORDER BY created_at ASC
         `;
-        // What the client currently sees, for a live preview in the panel.
-        const derived = await computePortalOffers(deal);
+        // What the client currently sees, for a live preview in the panel —
+        // plus the ones staff have hidden (flagged `hidden`), so the eye toggle
+        // is reversible rather than making a row vanish for good.
+        const derived = await computePortalOffers(deal, { includeHidden: true });
         // Steps completed + activity timeline (logins + client actions) for this
         // deal. Best-effort so the card still renders if either query hiccups.
         const [steps, activity] = await Promise.all([

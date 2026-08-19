@@ -3,7 +3,9 @@
 // upsells), tune the per-deal discount, and resend the portal welcome invite.
 // Backed by /api/crm/portal-admin.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Check, Eye, EyeOff, Plus, Send, Sparkles, Trash2, UserPlus, X } from 'lucide-react';
+import {
+  Check, ChevronDown, ChevronRight, Eye, EyeOff, Plus, Send, Sparkles, Trash2, UserPlus, X,
+} from 'lucide-react';
 // (Eye/EyeOff mark an offer hidden or shown.)
 import { BRAND } from '../../theme.js';
 import { api } from '../../api.js';
@@ -309,6 +311,45 @@ export async function launchIntroEmail({ actions, dealId, dealTitle = null }) {
   });
 }
 
+// Heading for the proposal-derived extras list, which is collapsed by default:
+// the deal team quotes extras from the proposal itself, so the full price list
+// only needs to be on screen when someone is actually changing what the client
+// is offered. The counts describe what the CLIENT sees (customs included, since
+// they're offered too) so the one line is enough on its own. Degrades to a plain
+// heading when there are no proposal extras to expand — same trick as
+// TaskSection on the deal page.
+function ExtrasHeader({ live, hidden, discountPct, collapsed, onToggle }) {
+  const base = {
+    display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap',
+    fontSize: 11, fontWeight: 700, color: BRAND.muted,
+    textTransform: 'uppercase', letterSpacing: 0.5, padding: '6px 0',
+  };
+  const label = (
+    <>
+      Portal extras
+      <span style={{ opacity: 0.75 }}>· {live} live</span>
+      {hidden > 0 && <span style={{ opacity: 0.75 }}>· {hidden} hidden</span>}
+      <span style={{ marginLeft: 'auto', color: BRAND.blue }}>{discountPct}% off</span>
+    </>
+  );
+  if (!onToggle) return <div style={base}>{label}</div>;
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={!collapsed}
+      title={collapsed ? 'Show the extras offered in the client portal' : 'Hide the extras list'}
+      style={{
+        ...base, width: '100%', background: 'transparent', border: 'none',
+        cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left',
+      }}
+    >
+      {collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+      {label}
+    </button>
+  );
+}
+
 export function PortalDealCard({ dealId, dealTitle = null }) {
   const { state, actions, showMsg } = useStore();
   // Production Managers run the portal (portal.manage) but releasing the final
@@ -321,6 +362,7 @@ export function PortalDealCard({ dealId, dealTitle = null }) {
   const [notice, setNotice] = useState(null);
   const [showCustom, setShowCustom] = useState(false);
   const [showInvite, setShowInvite] = useState(false);
+  const [showExtras, setShowExtras] = useState(false);
   const [custom, setCustom] = useState({ title: '', description: '', amount: '' });
   const [discountEdit, setDiscountEdit] = useState(null); // % string while editing
 
@@ -387,9 +429,15 @@ export function PortalDealCard({ dealId, dealTitle = null }) {
   // email, matching launchIntroEmail so the link and the intro email always
   // name the same person.
   const inviteContact = (data?.candidates || []).find((c) => c.email) || null;
-  const derived = data?.derived || [];
+  // `derived` carries the custom offers too, but those are rendered from the
+  // raw rows below (which alone have the description and a delete button), so
+  // take only the proposal-derived ones here — otherwise every custom upsell
+  // appears on the card twice.
+  const proposalOffers = (data?.derived || []).filter((o) => o.kind === 'proposal');
   const customOffers = (data?.offers || []).filter((o) => o.kind === 'custom');
-  const hiddenIds = new Set((data?.offers || []).filter((o) => o.kind === 'override' && o.hidden).map((o) => o.proposalExtraId));
+  const allOffers = [...proposalOffers, ...customOffers];
+  const liveCount = allOffers.filter((o) => !o.hidden).length;
+  const hiddenCount = allOffers.length - liveCount;
   const discountPct = Math.round((data?.discount ?? 0.10) * 100);
 
   return (
@@ -434,22 +482,6 @@ export function PortalDealCard({ dealId, dealTitle = null }) {
 
       {data && (
         <>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: BRAND.muted, marginBottom: 12 }}>
-            <span>Portal extras discount:</span>
-            {discountEdit == null ? (
-              <button className="btn-link" style={{ fontSize: 12.5, fontWeight: 700 }} onClick={() => setDiscountEdit(String(discountPct))}>
-                {discountPct}% — edit
-              </button>
-            ) : (
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                <input className="input" value={discountEdit} onChange={(e) => setDiscountEdit(e.target.value)} style={{ width: 56, fontSize: 12.5, padding: '3px 6px' }} />%
-                <button className="btn" style={{ fontSize: 11.5, padding: '3px 10px' }} disabled={busy} onClick={saveDiscount}>Save</button>
-                <button className="btn-ghost" style={{ fontSize: 11.5 }} onClick={() => setDiscountEdit(null)}>Cancel</button>
-              </span>
-            )}
-            <span style={{ marginLeft: 'auto', fontSize: 11.5 }}>Prices follow the proposal — edits there update these offers.</span>
-          </div>
-
           {/* Portal access status — makes it obvious at a glance whether anyone can
               actually see this portal yet, so "released to client" / offers aren't
               mistaken for the client having been given access. */}
@@ -487,31 +519,54 @@ export function PortalDealCard({ dealId, dealTitle = null }) {
             );
           })()}
 
-          {derived.length === 0 && customOffers.length === 0 && (
+          {allOffers.length === 0 && (
             <Empty text="No portal extras to offer — the signed proposal has no remaining optional extras. Add a custom offer to upsell." />
           )}
 
-          {derived.map((o) => {
-            const extraId = o.key.startsWith('prop:') ? o.key.slice(5).split(':')[0] : null;
-            const isHidden = hiddenIds.has(extraId);
-            return (
-              <div key={o.key} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 0', borderBottom: '1px solid ' + BRAND.border, fontSize: 13, opacity: isHidden ? 0.5 : 1 }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <span style={{ fontWeight: 600, color: BRAND.ink }}>{o.title}</span>
-                  {o.kind === 'custom' && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: '#7C3AED' }}>CUSTOM</span>}
-                </div>
-                {o.originalAmount != null && o.originalAmount !== o.amount && (
-                  <span style={{ color: BRAND.muted, textDecoration: 'line-through', fontSize: 12 }}>{formatGBP(o.originalAmount)}</span>
-                )}
-                <span style={{ fontWeight: 700 }}>{formatGBP(o.amount)}</span>
-                {o.kind === 'proposal' && (
-                  <button className="btn-ghost" disabled={busy} style={{ fontSize: 11.5, padding: 4 }} title={isHidden ? 'Show in portal' : 'Hide from portal'} onClick={() => toggleDerived(o)}>
-                    {isHidden ? <EyeOff size={13} /> : <Eye size={13} />}
+          {allOffers.length > 0 && (
+            <ExtrasHeader
+              live={liveCount}
+              hidden={hiddenCount}
+              discountPct={discountPct}
+              collapsed={!showExtras}
+              onToggle={proposalOffers.length ? () => setShowExtras((v) => !v) : null}
+            />
+          )}
+
+          {showExtras && proposalOffers.length > 0 && (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12.5, color: BRAND.muted, margin: '2px 0 8px' }}>
+                <span>Portal extras discount:</span>
+                {discountEdit == null ? (
+                  <button className="btn-link" style={{ fontSize: 12.5, fontWeight: 700 }} onClick={() => setDiscountEdit(String(discountPct))}>
+                    {discountPct}% — edit
                   </button>
+                ) : (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    <input className="input" value={discountEdit} onChange={(e) => setDiscountEdit(e.target.value)} style={{ width: 56, fontSize: 12.5, padding: '3px 6px' }} />%
+                    <button className="btn" style={{ fontSize: 11.5, padding: '3px 10px' }} disabled={busy} onClick={saveDiscount}>Save</button>
+                    <button className="btn-ghost" style={{ fontSize: 11.5 }} onClick={() => setDiscountEdit(null)}>Cancel</button>
+                  </span>
                 )}
+                <span style={{ fontSize: 11.5 }}>Prices follow the proposal — edits there update these offers.</span>
               </div>
-            );
-          })}
+
+              {proposalOffers.map((o) => (
+                <div key={o.key} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 0', borderBottom: '1px solid ' + BRAND.border, fontSize: 13, opacity: o.hidden ? 0.5 : 1 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ fontWeight: 600, color: BRAND.ink }}>{o.title}</span>
+                  </div>
+                  {o.originalAmount != null && o.originalAmount !== o.amount && (
+                    <span style={{ color: BRAND.muted, textDecoration: 'line-through', fontSize: 12 }}>{formatGBP(o.originalAmount)}</span>
+                  )}
+                  <span style={{ fontWeight: 700 }}>{formatGBP(o.amount)}</span>
+                  <button className="btn-ghost" disabled={busy} style={{ fontSize: 11.5, padding: 4 }} title={o.hidden ? 'Show in portal' : 'Hide from portal'} onClick={() => toggleDerived(o)}>
+                    {o.hidden ? <EyeOff size={13} /> : <Eye size={13} />}
+                  </button>
+                </div>
+              ))}
+            </>
+          )}
 
           {customOffers.map((o) => (
             <div key={o.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 0', borderBottom: '1px solid ' + BRAND.border, fontSize: 13, opacity: o.hidden ? 0.5 : 1 }}>
