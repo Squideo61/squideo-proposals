@@ -67,6 +67,10 @@ export async function createEventWithMeet(accessToken, {
   start,
   end,
   attendees = [],
+  // Invited, but not required to be free — Google shows them as optional and
+  // their reply doesn't gate anything. Used for the deal's owner, who should be
+  // on the call without their diary deciding what the client can book.
+  optionalAttendees = [],
   requestId,
   timeZone = 'Europe/London',
 }) {
@@ -75,7 +79,13 @@ export async function createEventWithMeet(accessToken, {
     description,
     start: { dateTime: new Date(start).toISOString(), timeZone },
     end: { dateTime: new Date(end).toISOString(), timeZone },
-    attendees: attendees.filter(Boolean).map((email) => ({ email })),
+    attendees: [
+      ...attendees.filter(Boolean).map((email) => ({ email })),
+      ...optionalAttendees
+        .filter(Boolean)
+        .filter((email) => !attendees.includes(email))
+        .map((email) => ({ email, optional: true })),
+    ],
     conferenceData: {
       createRequest: {
         requestId: String(requestId),

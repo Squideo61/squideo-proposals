@@ -148,10 +148,11 @@ function londonParts(date) {
 // else first assignee) is the organizer whose calendar holds the event.
 export async function getDealAttendees(dealId) {
   const rows = await sql`
-    SELECT producer_email FROM deals WHERE id = ${dealId}
+    SELECT producer_email, owner_email FROM deals WHERE id = ${dealId}
   `;
-  if (!rows.length) return { organizer: null, attendees: [] };
+  if (!rows.length) return { organizer: null, attendees: [], optional: [] };
   const producer = rows[0].producer_email ? String(rows[0].producer_email).toLowerCase() : null;
+  const owner = rows[0].owner_email ? String(rows[0].owner_email).toLowerCase() : null;
   let assignees = [];
   try {
     const arows = await sql`SELECT user_email FROM deal_assignees WHERE deal_id = ${dealId} ORDER BY assigned_at`;
@@ -161,7 +162,17 @@ export async function getDealAttendees(dealId) {
   for (const e of [producer, ...assignees]) {
     if (e && !ordered.includes(e)) ordered.push(e);
   }
-  return { organizer: ordered[0] || null, attendees: ordered };
+  // The deal's OWNER — the person who sold it — is invited but deliberately
+  // NOT part of `attendees`, because that list is what every offered slot has
+  // to be free for. Requiring a salesperson's diary to be clear would gut the
+  // availability the client sees, to seat someone whose attendance is welcome
+  // rather than necessary. They go on the invite as optional instead.
+  //
+  // Without this they were on neither: the calendar invite was built from
+  // producer + assignees, so the owner watched a kick-off get booked for their
+  // own deal and never received it.
+  const optional = owner && !ordered.includes(owner) ? [owner] : [];
+  return { organizer: ordered[0] || null, attendees: ordered, optional };
 }
 
 // Availability rows for a set of users, keyed email → weekday → {isWorking,start,end}.
@@ -190,8 +201,11 @@ function overlaps(aStart, aEnd, bStart, bEnd) {
 
 // Compute bookable slots for a deal (attendees = its production team).
 export async function computeSlots(dealId, rules) {
-  const { organizer, attendees } = await getDealAttendees(dealId);
-  return computeSlotsForAttendees(organizer, attendees, rules);
+  const { organizer, attendees, optional } = await getDealAttendees(dealId);
+  const result = await computeSlotsForAttendees(organizer, attendees, rules);
+  // Availability is computed from the required attendees alone; the optional
+  // ones only ride along to the invite.
+  return { ...result, optional };
 }
 
 // Compute bookable slots for an explicit host list (e.g. a partner-client
@@ -208,7 +222,7 @@ export async function computeSlotsForHosts(hostEmails, rules) {
 export async function computeSlotsForAttendees(organizer, attendees, rules) {
   const r = mergeRules(rules);
   if (!attendees || !attendees.length) {
-    return { organizer: null, attendees: [], slots: [], blocked: [{ email: null, reason: 'no_team' }] };
+    return { organizer: null, attendees: [], optional: [], slots: [], blocked: [{ email: null, reason: 'no_team' }] };
   }
 
   const now = Date.now();
@@ -233,7 +247,7 @@ export async function computeSlotsForAttendees(organizer, attendees, rules) {
     }
   }
   if (blocked.length) {
-    return { organizer, attendees, slots: [], blocked };
+    return { organizer, attendees, optional: [], slots: [], blocked };
   }
 
   // Existing confirmed bookings that tie up any attendee in the window.
@@ -281,7 +295,7 @@ export async function computeSlotsForAttendees(organizer, attendees, rules) {
     }
   }
 
-  return { organizer, attendees, slots, blocked: [] };
+  return { organizer, attendees, optional: [], slots, blocked: [] };
 }
 
 // A weekday with no stored row falls back to the global window, treating Sat/Sun

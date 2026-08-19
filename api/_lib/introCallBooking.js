@@ -66,6 +66,9 @@ export async function bookSlot({
   if (!slot) return { ok: false, status: 409, error: 'That time was just taken. Please pick another slot.', slots: result.slots };
   const organizer = result.organizer;
   const attendees = result.attendees;
+  // Invited but not required to be free — the deal's owner. See
+  // getDealAttendees for why they are kept out of the availability set.
+  const optional = Array.isArray(result.optional) ? result.optional : [];
   if (!organizer) return { ok: false, status: 409, error: 'Booking is temporarily unavailable.' };
 
   const startUTC = new Date(slot.start);
@@ -81,7 +84,7 @@ export async function bookSlot({
        attendee_emails, organizer_email, status, client_timezone, kind)
     VALUES (${bookingId}, ${dealId}, ${clientKey}, ${linkToken}, ${name}, ${email},
        ${startUTC.toISOString()}, ${endUTC.toISOString()},
-       ${attendees}::text[], ${organizer}, 'confirmed', ${clientTz}, ${kind})
+       ${[...attendees, ...optional]}::text[], ${organizer}, 'confirmed', ${clientTz}, ${kind})
   `;
   const clash = await sql`
     SELECT COUNT(*)::int AS n FROM intro_call_bookings
@@ -104,6 +107,7 @@ export async function bookSlot({
       start: startUTC,
       end: endUTC,
       attendees: [email, ...attendees],
+      optionalAttendees: optional,
       requestId: bookingId,
     });
     meetUrl = event.meetUrl;
@@ -127,7 +131,19 @@ export async function bookSlot({
   try {
     const when = startUTC.toLocaleString('en-GB', { dateStyle: 'full', timeStyle: 'short', timeZone: rules.timezone });
     await ensureIntroCallNotificationDefault();
-    const teamEmails = dealId ? await resolveDealTeamEmails(dealId, organizer) : attendees;
+    // Everyone actually on the call, plus whoever owns the deal.
+    //
+    // resolveDealTeamEmails alone was the wrong set twice over: it reads
+    // assignees + owner, so a producer who is neither — and who is usually
+    // the ORGANIZER — was left out. Google does not email an organizer their
+    // own event either, so the one person whose calendar the call lands in
+    // could be the only one never told about it. That is what happened.
+    const teamEmails = Array.from(new Set([
+      ...(dealId ? await resolveDealTeamEmails(dealId, organizer) : []),
+      organizer,
+      ...attendees,
+      ...optional,
+    ].filter(Boolean).map((e) => String(e).toLowerCase())));
     await sendNotification('intro_call.booked', {
       assigneeEmails: teamEmails,
       subject: `${label} booked — ${projectName}`,
