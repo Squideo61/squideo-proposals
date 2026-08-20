@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Clapperboard, Copy, MessageSquare, Plus, Trash2, Upload, Film, FileDown, CheckCircle2, ChevronDown, ChevronRight, BarChart3, Eye, Link2, User, Check, Flag } from 'lucide-react';
+import { ArrowLeft, Clapperboard, Copy, MessageSquare, Plus, Trash2, Upload, Film, FileDown, CheckCircle2, ChevronDown, ChevronRight, BarChart3, Eye, Link2, User, Check, Flag, AlertTriangle } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile, formatRelativeTime } from '../../utils.js';
+import { inspectVideoUrl, checkVideoForStreaming } from '../../lib/mp4Inspect.js';
 import { Modal } from '../ui.jsx';
 import { RevisionAnalyticsModal } from '../RevisionAnalyticsModal.jsx';
 import { SearchBox } from './ProductionView.jsx';
@@ -606,6 +607,18 @@ function DraftBlock({ projectId, video, version, comments, isMobile }) {
   const videoRef = useRef(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [activeCommentId, setActiveCommentId] = useState(null);
+  // Whether this draft can actually be scrubbed in a browser. An MP4 exported
+  // without "web optimised" keeps its seek index at the END of the file, so the
+  // player has to drag the whole thing down before it can jump — the client sees
+  // it stall and snap back to the start. Header-only check, best-effort: null
+  // means we couldn't tell (cross-origin refusal), never "it's fine".
+  const [streamable, setStreamable] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    setStreamable(null);
+    inspectVideoUrl(version.videoUrl).then(r => { if (alive) setStreamable(r); });
+    return () => { alive = false; };
+  }, [version.videoUrl]);
 
   // Same 1-based numbering as the client view: pin number === position among
   // anchored comments in the sidebar order.
@@ -641,6 +654,19 @@ function DraftBlock({ projectId, video, version, comments, isMobile }) {
   return (
     <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: 14, alignItems: 'flex-start' }}>
       <div style={{ flex: isMobile ? '1 1 auto' : '1 1 62%', minWidth: 0, width: '100%' }}>
+        {streamable?.faststart === false && (
+          <div style={{ display: 'flex', gap: 9, alignItems: 'flex-start', background: '#FFFBEB',
+            border: '1px solid #FDE68A', borderRadius: 8, padding: '9px 11px', marginBottom: 8 }}>
+            <AlertTriangle size={15} color="#B45309" style={{ flexShrink: 0, marginTop: 1 }} />
+            <div style={{ fontSize: 12.5, color: '#92400E', lineHeight: 1.5 }}>
+              <strong>This draft isn’t web-optimised.</strong> Its seek index sits at the end of the
+              file, so the client’s player has to download the whole video before it can jump —
+              scrubbing snaps back to the start and playback stalls on slower connections.
+              Re-export with <strong>fast start</strong> ticked (Premiere/Media Encoder) or run it
+              through HandBrake with <strong>Web Optimized</strong>, then upload it as a new draft.
+            </div>
+          </div>
+        )}
         <div style={{ position: 'relative', display: 'inline-block', maxWidth: '100%' }}>
           <video
             ref={videoRef}
@@ -744,6 +770,24 @@ function VideoCard({ projectId, video, commentsByVersion }) {
   async function handleFile(file) {
     if (!file) return;
     if (!file.type.startsWith('video/')) { showMsg('Please choose a video file'); return; }
+    // Catch an export that won't scrub in a browser before the client ever sees
+    // it. Advisory, not a block — a producer may knowingly send one on.
+    const check = await checkVideoForStreaming(file).catch(() => null);
+    if (check?.problems?.length) {
+      const lines = ['This video may not play properly for the client.', ''];
+      if (check.problems.includes('not-faststart')) {
+        lines.push('• It isn’t web-optimised: the seek index is at the end of the file, so');
+        lines.push('  scrubbing snaps back to the start and playback stalls while it loads.');
+        lines.push('  Re-export with "fast start" ticked, or run it through HandBrake with');
+        lines.push('  "Web Optimized".');
+      }
+      if (check.problems.includes('high-bitrate')) {
+        lines.push(`• It’s ${check.bitrateMbps.toFixed(1)} Mbps — very high for animation, which`);
+        lines.push('  makes it slow to load and awkward to scrub on a normal connection.');
+      }
+      lines.push('', 'Upload it anyway?');
+      if (!window.confirm(lines.join('\n'))) return;
+    }
     setProgress(0);
     try {
       // Uploaded straight into the Video Revisions section → share with viewers
