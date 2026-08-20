@@ -13,7 +13,16 @@ async function request(method, path, body) {
 
   if (res.status === 204) return null;
   const json = await res.json();
-  if (!res.ok) throw new Error(json.error || 'Request failed');
+  if (!res.ok) {
+    // Keep the status and the response body on the error — routes that answer
+    // with a structured refusal (e.g. a 409 the user can confirm past) need the
+    // detail, not just the message.
+    const err = new Error(json.error || 'Request failed');
+    err.status = res.status;
+    err.code = json.code || null;
+    err.data = json;
+    throw err;
+  }
   return json;
 }
 

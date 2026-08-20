@@ -17,7 +17,106 @@ import { makeId, trimOrNull, lowerOrNull, numberOrNull } from './shared.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 
+// ── Payment balance guard ────────────────────────────────────────────────────
+// What a deal committed to (its signed inc-VAT total) versus what's already been
+// recorded against it. Reads exactly the sources annotateDeals' saleStatus and
+// the income reports use, so the guard, the "Paid"/"Deposit paid" pill and the
+// cash figures can never disagree.
+//
+// This exists because recording a payment and marking an invoice paid are two
+// separate actions with nothing tying them together, so the same money can be
+// booked twice — enough to tip a 50% deposit to "paid in full". Never throws: a
+// failure degrades to "no guard" rather than blocking a legitimate payment.
+export async function dealPaymentBalance(dealId) {
+  const empty = { dealId, committed: 0, paid: 0, remaining: null, known: false };
+  if (!dealId) return empty;
+  try {
+    const [sigRows, payRows] = await Promise.all([
+      sql`
+        SELECT COALESCE(SUM((s.data->>'total')::numeric), 0) AS v
+          FROM signatures s JOIN proposals p ON p.id = s.proposal_id
+         WHERE p.deal_id = ${dealId}
+           AND (s.data->>'total') ~ '^[0-9]+(\.[0-9]+)?$'`,
+      sql`
+        SELECT COALESCE(SUM(v), 0) AS v FROM (
+          SELECT COALESCE(SUM(pay.amount), 0) AS v
+            FROM payments pay JOIN proposals p ON p.id = pay.proposal_id
+           WHERE p.deal_id = ${dealId}
+          UNION ALL
+          SELECT COALESCE(SUM(pi.amount), 0)
+            FROM partner_invoices pi JOIN proposals p ON p.id = pi.proposal_id
+           WHERE p.deal_id = ${dealId}
+          UNION ALL
+          SELECT COALESCE(SUM(mp.amount), 0)
+            FROM manual_payments mp JOIN proposals p ON p.id = mp.proposal_id
+           WHERE mp.manual_invoice_id IS NULL AND p.deal_id = ${dealId}
+          UNION ALL
+          SELECT COALESCE(SUM(mi.amount), 0)
+            FROM manual_invoices mi LEFT JOIN proposals pr ON pr.id = mi.proposal_id
+           WHERE mi.status = 'paid' AND COALESCE(mi.deal_id, pr.deal_id) = ${dealId}
+          UNION ALL
+          SELECT COALESCE(SUM(pb.paid_amount), 0)
+            FROM proposal_billing pb JOIN proposals p ON p.id = pb.proposal_id
+           WHERE pb.paid_amount IS NOT NULL AND p.deal_id = ${dealId}
+        ) q`,
+    ]);
+    const committed = Number(sigRows[0]?.v) || 0;
+    const paid = Number(payRows[0]?.v) || 0;
+    return {
+      dealId,
+      committed,
+      paid,
+      remaining: committed > 0 ? Math.max(0, committed - paid) : null,
+      known: committed > 0,
+    };
+  } catch (err) {
+    console.warn('[payments] balance lookup failed', err.message);
+    return empty;
+  }
+}
+
+// Manual invoices on a deal that a payment can be attached to, so the modal can
+// offer a real list instead of asking for an invoice ID by hand — an unattached
+// payment against an invoice that's separately marked paid is what double-books.
+// Unpaid first: those are what a new payment usually settles.
+async function invoicesForDeal(dealId) {
+  if (!dealId) return [];
+  try {
+    const rows = await sql`
+      SELECT mi.id, mi.invoice_number, mi.amount, mi.status, mi.issued_at,
+             EXISTS (SELECT 1 FROM manual_payments mp WHERE mp.manual_invoice_id = mi.id) AS has_payment
+        FROM manual_invoices mi
+        LEFT JOIN proposals pr ON pr.id = mi.proposal_id
+       WHERE COALESCE(mi.deal_id, pr.deal_id) = ${dealId} AND mi.status <> 'void'
+       ORDER BY (mi.status = 'paid') ASC, mi.issued_at DESC NULLS LAST`;
+    return rows.map((r) => ({
+      id: r.id,
+      invoiceNumber: r.invoice_number || null,
+      amount: r.amount != null ? Number(r.amount) : null,
+      status: r.status,
+      issuedAt: r.issued_at || null,
+      hasPayment: !!r.has_payment,
+    }));
+  } catch (err) {
+    console.warn('[payments] invoice list failed', err.message);
+    return [];
+  }
+}
+
 export async function paymentsRoute(req, res, id, action, user) {
+  // --- GET /api/crm/payments/balance?dealId= — what's committed vs already
+  // recorded on a deal, plus the invoices a payment can attach to. Feeds the
+  // "Record a payment" modal so it can warn before money is double-booked.
+  if (id === 'balance' && req.method === 'GET') {
+    const dealId = trimOrNull(req.query.dealId);
+    if (!dealId) return res.status(400).json({ error: 'dealId required' });
+    const [balance, invoices] = await Promise.all([
+      dealPaymentBalance(dealId),
+      invoicesForDeal(dealId),
+    ]);
+    return res.status(200).json({ ...balance, invoices });
+  }
+
   // --- GET /api/crm/payments?dealId|contactId|companyId
   if (!id && req.method === 'GET') {
     const dealId    = trimOrNull(req.query.dealId);
@@ -152,6 +251,26 @@ export async function paymentsRoute(req, res, id, action, user) {
     if (!proposalId) return res.status(400).json({ error: 'proposalId required' });
     if (amount == null || amount <= 0) return res.status(400).json({ error: 'amount must be positive' });
     if (!paymentMethod) return res.status(400).json({ error: 'paymentMethod required' });
+
+    // Guard: would this take the deal past what it actually committed to? That's
+    // how a 50% deposit ends up reading as "paid in full" — either the amount is
+    // the whole project value rather than what landed, or the matching invoice is
+    // separately marked paid so the money is counted twice. Extras can
+    // legitimately push a deal over, so it's a confirmable warning, not a block.
+    const guardDealId = await dealIdForProposal(proposalId).catch(() => null);
+    if (guardDealId && body.confirmOverpay !== true) {
+      const bal = await dealPaymentBalance(guardDealId);
+      if (bal.known && bal.paid + amount > bal.committed + 0.005) {
+        return res.status(409).json({
+          error: 'This payment would take the deal past its signed total.',
+          code: 'exceeds_committed',
+          committed: bal.committed,
+          alreadyPaid: bal.paid,
+          remaining: bal.remaining,
+          amount,
+        });
+      }
+    }
 
     const newId = makeId('mp');
     await sql`

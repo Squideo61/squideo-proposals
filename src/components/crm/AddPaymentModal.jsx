@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
-import { X } from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { AlertTriangle, X } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { api } from '../../api.js';
+import { formatGBP } from '../../utils.js';
 import { Modal } from '../ui.jsx';
 import { AddInvoiceModal } from './AddInvoiceModal.jsx';
 
@@ -26,11 +27,35 @@ export function AddPaymentModal({ dealId, proposals = [], onClose, onCreated }) 
   const [manualInvoiceId, setManualInvoiceId] = useState('');
   const [uploadingInvoice, setUploadingInvoice] = useState(false);
   const [saving, setSaving] = useState(false);
+  // What the deal committed to vs what's already recorded, plus the invoices a
+  // payment can be attached to. Drives the over-payment warning below.
+  const [balance, setBalance] = useState(null);
 
-  async function handleSubmit(e) {
-    e.preventDefault();
+  const loadBalance = useCallback(async () => {
+    if (!dealId) return;
+    try {
+      setBalance(await api.get(`/api/crm/payments/balance?dealId=${encodeURIComponent(dealId)}`));
+    } catch { setBalance(null); }
+  }, [dealId]);
+  useEffect(() => { loadBalance(); }, [loadBalance]);
+
+  const invoices = balance?.invoices || [];
+  const amt = Number(amount);
+  const remaining = balance?.known ? balance.remaining : null;
+  // Live warning while typing — the same rule the server enforces on submit.
+  const overpays = balance?.known && Number.isFinite(amt) && amt > 0
+    && balance.paid + amt > balance.committed + 0.005;
+
+  // Attaching the payment to an invoice is what stops the same money being
+  // counted twice (once here, once when that invoice is marked paid).
+  const pickInvoice = (invId) => {
+    setManualInvoiceId(invId);
+    const inv = invoices.find((i) => i.id === invId);
+    if (inv?.amount != null && !amount) setAmount(String(inv.amount));
+  };
+
+  async function submit(confirmOverpay) {
     if (!proposalId) { showMsg?.('Pick a proposal', 'error'); return; }
-    const amt = Number(amount);
     if (!Number.isFinite(amt) || amt <= 0) { showMsg?.('Amount must be a positive number', 'error'); return; }
     setSaving(true);
     try {
@@ -42,15 +67,37 @@ export function AddPaymentModal({ dealId, proposals = [], onClose, onCreated }) 
         paidAt: new Date(paidAt).toISOString(),
         notes: notes.trim() || null,
         manualInvoiceId: manualInvoiceId || null,
+        ...(confirmOverpay ? { confirmOverpay: true } : {}),
       });
       showMsg?.('Payment recorded', 'success');
       onCreated?.();
     } catch (err) {
-      showMsg?.(err.message || 'Failed to save', 'error');
+      // The server refuses an over-payment once; confirming records it anyway
+      // (extras and genuine overpayments are real, so this can't be a hard block).
+      if (err.code === 'exceeds_committed' || /past its signed total/i.test(err.message || '')) {
+        const d = err.data || {};
+        const lines = [
+          'This payment would take the deal past its signed total.',
+          '',
+          d.committed != null ? `Signed total:   ${formatGBP(d.committed)}` : null,
+          d.alreadyPaid != null ? `Already recorded: ${formatGBP(d.alreadyPaid)}` : null,
+          `This payment:   ${formatGBP(amt)}`,
+          '',
+          'Check the amount is what actually landed, and that you’re not also',
+          'marking the matching invoice as paid — that would count it twice.',
+          '',
+          'Record it anyway?',
+        ].filter((l) => l !== null);
+        if (window.confirm(lines.join('\n'))) { await submit(true); return; }
+      } else {
+        showMsg?.(err.message || 'Failed to save', 'error');
+      }
     } finally {
       setSaving(false);
     }
   }
+
+  const handleSubmit = (e) => { e.preventDefault(); submit(false); };
 
   return (
     <Modal onClose={onClose} showClose={false}>
@@ -90,19 +137,58 @@ export function AddPaymentModal({ dealId, proposals = [], onClose, onCreated }) 
         <Field label="Notes (optional)">
           <textarea value={notes} onChange={(e) => setNotes(e.target.value)} className="input" rows={2} placeholder="BACS reference, cheque number, etc." />
         </Field>
-        <Field label="Attach invoice (optional)">
+        <Field label="Settles which invoice? (recommended)">
           <div style={{ display: 'flex', gap: 8 }}>
-            <input
-              type="text"
+            <select
               value={manualInvoiceId}
-              onChange={(e) => setManualInvoiceId(e.target.value)}
+              onChange={(e) => pickInvoice(e.target.value)}
               className="input"
-              placeholder="Manual invoice ID, if known"
               style={{ flex: 1 }}
-            />
+            >
+              <option value="">— Not against an invoice —</option>
+              {invoices.map((inv) => (
+                <option key={inv.id} value={inv.id}>
+                  {(inv.invoiceNumber || inv.id.slice(0, 12))}
+                  {inv.amount != null ? ` · ${formatGBP(inv.amount)}` : ''}
+                  {inv.status === 'paid' ? ' · already marked paid' : ''}
+                </option>
+              ))}
+            </select>
             <button type="button" onClick={() => setUploadingInvoice(true)} className="btn-ghost">Upload new…</button>
           </div>
+          <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 5, lineHeight: 1.45 }}>
+            Linking it keeps the money counted once. Leave it unlinked and, if that
+            invoice is also marked paid, the deal books the amount twice.
+          </div>
         </Field>
+
+        {balance?.known && (
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 12, color: BRAND.muted, background: '#F8FAFC', border: '1px solid ' + BRAND.border, borderRadius: 8, padding: '8px 11px' }}>
+            <span>Signed total <strong style={{ color: BRAND.ink }}>{formatGBP(balance.committed)}</strong></span>
+            <span>Already recorded <strong style={{ color: BRAND.ink }}>{formatGBP(balance.paid)}</strong></span>
+            {remaining != null && (
+              <span style={{ marginLeft: 'auto' }}>
+                Outstanding <strong style={{ color: remaining > 0.005 ? '#B45309' : '#16A34A' }}>{formatGBP(remaining)}</strong>
+                {remaining > 0.005 && !amount && (
+                  <button type="button" className="btn-link" style={{ marginLeft: 6, fontSize: 12 }} onClick={() => setAmount(String(remaining))}>use</button>
+                )}
+              </span>
+            )}
+          </div>
+        )}
+
+        {overpays && (
+          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 8, padding: '10px 12px' }}>
+            <AlertTriangle size={16} color="#B45309" style={{ flexShrink: 0, marginTop: 1 }} />
+            <div style={{ fontSize: 12.5, color: '#92400E', lineHeight: 1.5 }}>
+              <strong>That takes this deal past its signed total.</strong>{' '}
+              {formatGBP(balance.paid)} is already recorded against {formatGBP(balance.committed)}.
+              Check the amount is what actually landed — and that you aren’t also marking
+              the matching invoice as paid, which would count it twice. You can still
+              record it (extras and genuine overpayments happen).
+            </div>
+          </div>
+        )}
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
           <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
@@ -119,6 +205,9 @@ export function AddPaymentModal({ dealId, proposals = [], onClose, onCreated }) 
           onCreated={(created) => {
             setUploadingInvoice(false);
             if (created?.id) setManualInvoiceId(created.id.slice('manual:'.length));
+            // Reload so the new invoice appears in the picker (and its amount
+            // counts toward the balance shown above).
+            loadBalance();
           }}
         />
       )}
