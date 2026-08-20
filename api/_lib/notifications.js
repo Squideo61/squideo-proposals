@@ -576,7 +576,7 @@ export async function sendNotification(key, {
 // (Tier 2) — a no-op when push isn't provisioned or the user has no devices
 // subscribed. The push tag defaults to `notif-<rowId>` so it matches the in-tab
 // (Tier 1) dedupe tag for the same item; callers may override via inApp.tag.
-// `inApp.coalesce` rolls repeated events into ONE row instead of a stack of
+// `inApp.coalesce` rolls related events into ONE row instead of a stack of
 // near-identical ones (a client uploading eight brand files shouldn't cost eight
 // notifications). Shape:
 //   { group, summaryTitle, summaryBody?, windowMinutes? }
@@ -586,6 +586,12 @@ export async function sendNotification(key, {
 // the running count. The row's created_at is refreshed so it stays at the top of
 // the feed, and the push tag is per-group so the desktop alert REPLACES its
 // predecessor rather than stacking.
+//
+// The match is on the GROUP alone, not the notification key, so a later stage of
+// the same story can supersede an earlier one: "invoice requested" becomes
+// "invoice issued" in place when the client completes billing, while a client
+// who abandons at the billing form leaves the "requested" alert standing. The
+// row adopts the newer key so it still files under the right bell.
 export async function persistInApp(key, recipients, { subject, text, inApp }) {
   const title = String(inApp?.title || subject || 'Notification').slice(0, 200);
   const body = inApp?.body != null
@@ -595,7 +601,10 @@ export async function persistInApp(key, recipients, { subject, text, inApp }) {
   const tagOverride = inApp?.tag || null;
   const coalesce = inApp?.coalesce?.group ? inApp.coalesce : null;
   const group = coalesce ? String(coalesce.group).slice(0, 200) : null;
-  const windowMinutes = Math.min(1440, Math.max(1, Number(coalesce?.windowMinutes) || 120));
+  // Capped at 30 days: a supersede can legitimately span days (a client returns
+  // to finish their billing details), while an unread row older than that is
+  // stale enough that a fresh alert is the honest thing to show.
+  const windowMinutes = Math.min(43200, Math.max(1, Number(coalesce?.windowMinutes) || 120));
   const summaryTitle = coalesce ? String(coalesce.summaryTitle || title).slice(0, 200) : null;
   const summaryBody = coalesce?.summaryBody != null ? String(coalesce.summaryBody).slice(0, 500) : null;
   if (coalesce) await ensureInAppCoalesceColumns();
@@ -616,12 +625,12 @@ export async function persistInApp(key, recipients, { subject, text, inApp }) {
           UPDATE in_app_notifications
              SET coalesce_count = coalesce_count + 1,
                  created_at = NOW(),
+                 notification_key = ${key},
                  title = replace(${summaryTitle}::text, '{n}', (coalesce_count + 1)::text),
                  body = COALESCE(${summaryBody}::text, body)
            WHERE id = (
              SELECT id FROM in_app_notifications
               WHERE user_email = ${email}
-                AND notification_key = ${key}
                 AND coalesce_group = ${group}
                 AND read_at IS NULL
                 AND created_at > NOW() - make_interval(mins => ${windowMinutes}::int)

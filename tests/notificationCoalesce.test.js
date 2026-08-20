@@ -98,3 +98,71 @@ describe('in-app notification coalescing', () => {
     expect(inserted.text).not.toMatch(/coalesce_group/);
   });
 });
+
+// "Invoice requested" (client clicks send-me-an-invoice) and "Invoice issued"
+// (they complete billing and Xero raises it) are one story, usually a minute
+// apart. The second supersedes the first in place — but only while it's unread,
+// so an abandoned request still stands on its own.
+describe('cross-key supersede', () => {
+  const GROUP = 'invoice-route:prop_1';
+
+  const requested = () => persistInApp('invoice.client_requested', ['pm@squideo.co.uk'], {
+    subject: 'Invoice requested', text: null,
+    inApp: {
+      title: '🧾 Invoice requested: Heather Edgar',
+      body: 'wants to be invoiced rather than pay by card',
+      link: '#/deal/deal_1',
+      coalesce: { group: GROUP, summaryTitle: '🧾 Invoice requested: Heather Edgar', windowMinutes: 20160 },
+    },
+  });
+  const issued = () => persistInApp('invoice.issued', ['pm@squideo.co.uk'], {
+    subject: 'Invoice issued', text: null,
+    inApp: {
+      title: '📄 Invoice issued: Heather Edgar',
+      body: 'invoiced (50% deposit)',
+      link: '#/deal/deal_1',
+      coalesce: {
+        group: GROUP,
+        summaryTitle: '📄 Invoice issued: Heather Edgar',
+        summaryBody: 'invoiced (50% deposit)',
+        windowMinutes: 20160,
+      },
+    },
+  });
+
+  it('matches on the group alone, so a different key can supersede', async () => {
+    installDb({ existing: 1 });
+    await issued();
+    const upd = getSqlCalls().find((c) => /^\s*UPDATE in_app_notifications/i.test(c.text));
+    expect(upd).toBeTruthy();
+    // The lookup must NOT be narrowed by notification_key, or "issued" would
+    // never find the "requested" row.
+    expect(upd.text).not.toMatch(/WHERE user_email = \?\s*AND notification_key/);
+    expect(upd.values).toContain(GROUP);
+  });
+
+  it('adopts the newer key so the row files under the right bell', async () => {
+    installDb({ existing: 1 });
+    await issued();
+    const upd = getSqlCalls().find((c) => /^\s*UPDATE in_app_notifications/i.test(c.text));
+    expect(upd.text).toMatch(/notification_key = \?/);
+    expect(upd.values).toContain('invoice.issued');
+  });
+
+  it('stands alone when the client abandons at the billing form', async () => {
+    installDb({ existing: 0 });
+    await requested();
+    const calls = getSqlCalls();
+    expect(calls.some((c) => /INSERT INTO in_app_notifications/i.test(c.text))).toBe(true);
+    const inserted = calls.find((c) => /INSERT INTO in_app_notifications/i.test(c.text));
+    expect(inserted.values).toContain('🧾 Invoice requested: Heather Edgar');
+  });
+
+  it('issues its own row when there is nothing to supersede', async () => {
+    // Staff raised the invoice without a client click, or the request was read.
+    installDb({ existing: 0 });
+    await issued();
+    const inserted = getSqlCalls().find((c) => /INSERT INTO in_app_notifications/i.test(c.text));
+    expect(inserted.values).toContain('📄 Invoice issued: Heather Edgar');
+  });
+});

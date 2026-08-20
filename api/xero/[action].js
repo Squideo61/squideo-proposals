@@ -292,6 +292,15 @@ export default async function handler(req, res) {
           title: `🧾 Invoice requested: ${title}`,
           body: `${sig.name || 'A client'} wants to be invoiced rather than pay by card`,
           link: dealId ? `#/deal/${dealId}` : null,
+          // Requesting and issuing are one story: the client almost always
+          // completes billing straight away, so this row is superseded in place
+          // by "Invoice issued" rather than sitting next to it. If they abandon
+          // at the billing form it stays — which is exactly when you'd chase.
+          coalesce: {
+            group: `invoice-route:${proposalId}`,
+            summaryTitle: `🧾 Invoice requested: ${title}`,
+            windowMinutes: 20160, // 14 days
+          },
         },
       });
       await sql`UPDATE invoice_route_intents SET notified_at = NOW() WHERE proposal_id = ${proposalId}`;
@@ -402,6 +411,16 @@ export default async function handler(req, res) {
           title: `📄 Invoice issued: ${title}`,
           body: `${signed.name || 'A client'} was invoiced ${isDeposit ? '(50% deposit)' : '(full payment)'} · ${billing.companyName}`,
           link: dealId ? `#/deal/${dealId}` : null,
+          // Same group as the "requested" alert above — this replaces it in
+          // place, so the pair reads as one notification ending at the outcome
+          // that matters. Falls back to its own row if there's nothing to
+          // supersede (already read, or issued by staff without a client click).
+          coalesce: {
+            group: `invoice-route:${proposalId}`,
+            summaryTitle: `📄 Invoice issued: ${title}`,
+            summaryBody: `${signed.name || 'A client'} was invoiced ${isDeposit ? '(50% deposit)' : '(full payment)'} · ${billing.companyName}`,
+            windowMinutes: 20160, // 14 days
+          },
         },
       });
     } catch (err) {
