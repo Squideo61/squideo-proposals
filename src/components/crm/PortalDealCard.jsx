@@ -520,6 +520,12 @@ export function PortalDealCard({ dealId, dealTitle = null }) {
             );
           })()}
 
+          {/* Where the client is up to. First, because it is what the card is
+              opened to find out — the extras list and the brief are things you
+              go looking for, the checklist is the answer to "what are we
+              waiting on". Its activity log stays at the bottom. */}
+          <PortalStepsActivity variant="deal" sections="steps" steps={data.steps || []} />
+
           {allOffers.length === 0 && (
             <Empty text="No portal extras to offer — the signed proposal has no remaining optional extras. Add a custom offer to upsell." />
           )}
@@ -629,7 +635,7 @@ export function PortalDealCard({ dealId, dealTitle = null }) {
             )}
           />
 
-          <PortalStepsActivity variant="deal" steps={data.steps || []} activity={data.activity || []} />
+          <PortalStepsActivity variant="deal" sections="activity" activity={data.activity || []} />
         </>
       )}
 

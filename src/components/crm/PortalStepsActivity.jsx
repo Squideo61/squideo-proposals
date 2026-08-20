@@ -120,13 +120,18 @@ function CompanySteps({ steps, onOpenDeal }) {
 
 const INLINE_LIMIT = 6;
 
-export function PortalStepsActivity({ variant, steps = [], activity = [], onOpenDeal }) {
+// `sections` splits the two halves so a caller can place them apart. The deal
+// page does: the checklist is where the client is UP TO — the thing you open
+// the card to find out — while the activity log is a trail you consult, so it
+// belongs at the bottom. Defaults to both, which is how the company card and
+// every other caller still use it.
+export function PortalStepsActivity({ variant, steps = [], activity = [], onOpenDeal, sections = 'both' }) {
   const [showAll, setShowAll] = useState(false);
   const shown = activity.slice(0, INLINE_LIMIT);
 
   return (
     <div style={{ borderTop: '1px solid ' + BRAND.border, marginTop: 10, paddingTop: 2 }}>
-      {steps.length > 0 && (
+      {sections !== 'activity' && steps.length > 0 && (
         <>
           <SectionHeader>{variant === 'company' ? 'Project progress' : 'Steps completed'}</SectionHeader>
           {variant === 'company'
@@ -135,18 +140,22 @@ export function PortalStepsActivity({ variant, steps = [], activity = [], onOpen
         </>
       )}
 
-      <SectionHeader>Portal activity</SectionHeader>
-      {activity.length === 0 ? (
-        <div style={{ fontSize: 12.5, color: BRAND.muted, fontStyle: 'italic', paddingBottom: 4 }}>
-          Nothing yet — logins, uploads, voiceover picks and other portal actions show here.
-        </div>
-      ) : (
+      {sections !== 'steps' && (
         <>
-          {shown.map((a, i) => <ActivityRow key={i} a={a} />)}
-          {activity.length > INLINE_LIMIT && (
-            <button className="btn-ghost" style={{ fontSize: 12, marginTop: 4 }} onClick={() => setShowAll(true)}>
-              View all {activity.length} events
-            </button>
+          <SectionHeader>Portal activity</SectionHeader>
+          {activity.length === 0 ? (
+            <div style={{ fontSize: 12.5, color: BRAND.muted, fontStyle: 'italic', paddingBottom: 4 }}>
+              Nothing yet — logins, uploads, voiceover picks and other portal actions show here.
+            </div>
+          ) : (
+            <>
+              {shown.map((a, i) => <ActivityRow key={i} a={a} />)}
+              {activity.length > INLINE_LIMIT && (
+                <button className="btn-ghost" style={{ fontSize: 12, marginTop: 4 }} onClick={() => setShowAll(true)}>
+                  View all {activity.length} events
+                </button>
+              )}
+            </>
           )}
         </>
       )}
