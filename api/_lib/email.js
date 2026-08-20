@@ -347,17 +347,38 @@ export function signedHtml({ proposal, signature, signerName, signerEmail, signe
   return shell(inner);
 }
 
-export function paidHtml({ proposal, signerName, signerEmail, amount, paymentType, paidAt, receiptUrl, link }) {
+// WHO PAID and WHO TOLD US are different people, and this template used to
+// have one slot for both. A card payment names the client, because Stripe
+// tells us who they were. A payment entered by hand doesn't — the caller was
+// passing the staff member who typed it in, so the email read "Adam Shelton
+// just paid £2,000" about money a client had sent us. Read literally, it
+// says a colleague bought their own proposal.
+//
+// So: `signerName` is the payer and only ever the payer. `recordedBy` is the
+// person who entered it, and gets its own line rather than the headline.
+export function paidHtml({
+  proposal, signerName, signerEmail, amount, paymentType, paidAt, receiptUrl, link,
+  recordedBy = null, paymentMethod = null,
+}) {
   const title = proposal.proposalTitle || proposal.clientName || 'Proposal';
   const dateStr = paidAt ? new Date(paidAt).toLocaleString('en-GB') : '';
   const amountLabel = paymentType === 'deposit' ? '50% deposit' : 'full payment';
+  // The client, never us. Falls back to the proposal when a hand-entered
+  // payment has no signature to name — better to say "£2,000 received" than
+  // to put a name on it that we are guessing at.
+  const payer = signerName || (recordedBy ? (proposal.clientName || proposal.contactBusinessName || null) : null);
   const inner = `
     <h2 style="margin:0 0 12px;font-size:18px;font-weight:700;">💰 Payment received</h2>
-    <p style="margin:0 0 16px;">${escapeHtml(signerName || 'A client')}${signerEmail ? ` (${escapeHtml(signerEmail)})` : ''} just paid <strong>${formatGBP(amount)}</strong> (${escapeHtml(amountLabel)}) for <strong>${escapeHtml(title)}</strong>${proposal.clientName && proposal.clientName !== title ? ` - ${escapeHtml(proposal.clientName)}` : ''}.</p>
+    <p style="margin:0 0 16px;">${payer
+      ? `${escapeHtml(payer)}${signerEmail ? ` (${escapeHtml(signerEmail)})` : ''} paid <strong>${formatGBP(amount)}</strong>`
+      : `<strong>${formatGBP(amount)}</strong> received`
+    } (${escapeHtml(amountLabel)}) for <strong>${escapeHtml(title)}</strong>${proposal.clientName && proposal.clientName !== title ? ` - ${escapeHtml(proposal.clientName)}` : ''}.</p>
     <table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:0 0 22px;">
       ${proposal.contactBusinessName ? `<tr><td style="padding:4px 12px 4px 0;color:#6B7785;font-size:13px;">Business</td><td style="padding:4px 0;font-size:13px;">${escapeHtml(proposal.contactBusinessName)}</td></tr>` : ''}
       <tr><td style="padding:4px 12px 4px 0;color:#6B7785;font-size:13px;">Amount</td><td style="padding:4px 0;font-size:13px;font-weight:600;">${formatGBP(amount)}</td></tr>
       ${dateStr ? `<tr><td style="padding:4px 12px 4px 0;color:#6B7785;font-size:13px;">Paid at</td><td style="padding:4px 0;font-size:13px;">${escapeHtml(dateStr)}</td></tr>` : ''}
+      ${paymentMethod ? `<tr><td style="padding:4px 12px 4px 0;color:#6B7785;font-size:13px;">Method</td><td style="padding:4px 0;font-size:13px;">${escapeHtml(String(paymentMethod).toUpperCase())}</td></tr>` : ''}
+      ${recordedBy ? `<tr><td style="padding:4px 12px 4px 0;color:#6B7785;font-size:13px;">Recorded by</td><td style="padding:4px 0;font-size:13px;">${escapeHtml(recordedBy)}</td></tr>` : ''}
     </table>
     ${receiptUrl ? `<p style="margin:0 0 12px;"><a href="${escapeHtml(receiptUrl)}" style="display:inline-block;background:#16A34A;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;">View receipt</a></p>` : ''}
     ${link ? `<p style="margin:0;font-size:13px;"><a href="${escapeHtml(link)}" style="color:#2BB8E6;text-decoration:none;">Open the proposal</a></p>` : ''}

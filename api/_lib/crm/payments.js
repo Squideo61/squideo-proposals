@@ -301,7 +301,12 @@ export async function paymentsRoute(req, res, id, action, user) {
     }
 
     try {
-      const [proposalRow] = await sql`SELECT data FROM proposals WHERE id = ${proposalId}`;
+      // The signature names the CLIENT. Without it the email had nobody to
+      // credit the payment to but the person who entered it.
+      const [[proposalRow], [sigRow]] = await Promise.all([
+        sql`SELECT data FROM proposals WHERE id = ${proposalId}`,
+        sql`SELECT name, email FROM signatures WHERE proposal_id = ${proposalId}`.catch(() => []),
+      ]);
       const proposal = proposalRow?.data || {};
       const title = proposal.proposalTitle || proposal.clientName || proposalId;
       const link = `${APP_URL}/?proposal=${proposalId}`;
@@ -309,13 +314,17 @@ export async function paymentsRoute(req, res, id, action, user) {
         subject: `💰 Payment received: ${title}`,
         html: paidHtml({
           proposal,
-          signerName: user.name || user.email || 'Team',
-          signerEmail: null,
+          // The payer is the client, or nobody — never the colleague at the
+          // keyboard. Their name goes on the "Recorded by" line instead.
+          signerName: sigRow?.name || null,
+          signerEmail: sigRow?.email || null,
           amount,
           paymentType: paymentType || 'manual',
           paidAt: paidAt || new Date().toISOString(),
           receiptUrl: null,
           link,
+          recordedBy: user.name || user.email || null,
+          paymentMethod,
         }),
         text: `${paymentMethod.toUpperCase()} payment of £${Number(amount).toFixed(2)} recorded for "${title}". ${link}`,
       });
