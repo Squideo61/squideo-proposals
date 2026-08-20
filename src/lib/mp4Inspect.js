@@ -101,7 +101,11 @@ export function readVideoDuration(file) {
 
 // The producer-facing verdict for a chosen file. Returns null when there's
 // nothing worth saying — we only interrupt an upload for a real problem.
-const BITRATE_WARN_MBPS = 8;
+// Above this a review copy starts outrunning ordinary business broadband: the
+// player cannot buffer faster than it plays, so it stalls mid-way and scrubbing
+// re-downloads huge spans. 6 Mbps leaves generous headroom over the 2-4 Mbps
+// that 1080p animation actually needs.
+export const BITRATE_WARN_MBPS = 6;
 
 export async function checkVideoForStreaming(file) {
   const info = await inspectVideoFile(file);

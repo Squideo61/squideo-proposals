@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { inspectMp4Boxes, bitrateMbps } from '../src/lib/mp4Inspect.js';
+import { inspectMp4Boxes, bitrateMbps, BITRATE_WARN_MBPS } from '../src/lib/mp4Inspect.js';
 
 // An MP4 is a flat list of [4-byte size][4-byte type] boxes. Whether `moov`
 // (the seek index) comes before `mdat` (the frames) decides if a browser can

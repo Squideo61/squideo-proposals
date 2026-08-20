@@ -3,7 +3,7 @@ import { ArrowLeft, Clapperboard, Copy, MessageSquare, Plus, Trash2, Upload, Fil
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile, formatRelativeTime } from '../../utils.js';
-import { inspectVideoUrl, checkVideoForStreaming } from '../../lib/mp4Inspect.js';
+import { inspectVideoUrl, checkVideoForStreaming, bitrateMbps, BITRATE_WARN_MBPS } from '../../lib/mp4Inspect.js';
 import { Modal } from '../ui.jsx';
 import { RevisionAnalyticsModal } from '../RevisionAnalyticsModal.jsx';
 import { SearchBox } from './ProductionView.jsx';
@@ -620,6 +620,15 @@ function DraftBlock({ projectId, video, version, comments, isMobile }) {
     return () => { alive = false; };
   }, [version.videoUrl]);
 
+  // Bitrate needs the duration, which the player knows once it has read the
+  // file's header — no extra request. A review copy the viewer can't download
+  // faster than it plays stalls part-way through and re-fetches huge spans
+  // every time they scrub, which is what a client experiences as "it stopped
+  // and jumped back to the start".
+  const [durationSec, setDurationSec] = useState(0);
+  const mbps = bitrateMbps(version.sizeBytes, durationSec);
+  const tooHeavy = mbps != null && mbps > BITRATE_WARN_MBPS;
+
   // Same 1-based numbering as the client view: pin number === position among
   // anchored comments in the sidebar order.
   const pinNumberByComment = useMemo(() => {
@@ -654,16 +663,29 @@ function DraftBlock({ projectId, video, version, comments, isMobile }) {
   return (
     <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: 14, alignItems: 'flex-start' }}>
       <div style={{ flex: isMobile ? '1 1 auto' : '1 1 62%', minWidth: 0, width: '100%' }}>
-        {streamable?.faststart === false && (
+        {(tooHeavy || streamable?.faststart === false) && (
           <div style={{ display: 'flex', gap: 9, alignItems: 'flex-start', background: '#FFFBEB',
             border: '1px solid #FDE68A', borderRadius: 8, padding: '9px 11px', marginBottom: 8 }}>
             <AlertTriangle size={15} color="#B45309" style={{ flexShrink: 0, marginTop: 1 }} />
             <div style={{ fontSize: 12.5, color: '#92400E', lineHeight: 1.5 }}>
-              <strong>This draft isn’t web-optimised.</strong> Its seek index sits at the end of the
-              file, so the client’s player has to download the whole video before it can jump —
-              scrubbing snaps back to the start and playback stalls on slower connections.
-              Re-export with <strong>fast start</strong> ticked (Premiere/Media Encoder) or run it
-              through HandBrake with <strong>Web Optimized</strong>, then upload it as a new draft.
+              {tooHeavy && (
+                <>
+                  <strong>This draft is too heavy to review smoothly
+                  {' '}({mbps.toFixed(1)} Mbps, {(version.sizeBytes / 1048576).toFixed(0)} MB).</strong>{' '}
+                  The client’s connection has to sustain {mbps.toFixed(1)} Mbps just to keep up, so
+                  playback stalls part-way and scrubbing re-downloads huge chunks — which they
+                  experience as the video stopping and jumping back to the start. 1080p animation
+                  looks identical at 2–4 Mbps; re-export lighter and upload as a new draft.
+                </>
+              )}
+              {tooHeavy && streamable?.faststart === false && <br />}
+              {streamable?.faststart === false && (
+                <>
+                  <strong>It also isn’t web-optimised</strong> — the seek index sits at the end of
+                  the file, so the player must fetch the whole video before it can jump. Re-export
+                  with <strong>fast start</strong> ticked.
+                </>
+              )}
             </div>
           </div>
         )}
