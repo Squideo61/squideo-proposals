@@ -585,8 +585,15 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
             </Field>
           )}
           <DeadlineField deal={deal} onEdit={productionOnly ? null : () => setEditing(true)} />
+          {/* This is productionEnteredAt — the day the deal was marked good to
+              go — and it used to be labelled "Deposit paid" / "Paid", which read
+              as the date the money arrived. It isn't: the two are usually days
+              apart, and on a deal where the client hasn't paid at all it would
+              still have shown a confident "Deposit paid" date. The payment state
+              itself lives on the proposal card, where saleStatus computes it
+              from what's actually been received. */}
           {!hideFinancials && projectVideos.length > 0 && deal.productionEnteredAt && (
-            <Field icon={Calendar} label={deal.paymentOption === '5050' ? 'Deposit paid' : deal.paymentOption === 'po' ? 'PO confirmed' : 'Paid'}>
+            <Field icon={Calendar} label="Production opened">
               {new Date(deal.productionEnteredAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
             </Field>
           )}

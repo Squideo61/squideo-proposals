@@ -18,6 +18,7 @@ import crypto from 'crypto';
 import sql from '../_lib/db.js';
 import { getInvoicesByIds } from '../_lib/xero.js';
 import { sendNotification } from '../_lib/notifications.js';
+import { notifyProposalInvoicePaid } from '../_lib/crm/proposalInvoicePaid.js';
 import { APP_URL } from '../_lib/email.js';
 import { advanceStage, dealIdForProposal } from '../_lib/dealStage.js';
 import { markExtrasPaidForXeroInvoice } from '../_lib/crm/extras.js';
@@ -92,6 +93,21 @@ async function processInvoiceEvents(events) {
     // A paid proposal-billing invoice (deposit / full / PO) → move its deal into
     // production, same as the Stripe paid flow. Done regardless of contactId.
     await advanceDealForPaidInvoice(inv);
+    // …and tell somebody. This route used to advance the deal and stop there,
+    // so a client who chose "send me an invoice" could pay and nobody heard.
+    // Claimed once (see proposalInvoicePaid.js), so Xero retrying this event
+    // — which it does — cannot announce the same payment twice.
+    try {
+      await notifyProposalInvoicePaid({
+        xeroInvoiceId: inv.invoiceId,
+        invoiceNumber: inv.invoiceNumber,
+        amount: inv.total,
+        paidAt: inv.fullyPaidOn,
+        source: 'xero-webhook',
+      });
+    } catch (err) {
+      console.error('[xero webhook] invoice-paid notify failed', err);
+    }
     if (!inv.contactId) continue;
     await creditForPaidInvoice(inv);
   }

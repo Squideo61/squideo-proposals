@@ -460,10 +460,23 @@ export default async function handler(req, res) {
             console.warn('[stripe webhook] could not fetch receipt URL', err.message);
           }
 
-          // xmax = 0 in RETURNING is true only when the row was actually
-          // inserted, false on UPDATE. We use that to send the client
-          // thank-you email exactly once even if verify and webhook race.
+          // WAS this payment already known? Two different questions hide here
+          // and conflating them cost us an alert:
+          //
+          //   · webhook and verify racing on the SAME session — one wins the
+          //     insert, the other must stay silent. This is what the old
+          //     xmax = 0 test was for, and it did that job correctly.
+          //   · a genuinely NEW session on a proposal that already has a row —
+          //     i.e. the second half of a 50/50. `payments` holds one row per
+          //     proposal, so that lands as an UPDATE, and treating "not an
+          //     insert" as "not news" meant the balance payment on every
+          //     split deal arrived in total silence.
+          //
+          // The CTE reads the session id as it was BEFORE this statement, so
+          // the two cases can be told apart: same session → already handled,
+          // different session (or none) → real news.
           const upserted = await sql`
+            WITH prev AS (SELECT stripe_session_id FROM payments WHERE proposal_id = ${proposalId})
             INSERT INTO payments (proposal_id, amount, payment_type, paid_at, stripe_session_id, customer_email, receipt_url, stripe_customer_id)
             VALUES (${proposalId}, ${amount}, ${isDeposit ? 'deposit' : 'full'},
                     NOW(), ${session.id}, ${session.customer_details?.email || null}, ${receiptUrl},
@@ -474,9 +487,11 @@ export default async function handler(req, res) {
                   customer_email = EXCLUDED.customer_email,
                   receipt_url = COALESCE(EXCLUDED.receipt_url, payments.receipt_url),
                   stripe_customer_id = COALESCE(EXCLUDED.stripe_customer_id, payments.stripe_customer_id)
-            RETURNING (xmax = 0) AS inserted
+            RETURNING (xmax = 0) AS inserted, (SELECT stripe_session_id FROM prev) AS prev_session
           `;
-          const isFirstWrite = upserted[0]?.inserted === true;
+          const prevSession = upserted[0]?.prev_session || null;
+          const isFirstWrite = upserted[0]?.inserted === true
+            || (prevSession != null && prevSession !== session.id);
           const isPartner = session.metadata?.partnerProgramme === 'true';
 
           // Push the Xero invoice (idempotent on xero_invoice_id) and, for
@@ -886,6 +901,7 @@ export default async function handler(req, res) {
     // cash-basis finance reports. Only a genuinely different session updates the
     // timestamp.
     const upserted = await sql`
+      WITH prev AS (SELECT stripe_session_id FROM payments WHERE proposal_id = ${proposalId})
       INSERT INTO payments (proposal_id, amount, payment_type, paid_at, stripe_session_id, customer_email, receipt_url)
       VALUES (${proposalId}, ${payment.amount}, ${payment.paymentType}, ${payment.paidAt},
               ${payment.stripeSessionId}, ${payment.customerEmail}, ${receiptUrl})
@@ -896,9 +912,13 @@ export default async function handler(req, res) {
             stripe_session_id = EXCLUDED.stripe_session_id,
             customer_email = EXCLUDED.customer_email,
             receipt_url = COALESCE(EXCLUDED.receipt_url, payments.receipt_url)
-      RETURNING (xmax = 0) AS inserted
+      RETURNING (xmax = 0) AS inserted, (SELECT stripe_session_id FROM prev) AS prev_session
     `;
-    const isFirstWrite = upserted[0]?.inserted === true;
+    // Same reasoning as the webhook: a different session on an existing row is
+    // a second, real payment (the 50/50 balance), not a replay of the first.
+    const prevSession = upserted[0]?.prev_session || null;
+    const isFirstWrite = upserted[0]?.inserted === true
+      || (prevSession != null && prevSession !== session_id);
 
     // CRM: advance the linked deal to 'paid'. Best-effort. The webhook may race
     // ahead — advanceStage's ratchet keeps this idempotent. Production is opened

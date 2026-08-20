@@ -14,6 +14,7 @@ import sql from '../db.js';
 import { advanceStage } from '../dealStage.js';
 import { sendMail, invoicePaidHtml, APP_URL, adminEmailsExcluding } from '../email.js';
 import { sendNotification } from '../notifications.js';
+import { notifyProposalInvoicePaid } from './proposalInvoicePaid.js';
 import { makeId, trimOrNull, numberOrNull } from './shared.js';
 import { getOrCreateContact, createInvoice, createPayment, voidInvoice, getInvoiceByNumber, getInvoicesByIds, updateContactAddress, getInvoicePdf } from '../xero.js';
 import {
@@ -657,6 +658,10 @@ export async function invoicesRoute(req, res, id, action, user) {
       const live = await getInvoicesByIds(xeroRowIds);
       if (live.size) {
         const pbWrites = [];
+
+        // Fire-and-forget alerts for invoices that turned out to be paid.
+
+        const paidNotifies = [];
         for (const r of out) {
           if (!(r.source && r.source.startsWith('xero'))) continue;
           const x = live.get(r.xeroInvoiceId);
@@ -691,9 +696,25 @@ export async function invoicesRoute(req, res, id, action, user) {
                        AND paid_amount IS DISTINCT FROM ${paidSoFar}`,
               );
             }
+            // Settled in full and nobody has been told yet? Tell them. The
+            // webhook usually gets here first, but it can be missed — a
+            // disconnected Xero app, a dropped delivery — and finding out
+            // that money arrived shouldn't depend on a webhook we don't own.
+            // The claim inside means only one of the two ever sends.
+            if (String(x.status).toUpperCase() === 'PAID') {
+              paidNotifies.push(notifyProposalInvoicePaid({
+                xeroInvoiceId: r.xeroInvoiceId,
+                invoiceNumber: x.invoiceNumber || r.invoiceNumber || null,
+                amount: x.total != null ? x.total : null,
+                paidAt: x.fullyPaidOn || null,
+                source: 'invoices-sync',
+              }).catch(() => false));
+            }
           }
         }
         if (pbWrites.length) await Promise.all(pbWrites);
+        // Never let a notification hold up (or fail) the invoices response.
+        if (paidNotifies.length) await Promise.all(paidNotifies).catch(() => {});
       }
     }
 
