@@ -381,6 +381,29 @@ export async function ensureCourseSignupNotificationDefault() {
   }
 }
 
+// "All the client's comments on this draft are done" is an internal milestone,
+// not something anyone has to act on from their inbox — the bell (and the
+// desktop push it raises) is the right surface, and an email per draft on every
+// project is noise. Bell-only by DEFAULT, so anyone who does want the email can
+// switch it back on in their own notification preferences; an explicit choice
+// already on record is left alone. Guarded to run once per warm instance.
+let revisionCompleteDefaultReady = false;
+export async function ensureRevisionCompleteNotificationDefault() {
+  if (revisionCompleteDefaultReady) return;
+  try {
+    await ensureNotificationChannelColumns();
+    await sql`UPDATE roles SET notification_channel_defaults = jsonb_set(
+      notification_channel_defaults, '{revision.draft_completed}', '"in_app"'::jsonb, true)
+      WHERE NOT (notification_channel_defaults ? 'revision.draft_completed')`;
+    await sql`UPDATE roles SET notification_channel_defaults = jsonb_set(
+      notification_channel_defaults, '{storyboard.draft_completed}', '"in_app"'::jsonb, true)
+      WHERE NOT (notification_channel_defaults ? 'storyboard.draft_completed')`;
+    revisionCompleteDefaultReady = true;
+  } catch (err) {
+    console.warn('[notifications] ensureRevisionCompleteNotificationDefault failed', err.message);
+  }
+}
+
 // A prospect finishing a stage of the sample project is the same kind of event
 // as a course signup — a stranger raising their hand — so it inherits the same
 // audience and the same bell-only channel. It's a much warmer signal than a

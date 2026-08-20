@@ -19,7 +19,7 @@ import { del } from '@vercel/blob';
 import { handleUpload } from '@vercel/blob/client';
 import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
-import { sendNotification, resolveDealTeamEmails } from '../_lib/notifications.js';
+import { sendNotification, resolveDealTeamEmails, ensureRevisionCompleteNotificationDefault } from '../_lib/notifications.js';
 import { revisionFeedbackHtml, APP_URL } from '../_lib/email.js';
 import { getRole } from '../_lib/userRoles.js';
 import { isFreelancer, freelancerRevisionProjectIds } from '../_lib/crm/access.js';
@@ -684,6 +684,7 @@ async function completeComment(req, res, id, user) {
         : '';
       const notesText = noteList.length ? `\n\nProducer notes:\n${noteList.map(n => '• ' + n).join('\n')}` : '';
       try {
+        await ensureRevisionCompleteNotificationDefault();
         await sendNotification('revision.draft_completed', {
           subject: `✅ Revisions complete: ${title} (draft ${cur.version_number})`,
           html: `<p>All client revisions on <strong>${escapeHtml(title)}</strong> — draft ${cur.version_number} have been marked complete.</p>${notesHtml}<p><a href="${link}">Open Video Revisions</a></p>`,
