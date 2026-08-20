@@ -109,6 +109,55 @@ export async function createEventWithMeet(accessToken, {
   return { eventId: json.id, meetUrl, htmlLink: json.htmlLink || null };
 }
 
+// Add people to an event that already exists.
+//
+// Read-modify-write rather than a bare PATCH of `attendees`: Google replaces
+// the whole array, so sending just the new person would wipe everyone else —
+// and rebuilding the list from addresses alone would reset the RSVPs and drop
+// the optional flags of those already on it. So we take the event as it
+// stands and append.
+//
+// sendUpdates=all is the point of the exercise: without it Google silently
+// adds them to the event and never tells them it exists.
+export async function addEventAttendees(accessToken, eventId, emails = [], { optional = false } = {}) {
+  if (!eventId) throw new Error('No calendar event for this booking');
+  const wanted = emails
+    .map((e) => String(e || '').trim().toLowerCase())
+    .filter(Boolean);
+  if (!wanted.length) return { added: [], attendees: [] };
+
+  const event = await calFetch(
+    accessToken,
+    `${CAL_API}/calendars/primary/events/${encodeURIComponent(eventId)}`,
+  ).then((r) => r.json());
+
+  const existing = Array.isArray(event.attendees) ? event.attendees : [];
+  const have = new Set(existing.map((a) => String(a.email || '').toLowerCase()));
+  // The organizer is on the event by definition and must not be re-added as
+  // a guest — Google rejects the duplicate.
+  const organizerEmail = String((event.organizer && event.organizer.email) || '').toLowerCase();
+  const added = wanted.filter((e) => !have.has(e) && e !== organizerEmail);
+  if (!added.length) return { added: [], attendees: [...have] };
+
+  const json = await calFetch(
+    accessToken,
+    `${CAL_API}/calendars/primary/events/${encodeURIComponent(eventId)}?sendUpdates=all`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        attendees: [...existing, ...added.map((email) => ({ email, optional }))],
+      }),
+    },
+  ).then((r) => r.json());
+
+  return {
+    added,
+    attendees: (Array.isArray(json.attendees) ? json.attendees : [])
+      .map((a) => String(a.email || '').toLowerCase())
+      .filter(Boolean),
+  };
+}
 // Fetch a booked event so we can read its CURRENT attendees (the team invited
 // at our side may have changed since booking). Returns { attendees: [emails],
 // organizerEmail } or null if the event is gone.

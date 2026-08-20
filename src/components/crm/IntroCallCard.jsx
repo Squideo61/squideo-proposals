@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { CalendarClock, Copy, Check, RefreshCw, Video, AlertTriangle, X, Rocket } from 'lucide-react';
+import { CalendarClock, Copy, Check, RefreshCw, Video, AlertTriangle, X, Rocket, Users } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 
@@ -79,6 +79,111 @@ function KickoffSection({ dealId }) {
 // booking link a PM can share with a client, and shows who (if anyone) still
 // needs to connect Google Calendar plus any upcoming booked calls. Kept compact
 // (no full-width section) since it's secondary to the rest of the page.
+
+// One upcoming call: when it is, who from our side is on it, and a way to add
+// someone who isn't. Guests go on as OPTIONAL — the required attendee list is
+// what future slots get checked against, so a late addition mustn't
+// retroactively narrow what anyone else can book.
+function BookingRow({ booking, busy, nameFor, teamEmails, onAdd, onCancel }) {
+  const [adding, setAdding] = useState(false);
+  const [email, setEmail] = useState('');
+  const [error, setError] = useState(null);
+  const on = booking.attendees || [];
+  // Colleagues not already on the call — picking one of these is the common
+  // case, not typing an address out.
+  const missing = (teamEmails || []).filter((e) => !on.includes(String(e).toLowerCase()));
+
+  const submit = (value) => {
+    const clean = String(value || '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean)) { setError('Enter a valid email address'); return; }
+    setError(null);
+    Promise.resolve(onAdd(clean)).then(() => { setAdding(false); setEmail(''); });
+  };
+
+  return (
+    <div style={{ fontSize: 13 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Video size={14} color={BRAND.blue} style={{ flexShrink: 0 }} />
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{booking.clientName}</div>
+          <div style={{ color: BRAND.muted, fontSize: 12 }}>
+            {new Date(booking.startsAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}
+          </div>
+        </div>
+        {booking.meetUrl && (
+          <a href={booking.meetUrl} target="_blank" rel="noreferrer" style={{ color: BRAND.blue, flexShrink: 0 }}>Join</a>
+        )}
+        <button
+          onClick={onCancel}
+          disabled={busy}
+          title="Cancel this meeting"
+          style={{ flexShrink: 0, background: 'none', border: 'none', color: '#DC2626', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, padding: 2, display: 'flex', alignItems: 'center' }}
+        >
+          <X size={14} />
+        </button>
+      </div>
+
+      {/* Who is on it. Worth stating plainly — "only Hannah got added" isn't
+          something anyone should have to discover from their own calendar. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', margin: '4px 0 0 22px', fontSize: 11.5, color: BRAND.muted }}>
+        <Users size={12} style={{ flexShrink: 0 }} />
+        <span>{on.length ? on.map(nameFor).join(', ') : 'nobody from Squideo'}</span>
+        {!adding && (
+          <button
+            onClick={() => setAdding(true)}
+            disabled={busy}
+            style={{ background: 'none', border: 'none', color: BRAND.blue, cursor: 'pointer', fontFamily: 'inherit', fontSize: 11.5, fontWeight: 600, padding: 0 }}
+          >
+            + Add someone
+          </button>
+        )}
+      </div>
+
+      {adding && (
+        <div style={{ margin: '6px 0 0 22px', display: 'flex', flexDirection: 'column', gap: 5 }}>
+          {missing.length > 0 && (
+            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+              {missing.slice(0, 6).map((e) => (
+                <button
+                  key={e}
+                  onClick={() => submit(e)}
+                  disabled={busy}
+                  style={{ background: '#F1F4F7', border: '1px solid ' + BRAND.border, borderRadius: 999, padding: '3px 10px', fontSize: 11.5, cursor: 'pointer', fontFamily: 'inherit', color: BRAND.ink }}
+                >
+                  {nameFor(e)}
+                </button>
+              ))}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input
+              className="input"
+              value={email}
+              autoFocus
+              placeholder="or type an email address"
+              onChange={(ev) => setEmail(ev.target.value)}
+              onKeyDown={(ev) => { if (ev.key === 'Enter') submit(email); }}
+              style={{ flex: 1, fontSize: 12, padding: '5px 8px' }}
+            />
+            <button className="btn" disabled={busy} onClick={() => submit(email)} style={{ fontSize: 12, padding: '5px 10px' }}>
+              {busy ? 'Adding…' : 'Add'}
+            </button>
+            <button
+              onClick={() => { setAdding(false); setError(null); setEmail(''); }}
+              style={{ background: 'none', border: 'none', color: BRAND.muted, cursor: 'pointer', fontSize: 12, fontFamily: 'inherit' }}
+            >
+              Cancel
+            </button>
+          </div>
+          <div style={{ fontSize: 11, color: error ? '#DC2626' : BRAND.muted }}>
+            {error || 'They get a Google invite straight away, as an optional guest.'}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function IntroCallButton({ dealId }) {
   const { state, actions } = useStore();
   const [open, setOpen] = useState(false);
@@ -134,6 +239,17 @@ export function IntroCallButton({ dealId }) {
     if (!window.confirm(`Cancel the meeting with ${booking.clientName}? They'll be notified by Google.`)) return;
     setBusy(true);
     actions.cancelIntroCallBooking(dealId, booking.id)
+      .then(() => load())
+      .finally(() => setBusy(false));
+  };
+
+  // Add someone to a call that's already booked. The team on a deal changes
+  // after the client picks a time, and until now the only way to reflect that
+  // was editing the Google event by hand — which left our own record of who's
+  // on the call, and the day-of reminder built from it, quietly wrong.
+  const addAttendee = (booking, email) => {
+    setBusy(true);
+    return actions.addIntroCallAttendee(dealId, booking.id, email)
       .then(() => load())
       .finally(() => setBusy(false));
   };
@@ -228,26 +344,15 @@ export function IntroCallButton({ dealId }) {
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 {upcoming.map(b => (
-                  <div key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
-                    <Video size={14} color={BRAND.blue} style={{ flexShrink: 0 }} />
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={{ fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{b.clientName}</div>
-                      <div style={{ color: BRAND.muted, fontSize: 12 }}>
-                        {new Date(b.startsAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}
-                      </div>
-                    </div>
-                    {b.meetUrl && (
-                      <a href={b.meetUrl} target="_blank" rel="noreferrer" style={{ color: BRAND.blue, flexShrink: 0 }}>Join</a>
-                    )}
-                    <button
-                      onClick={() => cancelBooking(b)}
-                      disabled={busy}
-                      title="Cancel this meeting"
-                      style={{ flexShrink: 0, background: 'none', border: 'none', color: '#DC2626', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, padding: 2, display: 'flex', alignItems: 'center' }}
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
+                  <BookingRow
+                    key={b.id}
+                    booking={b}
+                    busy={busy}
+                    nameFor={nameFor}
+                    teamEmails={Object.keys(state.users || {})}
+                    onAdd={(email) => addAttendee(b, email)}
+                    onCancel={() => cancelBooking(b)}
+                  />
                 ))}
               </div>
             </div>

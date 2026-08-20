@@ -1907,6 +1907,11 @@ export function StoreProvider({ children }) {
     cancelIntroCallBooking(dealId, bookingId) {
       return api.post('/api/crm/intro-calls/' + encodeURIComponent(dealId) + '/cancel', { bookingId });
     },
+    // Add a colleague to a call that's already booked. Goes on the Google event
+    // as an optional guest and gets an invite from Google straight away.
+    addIntroCallAttendee(dealId, bookingId, email) {
+      return api.post('/api/crm/intro-calls/' + encodeURIComponent(dealId) + '/attendee', { bookingId, email });
+    },
     // Kick-off call (a client project task; they book from their portal). The PM
     // can optionally propose a specific time here.
     loadKickoffCall(dealId) {

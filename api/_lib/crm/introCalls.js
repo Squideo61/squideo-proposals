@@ -17,7 +17,7 @@ import { hasPermission } from '../permissions.js';
 import { trimOrNull } from './shared.js';
 import { archiveRecord } from './recycleBin.js';
 import { getFreshAccessToken } from './gmail.js';
-import { deleteEvent } from '../googleCalendar.js';
+import { addEventAttendees, deleteEvent } from '../googleCalendar.js';
 import {
   ensureIntroCallTables, mergeRules, DEFAULT_RULES,
   computeSlots, computeSlotsForHosts, getDealAttendees,
@@ -177,7 +177,8 @@ export async function introCallsRoute(req, res, id, action, user) {
          WHERE deal_id = ${id} AND kind = 'kickoff' AND revoked_at IS NULL
          ORDER BY created_at DESC LIMIT 1`)[0] || null;
       const bookings = await sql`
-        SELECT id, client_name, client_email, starts_at, ends_at, meet_url, status
+        SELECT id, client_name, client_email, starts_at, ends_at, meet_url, status,
+               attendee_emails, organizer_email
           FROM intro_call_bookings
          WHERE deal_id = ${id} AND kind = 'kickoff'
          ORDER BY starts_at DESC LIMIT 5`;
@@ -194,6 +195,11 @@ export async function introCallsRoute(req, res, id, action, user) {
     return cancelBookingById(req, res, user);
   }
 
+  if (action === 'attendee') {
+    if (req.method !== 'POST') return res.status(405).end();
+    return addBookingAttendee(req, res, user);
+  }
+
   // GET /api/crm/intro-calls/:dealId — status for the deal-page card.
   if (req.method === 'GET') {
     const link = (await sql`
@@ -203,7 +209,8 @@ export async function introCallsRoute(req, res, id, action, user) {
     `)[0] || null;
 
     const bookings = await sql`
-      SELECT id, client_name, client_email, starts_at, ends_at, meet_url, status
+      SELECT id, client_name, client_email, starts_at, ends_at, meet_url, status,
+             attendee_emails, organizer_email
         FROM intro_call_bookings
        WHERE deal_id = ${id} AND kind = 'intro'
        ORDER BY starts_at DESC LIMIT 10
@@ -291,6 +298,68 @@ async function cancelBookingById(req, res, user) {
   return res.status(200).json({ ok: true });
 }
 
+// Add someone to a call that is already booked.
+//
+// The team on a deal changes after a client books — someone is brought in,
+// or the person who sold it realises they should be there. Until now the only
+// way was to edit the event in Google Calendar directly, which left our own
+// record of who is on the call wrong, and the day-of reminder with it.
+//
+// Added as OPTIONAL for the same reason the deal owner is: the required list
+// is what future slots are checked against, and a late addition should not
+// retroactively narrow what anyone else can book.
+async function addBookingAttendee(req, res, user) {
+  const bookingId = trimOrNull(req.body?.bookingId);
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  if (!bookingId) return res.status(400).json({ error: 'bookingId required' });
+  if (!/^[^s@]+@[^s@]+.[^s@]+$/.test(email)) {
+    return res.status(400).json({ error: 'Enter a valid email address' });
+  }
+
+  const b = (await sql`
+    SELECT id, deal_id, organizer_email, google_event_id, status, attendee_emails, starts_at
+      FROM intro_call_bookings WHERE id = ${bookingId}
+  `)[0];
+  if (!b) return res.status(404).json({ error: 'Booking not found' });
+  if (b.status !== 'confirmed') return res.status(409).json({ error: 'That call has been cancelled' });
+  if (!b.google_event_id) {
+    return res.status(409).json({ error: 'This booking has no calendar event to add anyone to' });
+  }
+
+  const already = (b.attendee_emails || []).map((e) => String(e).toLowerCase());
+  if (already.includes(email) || String(b.organizer_email || '').toLowerCase() === email) {
+    return res.status(200).json({ ok: true, added: false, attendees: already });
+  }
+
+  // Google first: if the invite does not actually go out, our record must not
+  // claim it did. A failure here is the whole operation failing.
+  let added = [];
+  try {
+    const tok = await getFreshAccessToken(b.organizer_email);
+    ({ added } = await addEventAttendees(tok, b.google_event_id, [email], { optional: true }));
+  } catch (err) {
+    console.error('[intro-calls] add attendee failed', err.message);
+    return res.status(502).json({
+      error: err.code === 'REAUTH_CALENDAR'
+        ? 'The organiser needs to reconnect Google Calendar before guests can be added.'
+        : 'Could not add them to the calendar invite — try again shortly.',
+    });
+  }
+
+  const next = Array.from(new Set([...already, email]));
+  await sql`
+    UPDATE intro_call_bookings SET attendee_emails = ${next}::text[] WHERE id = ${bookingId}
+  `;
+
+  if (b.deal_id) {
+    await sql`
+      INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
+      VALUES (${b.deal_id}, 'intro_call_attendee_added', ${JSON.stringify({ bookingId, email })}, ${user.email || null})
+    `.catch(() => {});
+  }
+
+  return res.status(200).json({ ok: true, added: added.length > 0, attendees: next });
+}
 // Partner-client links carry an explicit host list (chosen team) rather than a
 // deal team. Routes:
 //   POST   /api/crm/intro-calls/partner/link    { clientKey, clientName, hostEmails }
@@ -348,7 +417,8 @@ async function partnerRoute(req, res, action, user) {
        ORDER BY created_at DESC LIMIT 1
     `)[0] || null;
     const bookings = await sql`
-      SELECT id, client_name, client_email, starts_at, ends_at, meet_url, status
+      SELECT id, client_name, client_email, starts_at, ends_at, meet_url, status,
+             attendee_emails, organizer_email
         FROM intro_call_bookings WHERE client_key = ${clientKey}
        ORDER BY starts_at DESC LIMIT 10
     `;
@@ -391,5 +461,12 @@ export function serialiseBooking(b) {
     endsAt: b.ends_at,
     meetUrl: b.meet_url,
     status: b.status,
+    // Who from our side is on it. organizer first — they host — then everyone
+    // invited, so the card can show it and offer to add to it.
+    organizer: b.organizer_email || null,
+    attendees: Array.from(new Set([
+      ...(b.organizer_email ? [String(b.organizer_email).toLowerCase()] : []),
+      ...((b.attendee_emails || []).map((e) => String(e).toLowerCase())),
+    ])),
   };
 }
