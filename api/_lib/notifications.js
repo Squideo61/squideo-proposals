@@ -52,6 +52,24 @@ export async function ensureNotificationChannelColumns() {
   }
 }
 
+// Self-heal for the in-app coalescing columns
+// (db/migrations/20260820_in_app_notification_coalesce.sql). Idempotent, and a
+// failure only costs coalescing — never the notification itself.
+let coalesceSchemaReady = false;
+export async function ensureInAppCoalesceColumns() {
+  if (coalesceSchemaReady) return;
+  try {
+    await sql`ALTER TABLE in_app_notifications ADD COLUMN IF NOT EXISTS coalesce_group TEXT`;
+    await sql`ALTER TABLE in_app_notifications ADD COLUMN IF NOT EXISTS coalesce_count INTEGER NOT NULL DEFAULT 1`;
+    await sql`CREATE INDEX IF NOT EXISTS in_app_notif_coalesce_idx
+                ON in_app_notifications (user_email, coalesce_group, created_at DESC)
+                WHERE read_at IS NULL AND coalesce_group IS NOT NULL`;
+    coalesceSchemaReady = true;
+  } catch (err) {
+    console.warn('[notifications] ensureInAppCoalesceColumns failed', err.message);
+  }
+}
+
 // Resolve recipients for a notification key.
 //   opts.ownerEmail      — required for audience:'owner', ignored otherwise
 //   opts.assigneeEmails  — required for audience:'assignee'
@@ -558,6 +576,16 @@ export async function sendNotification(key, {
 // (Tier 2) — a no-op when push isn't provisioned or the user has no devices
 // subscribed. The push tag defaults to `notif-<rowId>` so it matches the in-tab
 // (Tier 1) dedupe tag for the same item; callers may override via inApp.tag.
+// `inApp.coalesce` rolls repeated events into ONE row instead of a stack of
+// near-identical ones (a client uploading eight brand files shouldn't cost eight
+// notifications). Shape:
+//   { group, summaryTitle, summaryBody?, windowMinutes? }
+// The first event lands normally with the caller's own title; each later one in
+// the same group, while still unread and inside the window, bumps a counter and
+// rewrites the row to `summaryTitle` — a template whose `{n}` is replaced with
+// the running count. The row's created_at is refreshed so it stays at the top of
+// the feed, and the push tag is per-group so the desktop alert REPLACES its
+// predecessor rather than stacking.
 export async function persistInApp(key, recipients, { subject, text, inApp }) {
   const title = String(inApp?.title || subject || 'Notification').slice(0, 200);
   const body = inApp?.body != null
@@ -565,16 +593,65 @@ export async function persistInApp(key, recipients, { subject, text, inApp }) {
     : (text ? (String(text).replace(/\s*https?:\/\/\S+\s*$/i, '').trim().slice(0, 500) || null) : null);
   const link = inApp?.link || null;
   const tagOverride = inApp?.tag || null;
+  const coalesce = inApp?.coalesce?.group ? inApp.coalesce : null;
+  const group = coalesce ? String(coalesce.group).slice(0, 200) : null;
+  const windowMinutes = Math.min(1440, Math.max(1, Number(coalesce?.windowMinutes) || 120));
+  const summaryTitle = coalesce ? String(coalesce.summaryTitle || title).slice(0, 200) : null;
+  const summaryBody = coalesce?.summaryBody != null ? String(coalesce.summaryBody).slice(0, 500) : null;
+  if (coalesce) await ensureInAppCoalesceColumns();
+
   const pushes = [];
   for (const email of recipients) {
     try {
-      // eslint-disable-next-line no-await-in-loop
-      const rows = await sql`INSERT INTO in_app_notifications (user_email, notification_key, title, body, link)
-                VALUES (${email}, ${key}, ${title}, ${body}, ${link})
-                RETURNING id`;
-      const id = rows[0]?.id;
-      const tag = tagOverride || (id != null ? `notif-${id}` : undefined);
-      pushes.push(sendWebPush([email], { title, body, link, tag }));
+      let id = null;
+      let outTitle = title;
+      let outBody = body;
+
+      if (coalesce) {
+        // Fold into the newest unread row of this group. The count is resolved
+        // inside the statement so concurrent uploads can't race to the same
+        // number. Falls through to a fresh insert when there's nothing to fold.
+        // eslint-disable-next-line no-await-in-loop
+        const rolled = await sql`
+          UPDATE in_app_notifications
+             SET coalesce_count = coalesce_count + 1,
+                 created_at = NOW(),
+                 title = replace(${summaryTitle}::text, '{n}', (coalesce_count + 1)::text),
+                 body = COALESCE(${summaryBody}::text, body)
+           WHERE id = (
+             SELECT id FROM in_app_notifications
+              WHERE user_email = ${email}
+                AND notification_key = ${key}
+                AND coalesce_group = ${group}
+                AND read_at IS NULL
+                AND created_at > NOW() - make_interval(mins => ${windowMinutes}::int)
+              ORDER BY created_at DESC
+              LIMIT 1)
+           RETURNING id, title, body`;
+        if (rolled.length) {
+          id = rolled[0].id;
+          outTitle = rolled[0].title;
+          outBody = rolled[0].body;
+        }
+      }
+
+      if (id == null) {
+        // Two variants so a caller that doesn't coalesce never touches the
+        // coalesce columns — they're self-healed only on the coalescing path,
+        // and an ordinary notification must not depend on that having run.
+        // eslint-disable-next-line no-await-in-loop
+        const rows = group
+          ? await sql`INSERT INTO in_app_notifications (user_email, notification_key, title, body, link, coalesce_group)
+                      VALUES (${email}, ${key}, ${title}, ${body}, ${link}, ${group})
+                      RETURNING id`
+          : await sql`INSERT INTO in_app_notifications (user_email, notification_key, title, body, link)
+                      VALUES (${email}, ${key}, ${title}, ${body}, ${link})
+                      RETURNING id`;
+        id = rows[0]?.id;
+      }
+      const tag = tagOverride
+        || (group ? `coalesce-${group}` : (id != null ? `notif-${id}` : undefined));
+      pushes.push(sendWebPush([email], { title: outTitle, body: outBody, link, tag }));
     } catch (err) {
       console.warn('[notifications] in-app persist failed', err.message);
     }

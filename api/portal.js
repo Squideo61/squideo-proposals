@@ -2391,6 +2391,18 @@ async function filesRoutes(req, res, user) {
           title: dealCategory ? `Client ${what}: ${filename}` : `Client file: ${filename}`,
           body: `${actorLabel} · ${co?.name || ''}`,
           link: dealId ? `#/deal/${dealId}` : `#/company/${companyId}`,
+          // Clients upload in bursts — a brand pack is a dozen files, and one
+          // notification each buries everything else in the bell. Roll them into
+          // a single running summary per deal/company instead. `{n}` becomes the
+          // count. The first file still names itself, which is the useful case.
+          coalesce: {
+            group: `portal-upload:${dealId || companyId}:${dealCategory || 'file'}`,
+            summaryTitle: dealCategory
+              ? `Client ${what}: {n} files`
+              : `Client files: {n} uploaded`,
+            summaryBody: `${actorLabel} · ${co?.name || ''}`,
+            windowMinutes: 180,
+          },
         },
         inAppOnly: true,
       });
