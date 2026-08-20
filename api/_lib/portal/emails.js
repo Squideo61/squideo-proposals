@@ -241,3 +241,11 @@ export function portalTaskReminderHtml({ bodyHtml, projectTitle, tasks = [], por
   `;
   return shell(inner, logoUrl);
 }
+
+// The "what changed on your brief" digest (api/_lib/brief/digest.js). The body
+// is assembled there so the wording can be unit-tested without a mail client;
+// this only puts the Squideo shell around it. `inner` is our own markup, with
+// everything a client typed already escaped by the digest builder.
+export function briefDigestHtml({ inner, logoUrl = null }) {
+  return shell(inner, logoUrl);
+}

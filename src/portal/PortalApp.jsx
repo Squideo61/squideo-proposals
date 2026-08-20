@@ -469,7 +469,7 @@ function AuthedApp() {
     case 'review': page = <Review token={route.param} itemId={route.query?.get('item') || null} draftId={route.query?.get('draft') || null} />; break;
     case 'storyboard': page = <Storyboard token={route.param} itemId={route.query?.get('item') || null} draftId={route.query?.get('draft') || null} />; break;
     case 'course': page = <Course slug={route.param} />; break;
-    case 'brief': page = <Brief />; break;
+    case 'brief': page = <Brief briefId={route.param} />; break;
     case 'demo': page = <DemoProject stage={route.param} />; break;
     case 'library': page = <Library />; break;
     case 'documents': page = <Documents />; break;

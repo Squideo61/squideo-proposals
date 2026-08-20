@@ -445,6 +445,12 @@ export async function ensurePortalNotificationDefaults() {
       notification_defaults, '{portal.po_provided}',
       COALESCE(notification_defaults->'quote_request.new', 'false'::jsonb), true)
       WHERE NOT (notification_defaults ? 'portal.po_provided')`;
+    // A finalised brief is a production signal, not a sales one — it lands
+    // with whoever already hears that a project is good to go.
+    await sql`UPDATE roles SET notification_defaults = jsonb_set(
+      notification_defaults, '{portal.brief_finalised}',
+      COALESCE(notification_defaults->'project.good_to_go', 'false'::jsonb), true)
+      WHERE NOT (notification_defaults ? 'portal.brief_finalised')`;
     await sql`UPDATE roles SET notification_defaults = jsonb_set(
       notification_defaults, '{portal.partner_interest}',
       COALESCE(notification_defaults->'quote_request.new', 'false'::jsonb), true)

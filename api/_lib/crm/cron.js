@@ -63,6 +63,7 @@ export async function cronHandler(req, res, action) {
     case 'ga4-sync':          return cronGa4Sync(res);
     case 'cost-snapshot':     return cronCostSnapshot(res);
     case 'course-nudges':     return cronCourseNudges(req, res);
+    case 'brief-digest':      return cronBriefDigest(res);
     default:                  return res.status(404).json({ error: 'Unknown cron action: ' + action });
   }
 }

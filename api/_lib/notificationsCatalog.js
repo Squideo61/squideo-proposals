@@ -315,6 +315,14 @@ export const NOTIFICATIONS = [
     channel: 'finance',
   },
   {
+    key: 'portal.brief_finalised',
+    label: 'Client finalised a video brief',
+    description: 'A client locks the video brief for a project they have already signed. An unattached brief raises a quote request instead, so this only fires for work already won.',
+    audience: 'broadcast',
+    group: 'Client portal',
+    channel: 'general',
+  },
+  {
     key: 'portal.po_provided',
     label: 'Client submitted a PO number',
     description: 'A client submits their purchase order number via the customer portal.',

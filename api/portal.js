@@ -83,7 +83,7 @@ import {
 } from './_lib/portal/middleware.js';
 import { deriveNextStep } from './_lib/portal/nextStep.js';
 import { serialisePortalNotification } from './_lib/portal/notificationShape.js';
-import { notifyPortalUser } from './_lib/portal/notifications.js';
+import { notifyPortalUser, resolvePortalRecipients } from './_lib/portal/notifications.js';
 import { deriveProjectTasks, countOpenTasks, bellTaskRows } from './_lib/portal/tasks.js';
 import { voiceoverProposalContext } from './_lib/proposalPricing.js';
 import {
@@ -128,6 +128,10 @@ import {
 } from './_lib/course/emails.js';
 import { ensureClientBriefs } from './_lib/brief/db.js';
 import { missingRequired, renderBriefText, briefProgress, answerLabel } from './_lib/brief/questions.js';
+import {
+  diffAnswers, recordBriefEvents, loadBriefActivity, loadPresence, touchPresence,
+  refreshContributorCount, serialiseEvent,
+} from './_lib/brief/collab.js';
 import { anyDriveAccessToken, listSignedOffFiles, streamDriveFile } from './_lib/portal/drive.js';
 import {
   serialisePortalDeal,
@@ -602,6 +606,10 @@ export default async function handler(req, res) {
       case 'course': return courseRoute(req, res, user);
       case 'course-progress': return courseProgressRoute(req, res, user);
       case 'brief': return briefRoute(req, res, user);
+      case 'brief-create': return briefCreateRoute(req, res, user);
+      case 'brief-attach': return briefAttachRoute(req, res, user);
+      case 'brief-tick': return briefTickRoute(req, res, user);
+      case 'brief-reopen': return briefReopenRoute(req, res, user);
       case 'demo-project': return demoProjectRoute(req, res, user);
       case 'demo-event': return demoEventRoute(req, res, user);
       case 'overview': return overviewRoute(req, res, user);
@@ -1467,14 +1475,18 @@ async function overviewRoute(req, res, user) {
   `;
   const actionNeeded = projects.filter((p) => p.nextStep?.court === 'you').length;
 
-  // An unfinished brief, so the dashboard can offer to pick it up. Read-only on
-  // purpose — the brief route CREATES a draft on GET, and calling that from the
-  // dashboard would mark every visitor as having started one, turning a real
-  // sales signal into noise.
+  // An unfinished brief, so the dashboard can offer to pick it up. Scoped to the
+  // ORGANISATION, not the caller: a brief is shared now, so a colleague's half-
+  // finished draft is exactly the one this person should be nudged into.
+  //
+  // Read-only on purpose — the brief route CREATES a draft on GET, and calling
+  // that from the dashboard would mark every visitor as having started one,
+  // turning a real sales signal into noise.
   const [draft] = await sql`
     SELECT id, answers, updated_at FROM client_briefs
-     WHERE portal_user_id = ${user.puid} AND submitted_at IS NULL
+     WHERE company_id = ${companyId} AND submitted_at IS NULL
        AND answers <> '{}'::jsonb
+     ORDER BY updated_at DESC
      LIMIT 1
   `.catch(() => []);
 
@@ -3164,120 +3176,287 @@ async function demoEventRoute(req, res, user) {
 }
 
 // ═════════════════════════ the brief ═════════════════════════
-// GET   /api/portal/brief   → the open draft, creating one if there isn't one
-// PATCH /api/portal/brief   → autosave; merges answers, never replaces them
-// POST  /api/portal/brief   → send to Squideo (creates the quote request)
+// GET   /api/portal/brief            → every brief this ORGANISATION has
+// GET   /api/portal/brief?id=…       → one brief, its activity and who's on it
+// POST  /api/portal/brief-create     → start one, optionally against a project
+// PATCH /api/portal/brief            → autosave; merges answers, never replaces
+// POST  /api/portal/brief-tick       → heartbeat: presence out, changes back
+// POST  /api/portal/brief-attach     → link a brief to a project
+// POST  /api/portal/brief            → finalise (locks it)
+// POST  /api/portal/brief-reopen     → staff only: unlock a finalised brief
 //
-// Autosave is the whole point of this being a page rather than a document.
-// People fill a brief in over days, usually with someone else's answer to a
-// question they can't answer themselves, so every field has to survive them
-// closing the tab.
+// A BRIEF BELONGS TO THE ORGANISATION, NOT TO WHOEVER OPENED IT FIRST. It used
+// to be one open draft per person, which meant the marketing lead, the person
+// who knows the product and the person holding the budget each filled in their
+// own copy and we received whichever one got sent. Now they all edit one
+// document: answers merge per question, every change is attributed, and anyone
+// typing shows up on the question they're in so the next person picks a
+// different one.
+//
+// A BRIEF KNOWS WHAT JOB IT'S FOR. This was built as a lead magnet and clients
+// started using it after signing, to brief work already paid for. An unattached
+// brief still raises a quote request on finalise, exactly as before; one that
+// names a project posts to that project's team instead, because a signed job
+// doesn't need a second lead in the pipeline.
+//
+// Autosave is still the whole point of this being a page rather than a
+// document. People fill a brief in over days, usually waiting on someone else's
+// answer, so every field has to survive them closing the tab.
+
+// Which of the org's deals a brief can be pointed at. Lost and long-dead deals
+// are excluded; a brief is about work that's live or being quoted for.
+const BRIEF_DEAL_STAGES = ['proposal_sent', 'viewed', 'signed', 'paid'];
+
+async function briefProjects(companyId) {
+  const rows = await sql`
+    SELECT id, title, reference, stage, production_phase
+      FROM deals
+     WHERE company_id = ${companyId}
+       AND stage = ANY(${BRIEF_DEAL_STAGES})
+     ORDER BY created_at DESC
+  `.catch(() => []);
+  return rows.map((d) => ({
+    id: d.id,
+    title: d.title || 'Untitled project',
+    reference: d.reference || null,
+    signed: d.stage === 'signed' || d.stage === 'paid',
+  }));
+}
+
+// Every brief the organisation holds. Scoped by company_id, never by the
+// caller's own id — that's the whole point of the change.
+async function loadCompanyBriefs(companyId) {
+  return sql`
+    SELECT b.id, b.title, b.deal_id, b.answers, b.completed_at, b.submitted_at,
+           b.submitted_by, b.reopened_at, b.contributor_count, b.created_at, b.updated_at,
+           d.title AS deal_title, d.reference AS deal_reference,
+           pu.name AS submitted_by_name, pu.email AS submitted_by_email
+      FROM client_briefs b
+      LEFT JOIN deals d ON d.id = b.deal_id
+      LEFT JOIN portal_users pu ON pu.id = b.submitted_by
+     WHERE b.company_id = ${companyId}
+     ORDER BY (b.submitted_at IS NULL) DESC, b.updated_at DESC
+  `.catch(() => []);
+}
+
+async function loadBriefRow(id, companyId) {
+  if (!id) return null;
+  const [row] = await sql`
+    SELECT b.*, d.title AS deal_title, d.reference AS deal_reference,
+           pu.name AS submitted_by_name, pu.email AS submitted_by_email
+      FROM client_briefs b
+      LEFT JOIN deals d ON d.id = b.deal_id
+      LEFT JOIN portal_users pu ON pu.id = b.submitted_by
+     WHERE b.id = ${id} AND b.company_id = ${companyId}
+  `.catch(() => []);
+  return row || null;
+}
+
+// `locked` is the single flag the UI reads. Finalising is what locks a brief —
+// there is no separate lock column to fall out of step with it.
+function serialiseBrief(r, { withAnswers = true } = {}) {
+  if (!r) return null;
+  const answers = r.answers || {};
+  return {
+    id: r.id,
+    title: r.title || answers.projectName || null,
+    dealId: r.deal_id || null,
+    dealTitle: r.deal_title || null,
+    dealReference: r.deal_reference || null,
+    answers: withAnswers ? answers : undefined,
+    completedAt: r.completed_at || null,
+    submittedAt: r.submitted_at || null,
+    submittedBy: r.submitted_by_name || r.submitted_by_email || null,
+    reopenedAt: r.reopened_at || null,
+    locked: !!r.submitted_at,
+    contributors: Math.max(1, Number(r.contributor_count) || 1),
+    createdAt: r.created_at || null,
+    updatedAt: r.updated_at || null,
+    ...briefProgress(answers),
+  };
+}
+
+// The actor behind a change, for the activity feed. A staff manage-mode session
+// has no portal user id, so it's recorded by email and shows as Squideo.
+const briefActor = (user) => ({
+  portalUserId: user.puid || null,
+  staffEmail: user.puid ? null : (user.previewBy || user.email || null),
+  name: user.puid ? (user.name || user.email || 'A colleague') : 'Squideo',
+});
+
+// Tell the rest of the organisation that the brief moved.
+//
+// SUPERSEDES IN PLACE rather than stacking. Someone working through six
+// questions would otherwise ring the bell six times; instead the existing
+// unread "changes to X" notification is rewritten with the newer count and
+// floated back to the top, so each colleague carries at most one live row per
+// brief. Same idea as invoice.issued replacing invoice.requested.
+const BRIEF_NOTIFY_WINDOW_MINUTES = 180;
+
+async function notifyBriefCollaborators({ brief, companyId, actor, changeCount, link }) {
+  try {
+    const recipients = await resolvePortalRecipients(companyId);
+    const others = recipients.filter((r) => r.id !== actor.portalUserId);
+    if (!others.length) return;
+    const name = brief.title || 'your video brief';
+    const title = `${actor.name} updated ${name}`;
+    const body = `${changeCount} change${changeCount === 1 ? '' : 's'} — open the brief to see what moved.`;
+    for (const r of others) {
+      const [existing] = await sql`
+        SELECT id FROM portal_notifications
+         WHERE portal_user_id = ${r.id}
+           AND notification_key = 'brief.changed'
+           AND link = ${link}
+           AND read_at IS NULL
+           AND created_at > NOW() - (${BRIEF_NOTIFY_WINDOW_MINUTES} * INTERVAL '1 minute')
+         ORDER BY created_at DESC LIMIT 1`;
+      if (existing) {
+        await sql`
+          UPDATE portal_notifications
+             SET title = ${title}, body = ${body}, created_at = NOW()
+           WHERE id = ${existing.id}`;
+      } else {
+        await notifyPortalUser({
+          portalUserId: r.id, companyId, key: 'brief.changed',
+          title, body, link, dealId: brief.deal_id || null,
+        });
+      }
+    }
+  } catch (err) {
+    console.warn('[brief] collaborator notify failed', err.message);
+  }
+}
+
+// Answers move, so completed_at has to be recomputed on every write rather than
+// only ever being set.
+async function syncBriefCompletion(row) {
+  const done = missingRequired(row.answers || {}).length === 0;
+  if (done && !row.completed_at) {
+    await sql`UPDATE client_briefs SET completed_at = NOW() WHERE id = ${row.id}`;
+  } else if (!done && row.completed_at) {
+    await sql`UPDATE client_briefs SET completed_at = NULL WHERE id = ${row.id}`;
+  }
+  return done;
+}
+
 async function briefRoute(req, res, user) {
   await ensureClientBriefs();
   const companyId = resolveCompanyId(req, res, user);
   if (!companyId) return;
 
-  // A staff preview session has no puid of its own (see signPortalPreviewToken),
-  // so "my open brief" is meaningless for it. It looks at the ORGANISATION's
-  // open brief instead — which is what staff opening this actually want to see,
-  // and it's the same company the preview token is already scoped to.
+  // A staff preview session has no puid of its own (see signPortalPreviewToken).
+  // It reads the organisation's briefs — which is what staff opening this
+  // actually want — and, outside manage mode, cannot write to them.
   const isPreview = !user.puid;
 
-  const loadOpen = async () => {
-    const [row] = isPreview
-      ? await sql`
-          SELECT * FROM client_briefs
-           WHERE company_id = ${companyId} AND submitted_at IS NULL
-           ORDER BY updated_at DESC LIMIT 1`
-      : await sql`
-          SELECT * FROM client_briefs
-           WHERE portal_user_id = ${user.puid} AND submitted_at IS NULL LIMIT 1`;
-    return row || null;
-  };
-
-  const serialise = (r) => ({
-    id: r.id,
-    answers: r.answers || {},
-    completedAt: r.completed_at || null,
-    submittedAt: r.submitted_at || null,
-    updatedAt: r.updated_at || null,
-  });
-
   if (req.method === 'GET') {
-    let row = await loadOpen();
-    if (!row && !isPreview) {
-      // Created lazily on first open rather than at signup, so an untouched
-      // brief never shows up in the CRM as a lead signal that isn't real.
-      //
-      // Skipped entirely for a preview: portal_user_id is NOT NULL, so staff
-      // opening this would have hit a constraint error instead of a page — and
-      // even if it inserted, it would invent a brief no client ever started.
+    const wanted = trimOrNull(req.query.id);
+    if (wanted) {
+      const row = await loadBriefRow(wanted, companyId);
+      if (!row) return res.status(404).json({ error: 'Brief not found' });
+      const [activity, presence] = await Promise.all([
+        loadBriefActivity(row.id),
+        loadPresence(row.id, user.puid || null),
+      ]);
+      return res.status(200).json({
+        brief: serialiseBrief(row),
+        activity,
+        presence,
+        // Manage mode does NOT make this editable. Writes are refused for every
+        // preview session (see below), so offering an editable form would be a
+        // form whose every keystroke 403s. Reopening is the one staff power.
+        readOnly: isPreview,
+        canReopen: isPreview && user.canManage === true,
+      });
+    }
+
+    let rows = await loadCompanyBriefs(companyId);
+
+    // The lead-magnet path lands people on #/brief from an email, and it has to
+    // open a brief rather than an empty list. Created lazily on FIRST OPEN, not
+    // at signup, so an untouched brief never shows up in the CRM as a lead
+    // signal that isn't real — and never for a preview, where portal_user_id
+    // would have no honest value to take.
+    if (!rows.length && !isPreview) {
       const id = crypto.randomUUID();
       await sql`
         INSERT INTO client_briefs (id, portal_user_id, company_id)
         VALUES (${id}, ${user.puid}, ${companyId})
         ON CONFLICT DO NOTHING`;
-      row = await loadOpen();
-      if (!row) return res.status(500).json({ error: "Couldn't start a brief" });
+      await recordBriefEvents(id, briefActor(user), [{ eventKey: 'brief.created' }]);
+      rows = await loadCompanyBriefs(companyId);
     }
-    // Past briefs, so someone who has already sent one can look it up.
-    const past = await (isPreview
-      ? sql`
-          SELECT id, answers, submitted_at FROM client_briefs
-           WHERE company_id = ${companyId} AND submitted_at IS NOT NULL
-           ORDER BY submitted_at DESC LIMIT 10`
-      : sql`
-          SELECT id, answers, submitted_at FROM client_briefs
-           WHERE portal_user_id = ${user.puid} AND submitted_at IS NOT NULL
-           ORDER BY submitted_at DESC LIMIT 10`).catch(() => []);
+
+    const open = rows.filter((r) => !r.submitted_at);
     return res.status(200).json({
-      brief: row ? serialise(row) : null,
+      briefs: rows.map((r) => serialiseBrief(r, { withAnswers: false })),
+      // What the client opens by default: the draft touched most recently.
+      activeId: (open[0] || rows[0])?.id || null,
+      projects: await briefProjects(companyId),
       readOnly: isPreview,
-      past: past.map((p) => ({
-        id: p.id,
-        submittedAt: p.submitted_at,
-        projectName: (p.answers || {}).projectName || 'Untitled brief',
-      })),
     });
   }
 
-  // Preview is look-don't-touch. Manage mode doesn't lift this one: a brief is
-  // the client's own account of what they want, and portal_user_id is NOT NULL
-  // so there is no honest row to write it to anyway.
+  // Preview is look-don't-touch. Manage mode lifts this only for reopening
+  // (its own route): a brief is the client's own account of what they want, and
+  // staff typing into it under a client's name would make the activity feed a
+  // lie about who said what.
   if (isPreview) {
     return res.status(403).json({ error: 'A brief can only be edited by the client themselves.' });
   }
 
+  const body = await readJsonBody(req);
+
   if (req.method === 'PATCH') {
-    const body = await readJsonBody(req);
     const patch = (body && typeof body.answers === 'object' && !Array.isArray(body.answers))
       ? body.answers : null;
     if (!patch) return res.status(400).json({ error: 'answers must be an object' });
 
-    const row = await loadOpen();
+    const row = await loadBriefRow(trimOrNull(body.id), companyId);
     if (!row) return res.status(404).json({ error: 'No open brief' });
+    // Finalised means finalised. Production reads this document; if it can
+    // still move after everyone has agreed it, they are working from something
+    // that no longer exists.
+    if (row.submitted_at) {
+      return res.status(409).json({ error: 'This brief has been finalised and can no longer be changed.', locked: true });
+    }
 
-    // Merged server-side with ||, so two tabs (or a phone and a laptop) can't
-    // wipe each other's answers by each posting their own whole document.
-    // `completed` is only ever set from the server's own view of the answers.
+    // Diffed BEFORE the merge, against the stored answers, so the feed records
+    // what this person actually altered rather than everything their tab
+    // happened to post.
+    const changes = diffAnswers(row.answers || {}, patch);
+
+    // Merged server-side with ||, so two people (or two tabs) can't wipe each
+    // other's answers by each posting their own whole document.
     const [updated] = await sql`
       UPDATE client_briefs
          SET answers = answers || ${JSON.stringify(patch)}::jsonb,
+             title = COALESCE(NULLIF(TRIM(${JSON.stringify(patch)}::jsonb->>'projectName'), ''), title),
              updated_at = NOW()
        WHERE id = ${row.id}
        RETURNING *`;
-    const done = missingRequired(updated.answers || {}).length === 0;
-    if (done && !updated.completed_at) {
-      await sql`UPDATE client_briefs SET completed_at = NOW() WHERE id = ${updated.id}`;
-    } else if (!done && updated.completed_at) {
-      await sql`UPDATE client_briefs SET completed_at = NULL WHERE id = ${updated.id}`;
+    const done = await syncBriefCompletion(updated);
+
+    if (changes.length) {
+      await recordBriefEvents(row.id, briefActor(user), changes);
+      await refreshContributorCount(row.id);
+      await notifyBriefCollaborators({
+        brief: updated, companyId, actor: briefActor(user),
+        changeCount: changes.length, link: `#/brief/${row.id}`,
+      });
     }
-    return res.status(200).json({ ok: true, updatedAt: updated.updated_at, complete: done });
+    return res.status(200).json({
+      ok: true, updatedAt: updated.updated_at, complete: done, changes: changes.length,
+    });
   }
 
   if (req.method === 'POST') {
-    const row = await loadOpen();
+    // Finalise.
+    const row = await loadBriefRow(trimOrNull(body.id), companyId);
     if (!row) return res.status(404).json({ error: 'No open brief' });
+    if (row.submitted_at) {
+      return res.status(409).json({ error: 'This brief has already been finalised.', locked: true });
+    }
     const answers = row.answers || {};
 
     const missing = missingRequired(answers);
@@ -3291,36 +3470,60 @@ async function briefRoute(req, res, user) {
     // Rendered from the STORED answers, never from the request body — what the
     // team reads is always what the client actually filled in.
     const projectDetails = renderBriefText(answers);
+    const briefTitle = row.title || answers.projectName || 'Video brief';
+    let quoteRequestId = null;
 
-    // A client with a balance shouldn't have to TELL us they have one. The
-    // "New video" form asks with a tick box because it's a shorter surface;
-    // here we just look.
-    // Pass the whole company: the ledger is matched by id where possible but
-    // falls back to a normalised NAME match, so dropping the name silently
-    // misses balances on companies linked that way.
-    const creditCo = user.companies.find((c) => c.id === companyId) || { id: companyId };
-    const bal = await companyCreditBalance(creditCo).catch(() => null);
-    const hasCredit = (bal?.remaining || 0) > 0;
-
-    const quoteRequestId = await createPortalQuoteRequest({
-      user, companyId, projectDetails,
-      timeline: answers.deadline || null,
-      // The LABEL, not the slug. `parseBudgetLower` in quoteRequestActions.js
-      // scrapes numbers and takes the minimum, so '5-10k' became a £5 deal.
-      budget: answerLabel('budget', answers),
-      volume: answers.volume || null,
-      useCredit: hasCredit,
-      sourceUrl: `${PORTAL_URL}#/brief`,
-      briefId: row.id,
-    });
+    if (row.deal_id) {
+      // Already a signed or quoted job: the team gets told, and the brief shows
+      // on that deal. Raising a quote request here would put a second lead in
+      // the pipeline for work already won.
+      await sendNotification('portal.brief_finalised', {
+        subject: `📋 Brief finalised — ${briefTitle}`,
+        text: `${user.name || user.email} finalised the video brief for ${row.deal_title || 'a project'}.\n\n${projectDetails}`,
+        inApp: {
+          title: `Brief finalised — ${briefTitle}`,
+          body: row.deal_title || 'Open the project to read it',
+          link: `#/deal/${row.deal_id}`,
+        },
+      }).catch((err) => console.warn('[brief] finalise notify failed', err.message));
+    } else {
+      // A client with a balance shouldn't have to TELL us they have one. Pass
+      // the whole company: the ledger is matched by id where possible but falls
+      // back to a normalised NAME match, so dropping the name silently misses
+      // balances on companies linked that way.
+      const creditCo = user.companies.find((c) => c.id === companyId) || { id: companyId };
+      const bal = await companyCreditBalance(creditCo).catch(() => null);
+      quoteRequestId = await createPortalQuoteRequest({
+        user, companyId, projectDetails,
+        timeline: answers.deadline || null,
+        // The LABEL, not the slug. `parseBudgetLower` in quoteRequestActions.js
+        // scrapes numbers and takes the minimum, so '5-10k' became a £5 deal.
+        budget: answerLabel('budget', answers),
+        volume: answers.volume || null,
+        useCredit: (bal?.remaining || 0) > 0,
+        sourceUrl: `${PORTAL_URL}#/brief`,
+        briefId: row.id,
+      });
+    }
 
     await sql`
       UPDATE client_briefs
          SET submitted_at = NOW(), completed_at = COALESCE(completed_at, NOW()),
-             quote_request_id = ${quoteRequestId}, updated_at = NOW()
+             submitted_by = ${user.puid},
+             quote_request_id = COALESCE(${quoteRequestId}, quote_request_id),
+             title = COALESCE(title, ${briefTitle}),
+             updated_at = NOW()
        WHERE id = ${row.id}`;
+    await recordBriefEvents(row.id, briefActor(user), [{ eventKey: 'brief.finalised' }]);
     await logPortalActivity({ req, portalUserId: user.puid, eventKey: 'brief.submitted' })
       .catch(() => {});
+
+    // Everyone else on the brief needs to know it's closed — they can't edit it
+    // any more, and finding that out by trying is a bad way to be told.
+    await notifyBriefCollaborators({
+      brief: row, companyId, actor: briefActor(user), changeCount: 1,
+      link: `#/brief/${row.id}`,
+    }).catch(() => {});
 
     // They've done the thing the brief series exists to nudge, so stop it now
     // rather than letting one more "your brief is still unfinished" go out
@@ -3338,6 +3541,159 @@ async function briefRoute(req, res, user) {
   }
 
   return res.status(405).json({ error: 'Method not allowed' });
+}
+
+// Start a brief. `dealId` is optional: without one this is a new enquiry, which
+// is the original lead-magnet shape.
+async function briefCreateRoute(req, res, user) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  await ensureClientBriefs();
+  const companyId = resolveCompanyId(req, res, user);
+  if (!companyId) return;
+  if (!user.puid) return res.status(403).json({ error: 'A brief can only be started by the client themselves.' });
+
+  const body = await readJsonBody(req);
+  const dealId = trimOrNull(body.dealId);
+  let deal = null;
+  if (dealId) {
+    deal = await requireDealInOrg(res, dealId, user.companyIds);
+    if (!deal) return;
+  }
+
+  // One open brief per job, enforced here rather than by a unique index: an
+  // organisation whose people each started their own draft before this existed
+  // has several open briefs, and a constraint would have meant merging (that
+  // is, discarding) somebody's answers to install it.
+  const [clash] = await sql`
+    SELECT id FROM client_briefs
+     WHERE company_id = ${companyId} AND submitted_at IS NULL
+       AND deal_id IS NOT DISTINCT FROM ${dealId || null}
+     ORDER BY updated_at DESC LIMIT 1`;
+  if (clash) return res.status(200).json({ ok: true, id: clash.id, existing: true });
+
+  const id = crypto.randomUUID();
+  const title = trimOrNull(body.title) || (deal ? deal.title : null);
+  await sql`
+    INSERT INTO client_briefs (id, portal_user_id, company_id, deal_id, title)
+    VALUES (${id}, ${user.puid}, ${companyId}, ${dealId || null}, ${title})`;
+  await recordBriefEvents(id, briefActor(user), [
+    { eventKey: 'brief.created' },
+    ...(deal ? [{ eventKey: 'brief.attached', after: deal.title || 'a project' }] : []),
+  ]);
+  return res.status(201).json({ ok: true, id });
+}
+
+// Point an existing brief at a job — the common case being a brief started as
+// an enquiry that turns into real work.
+async function briefAttachRoute(req, res, user) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  await ensureClientBriefs();
+  const companyId = resolveCompanyId(req, res, user);
+  if (!companyId) return;
+  if (!user.puid) return res.status(403).json({ error: 'Only the client can change this.' });
+
+  const body = await readJsonBody(req);
+  const row = await loadBriefRow(trimOrNull(body.id), companyId);
+  if (!row) return res.status(404).json({ error: 'Brief not found' });
+  if (row.submitted_at) return res.status(409).json({ error: 'This brief has been finalised.', locked: true });
+
+  const dealId = trimOrNull(body.dealId);
+  let deal = null;
+  if (dealId) {
+    deal = await requireDealInOrg(res, dealId, user.companyIds);
+    if (!deal) return;
+  }
+  await sql`UPDATE client_briefs SET deal_id = ${dealId || null}, updated_at = NOW() WHERE id = ${row.id}`;
+  await recordBriefEvents(row.id, briefActor(user), [
+    { eventKey: 'brief.attached', after: deal ? (deal.title || 'a project') : 'a new enquiry' },
+  ]);
+  return res.status(200).json({ ok: true });
+}
+
+// Heartbeat + catch-up in one request.
+//
+// Deliberately one endpoint rather than two: an open brief polls this every few
+// seconds, and splitting "say I'm here" from "tell me what changed" would
+// double that traffic to say the same thing. It reports the caller's presence,
+// returns everyone else who is live, and hands back any events (and the current
+// answers) since the caller last looked.
+async function briefTickRoute(req, res, user) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  await ensureClientBriefs();
+  const companyId = resolveCompanyId(req, res, user);
+  if (!companyId) return;
+
+  const body = await readJsonBody(req);
+  const row = await loadBriefRow(trimOrNull(body.id), companyId);
+  if (!row) return res.status(404).json({ error: 'Brief not found' });
+
+  // A preview session watches without joining: staff shouldn't appear in the
+  // client's "who's editing" list, and they have no portal user id to be
+  // recorded under anyway.
+  const presence = user.puid
+    ? await touchPresence({
+        briefId: row.id,
+        portalUserId: user.puid,
+        name: user.name || user.email || 'A colleague',
+        questionKey: trimOrNull(body.editingKey),
+      })
+    : await loadPresence(row.id, null);
+
+  const since = trimOrNull(body.sinceEventId);
+  const fresh = since
+    ? await sql`
+        SELECT id, portal_user_id, staff_email, actor_name, event_key,
+               question_key, question_label, before_value, after_value, created_at
+          FROM client_brief_events
+         WHERE brief_id = ${row.id}
+           AND created_at > (SELECT created_at FROM client_brief_events WHERE id = ${since})
+         ORDER BY created_at DESC LIMIT 60`.catch(() => [])
+    : [];
+
+  return res.status(200).json({
+    presence,
+    events: fresh.map(serialiseEvent),
+    // The current document, so a colleague's answers appear without a reload.
+    // Small enough to send every tick; the alternative is a second request the
+    // moment anything changes, which is the same bytes with more latency.
+    answers: row.answers || {},
+    updatedAt: row.updated_at,
+    locked: !!row.submitted_at,
+  });
+}
+
+// Staff-only unlock, from manage mode. Scope genuinely changes after a brief is
+// agreed, and the alternative to this is the client starting a second brief
+// that disagrees with the first.
+async function briefReopenRoute(req, res, user) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  await ensureClientBriefs();
+  const companyId = resolveCompanyId(req, res, user);
+  if (!companyId) return;
+  if (!(user.isPreview && user.canManage)) {
+    return res.status(403).json({ error: 'Only Squideo can reopen a finalised brief.' });
+  }
+  const body = await readJsonBody(req);
+  const row = await loadBriefRow(trimOrNull(body.id), companyId);
+  if (!row) return res.status(404).json({ error: 'Brief not found' });
+  if (!row.submitted_at) return res.status(200).json({ ok: true });
+
+  // quote_request_id is deliberately left in place: the lead it raised really
+  // did happen, and clearing it would orphan the quote request in the CRM.
+  await sql`
+    UPDATE client_briefs
+       SET submitted_at = NULL, reopened_at = NOW(), reopened_by = ${user.previewBy || user.email || null},
+           updated_at = NOW()
+     WHERE id = ${row.id}`;
+  await recordBriefEvents(row.id, briefActor(user), [{ eventKey: 'brief.reopened' }]);
+  await notifyPortalUser({
+    companyId, key: 'brief.reopened',
+    title: 'Squideo reopened your brief',
+    body: `${row.title || 'Your video brief'} can be edited again.`,
+    link: `#/brief/${row.id}`,
+    dealId: row.deal_id || null,
+  }).catch(() => {});
+  return res.status(200).json({ ok: true });
 }
 
 // ═════════════════════════ video credit ═════════════════════════

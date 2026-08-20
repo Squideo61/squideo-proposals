@@ -33,6 +33,9 @@ import {
 } from '../_lib/portal/activity.js';
 import { isFinalReleaseUnlocked } from '../_lib/crm/delivery.js';
 import { computePortalOffers } from '../_lib/portal/extrasOffers.js';
+import { ensureClientBriefs } from '../_lib/brief/db.js';
+import { briefProgress, renderBriefText } from '../_lib/brief/questions.js';
+import { loadBriefActivity } from '../_lib/brief/collab.js';
 import { ensureProductionSchema } from '../_lib/production.js';
 import { logStaffActivity } from '../_lib/crm/staffActivity.js';
 
@@ -466,6 +469,37 @@ export default async function handler(req, res) {
           dealSteps(dealId).catch(() => []),
           portalTimeline({ dealId }).catch(() => []),
         ]);
+
+        // The client's own brief for this job. A brief used to be a lead magnet
+        // with nowhere to land; now that it names its project, the team working
+        // on that project is exactly who should be reading it — including while
+        // it is still a draft, which is when a wrong assumption is cheap to fix.
+        await ensureClientBriefs();
+        const briefRows = await sql`
+          SELECT b.id, b.title, b.answers, b.completed_at, b.submitted_at, b.updated_at,
+                 b.contributor_count, b.reopened_at,
+                 pu.name AS submitted_by_name, pu.email AS submitted_by_email
+            FROM client_briefs b
+            LEFT JOIN portal_users pu ON pu.id = b.submitted_by
+           WHERE b.deal_id = ${dealId}
+           ORDER BY (b.submitted_at IS NULL) DESC, b.updated_at DESC
+        `.catch(() => []);
+        const briefs = await Promise.all(briefRows.map(async (b) => ({
+          id: b.id,
+          title: b.title || (b.answers || {}).projectName || 'Video brief',
+          locked: !!b.submitted_at,
+          submittedAt: b.submitted_at || null,
+          submittedBy: b.submitted_by_name || b.submitted_by_email || null,
+          reopenedAt: b.reopened_at || null,
+          updatedAt: b.updated_at || null,
+          contributors: Math.max(1, Number(b.contributor_count) || 1),
+          // Rendered server-side by the same function that writes the quote
+          // request, so what the team reads here is what they would have read
+          // in the enquiry — one document, one rendering.
+          text: renderBriefText(b.answers || {}),
+          activity: await loadBriefActivity(b.id, 12),
+          ...briefProgress(b.answers || {}),
+        })));
         return res.status(200).json({
           dealId,
           steps,
@@ -484,6 +518,7 @@ export default async function handler(req, res) {
             createdBy: o.created_by || null,
           })),
           derived,
+          briefs,
         });
       }
 

@@ -15,6 +15,7 @@ import { formatGBP } from '../../utils.js';
 import { Card, Empty } from './Card.jsx';
 import { Modal } from '../ui.jsx';
 import { PortalStepsActivity } from './PortalStepsActivity.jsx';
+import { ClientBriefBlock } from './ClientBriefBlock.jsx';
 import { PortalOpenButtons } from './PortalOpenButtons.jsx';
 import { pickInviteDefaults } from '../../lib/portalInviteRecipients.js';
 
@@ -617,6 +618,8 @@ export function PortalDealCard({ dealId, dealTitle = null }) {
               </div>
             </div>
           )}
+
+          <ClientBriefBlock briefs={data.briefs || []} />
 
           <PortalStepsActivity variant="deal" steps={data.steps || []} activity={data.activity || []} />
         </>

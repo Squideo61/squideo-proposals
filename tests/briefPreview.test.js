@@ -3,9 +3,10 @@
 // session has no puid. So the one screen a staff member would open to check a
 // client's brief was the one screen that 500'd.
 //
-// Preview now reads the ORGANISATION's brief instead of "its own", creates
-// nothing, and refuses writes — including in manage mode, because a brief is
-// the client's own account of what they want.
+// Preview reads the ORGANISATION's briefs, creates nothing, and refuses writes
+// — including in manage mode, because a brief is the client's own account of
+// what they want, and staff typing into it under a client's name would make
+// the activity feed a lie about who said what.
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 process.env.JWT_SECRET = 'test-portal-secret-not-a-real-key';
@@ -29,9 +30,12 @@ const handler = (await import('../api/portal.js')).default;
 const COMPANY = { id: 'co-1', name: 'The Christie NHS Foundation Trust' };
 const BRIEF = {
   id: 'brief-1',
+  title: 'Recruitment film',
+  deal_id: null,
   answers: { projectName: 'Recruitment film', goal: 'awareness' },
   completed_at: null,
   submitted_at: null,
+  contributor_count: 2,
   updated_at: '2026-08-06T09:00:00.000Z',
 };
 
@@ -48,22 +52,21 @@ function fakeRes() {
 
 // `inserted` is the point of the test: nothing may write a client_briefs row
 // during a preview.
-function stub({ openBrief = null } = {}) {
+function stub({ briefs = [] } = {}) {
   const inserted = [];
+  const queries = [];
   setSqlHandler((text) => {
+    queries.push(text);
     if (text.includes('INSERT INTO client_briefs')) { inserted.push(text); return []; }
     if (text.includes('FROM companies WHERE id')) return [COMPANY];
     if (text.includes('SELECT c.logo_updated_at FROM companies c')) return [];
-    if (text.includes('FROM client_briefs') && text.includes('submitted_at IS NULL')) {
-      return openBrief ? [openBrief] : [];
-    }
-    if (text.includes('FROM client_briefs')) return [];
+    if (text.includes('FROM client_briefs')) return briefs;
     return [];
   });
-  return inserted;
+  return { inserted, queries };
 }
 
-async function callBrief({ method = 'GET', manage = false }) {
+async function callBrief({ method = 'GET', manage = false, body = undefined }) {
   const token = await signPortalPreviewToken({
     companyId: COMPANY.id, staffEmail: 'adam@squideo.co.uk', manage,
   });
@@ -71,7 +74,8 @@ async function callBrief({ method = 'GET', manage = false }) {
   await handler({
     method,
     query: { action: 'brief' },
-    headers: { 'x-portal-preview': token },
+    headers: { 'x-portal-preview': token, 'content-type': 'application/json' },
+    body,
   }, res);
   return res;
 }
@@ -80,31 +84,52 @@ beforeEach(() => { resetSqlMock(); });
 
 describe('brief builder — staff preview', () => {
   it('does not create a brief row for a session with no portal user', async () => {
-    const inserted = stub();
+    const { inserted } = stub();
     const res = await callBrief({});
     expect(inserted).toHaveLength(0);
     expect(res.statusCode).toBe(200);
-    expect(res.body.brief).toBeNull();
+    expect(res.body.briefs).toEqual([]);
+    expect(res.body.activeId).toBeNull();
     expect(res.body.readOnly).toBe(true);
   });
 
-  it("shows the organisation's open brief rather than nothing", async () => {
-    stub({ openBrief: BRIEF });
+  it("shows the organisation's briefs rather than nothing", async () => {
+    stub({ briefs: [BRIEF] });
     const res = await callBrief({});
     expect(res.statusCode).toBe(200);
     expect(res.body.readOnly).toBe(true);
-    expect(res.body.brief.answers.projectName).toBe('Recruitment film');
+    expect(res.body.briefs).toHaveLength(1);
+    expect(res.body.briefs[0].title).toBe('Recruitment film');
+    // Shared-document facts travel with the summary, so the list can say a
+    // brief is shared before anyone opens it.
+    expect(res.body.briefs[0].contributors).toBe(2);
+    expect(res.body.activeId).toBe('brief-1');
+  });
+
+  it('scopes the list to the previewed organisation, never to a person', async () => {
+    const { queries } = stub({ briefs: [BRIEF] });
+    await callBrief({});
+    const briefQueries = queries.filter((q) => q.includes('FROM client_briefs'));
+    expect(briefQueries.length).toBeGreaterThan(0);
+    expect(briefQueries.every((q) => q.includes('company_id'))).toBe(true);
+    expect(briefQueries.some((q) => q.includes('portal_user_id ='))).toBe(false);
   });
 
   it('refuses edits from a plain preview session', async () => {
-    stub({ openBrief: BRIEF });
-    const res = await callBrief({ method: 'PATCH' });
+    stub({ briefs: [BRIEF] });
+    const res = await callBrief({ method: 'PATCH', body: { id: 'brief-1', answers: { goal: 'sell' } } });
     expect(res.statusCode).toBe(403);
   });
 
-  it('refuses edits in manage mode too — a brief is the client\'s own', async () => {
-    stub({ openBrief: BRIEF });
-    const res = await callBrief({ method: 'PATCH', manage: true });
+  it("refuses edits in manage mode too — a brief is the client's own", async () => {
+    stub({ briefs: [BRIEF] });
+    const res = await callBrief({ method: 'PATCH', manage: true, body: { id: 'brief-1', answers: { goal: 'sell' } } });
     expect(res.statusCode).toBe(403);
+  });
+
+  it('tells manage mode it is still read-only, so it never renders a form that 403s', async () => {
+    stub({ briefs: [BRIEF] });
+    const res = await callBrief({ manage: true });
+    expect(res.body.readOnly).toBe(true);
   });
 });
