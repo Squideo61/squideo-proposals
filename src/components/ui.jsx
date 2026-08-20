@@ -576,13 +576,59 @@ export function normalizeDialNumber(raw) {
   return s.replace(/[^+\d]/g, '');
 }
 
+// How a UK number should LOOK. Reading one off a screen to dial it, or
+// checking it against an email signature, both depend on the digits being
+// grouped the way people actually say them.
+//
+// They were being grouped 5-3-3, which is a landline shape. Applied to a
+// mobile with its trunk 0 already stripped it produced "+44 79743 185 28" —
+// a split that lands mid-way through both halves of the number and is close
+// to unreadable. The rule that works for every UK number, mobile or
+// landline, is simply: the last six digits are their own group.
+//
+// Deliberately conservative about WHAT it will regroup. A number is only
+// touched when it's recognisably UK — a +44 prefix, or a trunk 0 with a
+// plausible national length. Anything else is returned exactly as stored,
+// because reformatting a US or German number by a British rule would be a
+// worse bug than the one this fixes.
+export function formatPhoneDisplay(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return raw;
+
+  const digits = raw.replace(/\D/g, '');
+  // "+44 (0)7926 838203" — the bracketed trunk 0 is not part of the number.
+  const hasPlus44 = /^\+\s*44/.test(raw);
+  const bare44 = !raw.startsWith('+') && digits.length === 12 && digits.startsWith('44');
+
+  let prefix = null;
+  let national = digits;
+  if (hasPlus44 || bare44) {
+    prefix = '+44';
+    national = digits.slice(2);
+    // A trunk 0 and a country code are alternatives, never both.
+    if (national.startsWith('0')) national = national.slice(1);
+  } else if (/^0/.test(digits) && digits.length >= 10 && digits.length <= 11) {
+    national = digits;
+  } else {
+    // Not a shape we recognise — leave it exactly as someone typed it.
+    return raw;
+  }
+
+  // Too short to split meaningfully; showing it whole beats inventing a gap.
+  if (national.length < 7) return raw;
+  const grouped = national.slice(0, -6) + ' ' + national.slice(-6);
+  return prefix ? prefix + ' ' + grouped : grouped;
+}
+
 // A phone number that, instead of dialling straight from the SIM, opens a small
 // menu so you can pick which app places the call — the native Phone app, Webex
 // (linked to a work line), or just copy the number. iOS/Android give no OS-level
 // "choose calling app" prompt for tel: links, so the app offers it here.
 // `display` is the human string shown; the schemes use the cleaned +digits.
 export function CallLink({ phone, style, title }) {
-  const display = phone == null ? '' : String(phone);
+  // What is SHOWN is regrouped; what is DIALLED is not. normalizeDialNumber
+  // strips punctuation anyway, so the two can never disagree about digits.
+  const display = formatPhoneDisplay(phone == null ? '' : String(phone));
   const clean = normalizeDialNumber(display);
   if (!clean) return display ? <span style={style}>{display}</span> : null;
   const items = [

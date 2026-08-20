@@ -16,7 +16,10 @@ const COMMON_DOMAINS = [
 ];
 
 export const COUNTRIES = [
-  { name: 'United Kingdom', code: 'GB', dialCode: '+44', format: '##### ### ###' },
+  // Last six digits as their own group — see formatPhoneDisplay in ui.jsx.
+  // 5-3-3 is a landline shape and made mobiles unreadable (07974 318 528 was
+  // the good case; without the trunk 0 it came out as 79743 185 28).
+  { name: 'United Kingdom', code: 'GB', dialCode: '+44', format: '##### ######' },
   { name: 'United States', code: 'US', dialCode: '+1', format: '(###) ###-####' },
   { name: 'Canada', code: 'CA', dialCode: '+1', format: '(###) ###-####' },
   { name: 'Australia', code: 'AU', dialCode: '+61', format: '#### ### ###' },
