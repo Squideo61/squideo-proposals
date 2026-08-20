@@ -619,7 +619,15 @@ export function PortalDealCard({ dealId, dealTitle = null }) {
             </div>
           )}
 
-          <ClientBriefBlock briefs={data.briefs || []} />
+          <ClientBriefBlock
+            briefs={data.briefs || []}
+            unfiled={data.unfiledBriefs || []}
+            busy={busy}
+            onAttach={(b) => run(
+              () => api.post('/api/crm/portal-admin?op=brief-attach', { briefId: b.id, dealId }),
+              `“${b.title}” filed to this project`,
+            )}
+          />
 
           <PortalStepsActivity variant="deal" steps={data.steps || []} activity={data.activity || []} />
         </>

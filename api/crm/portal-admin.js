@@ -35,7 +35,7 @@ import { isFinalReleaseUnlocked } from '../_lib/crm/delivery.js';
 import { computePortalOffers } from '../_lib/portal/extrasOffers.js';
 import { ensureClientBriefs } from '../_lib/brief/db.js';
 import { briefProgress, renderBriefText } from '../_lib/brief/questions.js';
-import { loadBriefActivity } from '../_lib/brief/collab.js';
+import { loadBriefActivity, recordBriefEvents } from '../_lib/brief/collab.js';
 import { ensureProductionSchema } from '../_lib/production.js';
 import { logStaffActivity } from '../_lib/crm/staffActivity.js';
 
@@ -443,7 +443,7 @@ export default async function handler(req, res) {
 
       if (dealId) {
         const [deal] = await sql`
-          SELECT id, title, stage, production_phase, portal_extras_discount, final_release_override_at
+          SELECT id, title, company_id, stage, production_phase, portal_extras_discount, final_release_override_at
             FROM deals WHERE id = ${dealId}
         `;
         if (!deal) return res.status(404).json({ error: 'Deal not found' });
@@ -500,6 +500,28 @@ export default async function handler(req, res) {
           activity: await loadBriefActivity(b.id, 12),
           ...briefProgress(b.answers || {}),
         })));
+
+        // Briefs this COMPANY has written that name no project. Every brief that
+        // predates briefs-know-their-job is one of these, and the migration
+        // deliberately doesn't guess which deal they belong to — an org with two
+        // projects would get a brief silently filed against the wrong one, and
+        // then finalising it would notify the wrong team. So they surface here,
+        // on each deal, for a person to say.
+        const unfiledRows = deal.company_id ? await sql`
+          SELECT b.id, b.title, b.answers, b.submitted_at, b.updated_at, b.contributor_count
+            FROM client_briefs b
+           WHERE b.company_id = ${deal.company_id} AND b.deal_id IS NULL
+           ORDER BY b.updated_at DESC
+           LIMIT 20
+        `.catch(() => []) : [];
+        const unfiledBriefs = unfiledRows.map((b) => ({
+          id: b.id,
+          title: b.title || (b.answers || {}).projectName || 'Untitled brief',
+          locked: !!b.submitted_at,
+          updatedAt: b.updated_at || null,
+          contributors: Math.max(1, Number(b.contributor_count) || 1),
+          ...briefProgress(b.answers || {}),
+        }));
         return res.status(200).json({
           dealId,
           steps,
@@ -519,6 +541,7 @@ export default async function handler(req, res) {
           })),
           derived,
           briefs,
+          unfiledBriefs,
         });
       }
 
@@ -932,6 +955,33 @@ export default async function handler(req, res) {
 
     if (op === 'offer-delete') {
       await sql`DELETE FROM portal_extra_offers WHERE id = ${trimOrNull(body.id)}`;
+      return res.status(200).json({ ok: true });
+    }
+
+    // File one of the company's loose briefs against this deal — the CRM half
+    // of the same action the portal offers in manage mode. Recorded as Squideo
+    // in the brief's own activity feed, so the client can see who filed it
+    // rather than finding it quietly reattributed to them.
+    //
+    // Only ever sets deal_id. Nothing here can touch an answer.
+    if (op === 'brief-attach') {
+      const briefId = trimOrNull(body.briefId);
+      const dealId = trimOrNull(body.dealId);
+      if (!briefId || !dealId) return res.status(400).json({ error: 'briefId and dealId are required' });
+      await ensureClientBriefs();
+      const [deal] = await sql`SELECT id, title, company_id FROM deals WHERE id = ${dealId}`;
+      if (!deal) return res.status(404).json({ error: 'Deal not found' });
+      const [brief] = await sql`SELECT id, company_id FROM client_briefs WHERE id = ${briefId}`;
+      if (!brief) return res.status(404).json({ error: 'Brief not found' });
+      // A brief belongs to an organisation. Filing one against another
+      // organisation's deal would show one client's words to another.
+      if (!brief.company_id || brief.company_id !== deal.company_id) {
+        return res.status(403).json({ error: 'That brief belongs to a different organisation.' });
+      }
+      await sql`UPDATE client_briefs SET deal_id = ${dealId}, updated_at = NOW() WHERE id = ${briefId}`;
+      await recordBriefEvents(briefId,
+        { portalUserId: null, staffEmail: user.email, name: 'Squideo' },
+        [{ eventKey: 'brief.attached', after: deal.title || 'a project' }]);
       return res.status(200).json({ ok: true });
     }
 

@@ -10,10 +10,18 @@
 // audience was never who we assumed, and a half-finished brief says that a
 // fortnight earlier than a finished one.
 //
-// Presentational only — fed by `briefs` from /api/crm/portal-admin?dealId=…,
-// which the Client portal card already loads.
+// It also offers the company's UNFILED briefs. Every brief written before
+// briefs could name a job is unfiled, and the migration deliberately doesn't
+// guess which deal they belong to — an org with two projects would get a brief
+// silently filed against the wrong one, and then finalising it would notify the
+// wrong team. A person says instead, from the deal they're already looking at.
+//
+// Presentational only — fed by `briefs` / `unfiled` from
+// /api/crm/portal-admin?dealId=…, which the Client portal card already loads.
 import React, { useState } from 'react';
-import { ClipboardList, ChevronDown, ChevronRight, Lock, Users, History } from 'lucide-react';
+import {
+  ClipboardList, ChevronDown, ChevronRight, Lock, Users, History, Link2,
+} from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { formatRelativeTime } from '../../utils.js';
 
@@ -109,9 +117,41 @@ function BriefRow({ brief }) {
   );
 }
 
-export function ClientBriefBlock({ briefs }) {
+// A brief this company wrote that names no project. Offered here rather than
+// anywhere central because this is where you're standing when you realise it
+// belongs to the job in front of you.
+function UnfiledRow({ brief, onAttach, busy }) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0',
+      borderBottom: '1px solid ' + BRAND.border, fontSize: 13,
+    }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 600, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {brief.title}
+        </div>
+        <div style={{ fontSize: 11.5, color: BRAND.muted }}>
+          {brief.locked ? 'Final' : `${brief.done} of ${brief.total} answered`}
+          {' · '}edited {formatRelativeTime(brief.updatedAt)}
+          {brief.contributors > 1 && ` · ${brief.contributors} people`}
+        </div>
+      </div>
+      <button
+        className="btn-ghost"
+        disabled={busy}
+        style={{ fontSize: 11.5, whiteSpace: 'nowrap' }}
+        title="File this brief against this project — it then shows on the deal and reaches this project's team"
+        onClick={() => onAttach(brief)}
+      >
+        <Link2 size={12} /> It&rsquo;s for this project
+      </button>
+    </div>
+  );
+}
+
+export function ClientBriefBlock({ briefs = [], unfiled = [], onAttach, busy = false }) {
   const [open, setOpen] = useState(false);
-  if (!briefs?.length) return null;
+  if (!briefs.length && !unfiled.length) return null;
 
   const drafts = briefs.filter((b) => !b.locked).length;
 
@@ -132,14 +172,46 @@ export function ClientBriefBlock({ briefs }) {
         {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         <ClipboardList size={12} />
         Client brief
-        <span style={{ opacity: 0.75 }}>· {briefs.length}</span>
-        {drafts > 0 && (
-          <span style={{ marginLeft: 'auto', color: '#B45309', textTransform: 'none', letterSpacing: 0 }}>
-            {drafts} still a draft
-          </span>
-        )}
+        {briefs.length > 0 && <span style={{ opacity: 0.75 }}>· {briefs.length}</span>}
+        <span style={{ marginLeft: 'auto', textTransform: 'none', letterSpacing: 0 }}>
+          {/* An unfiled brief is the thing worth saying on a collapsed row: a
+              draft you already know about is just progress, but a brief sitting
+              on the company with no project named is one nobody has read. */}
+          {unfiled.length > 0 ? (
+            <span style={{ color: BRAND.blue, fontWeight: 700 }}>
+              {unfiled.length} unfiled — could be this project
+            </span>
+          ) : drafts > 0 ? (
+            <span style={{ color: '#B45309' }}>{drafts} still a draft</span>
+          ) : null}
+        </span>
       </button>
-      {open && briefs.map((b) => <BriefRow key={b.id} brief={b} />)}
+
+      {open && (
+        <>
+          {briefs.map((b) => <BriefRow key={b.id} brief={b} />)}
+
+          {unfiled.length > 0 && (
+            <div style={{ marginTop: briefs.length ? 10 : 4 }}>
+              <div style={{
+                fontSize: 10.5, fontWeight: 700, color: BRAND.muted, letterSpacing: 0.4,
+                textTransform: 'uppercase', marginBottom: 2,
+              }}>
+                Not filed to a project
+              </div>
+              <div style={{ fontSize: 11.5, color: BRAND.muted, marginBottom: 6, lineHeight: 1.5 }}>
+                {briefs.length
+                  ? 'Also on this company.'
+                  : 'This client has briefed something, but hasn’t said which project it’s for.'}{' '}
+                Filing one here puts it on this deal and sends it to this project’s team when they finalise it.
+              </div>
+              {unfiled.map((b) => (
+                <UnfiledRow key={b.id} brief={b} onAttach={onAttach} busy={busy} />
+              ))}
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }

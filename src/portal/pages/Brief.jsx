@@ -674,7 +674,7 @@ export default function Brief({ briefId: routeId = null }) {
 }
 
 function BriefEditor({ briefId, projects, showBack, onChanged }) {
-  const { showToast } = usePortal();
+  const { showToast, manageMode } = usePortal();
   const isMobile = useIsMobile();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
@@ -701,6 +701,12 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
   const locked = !!data?.brief?.locked;
   const readOnly = !!data?.readOnly;
   const canEdit = !locked && !readOnly;
+  // Saying which job a brief is for is FILING, not answering, and it is the
+  // one thing about a brief staff may change — see briefAttachRoute. For the
+  // client it follows the lock; for staff in manage mode it never does,
+  // because a brief filed under the wrong project is precisely what you
+  // discover after it has been finalised.
+  const canFile = readOnly ? manageMode : !locked;
 
   // With the screen pills on one scrollable row, moving on with Next would
   // otherwise leave the highlighted pill off-screen — so the one cue telling
@@ -880,7 +886,10 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
       setData(d);
       setActivity(d.activity || []);
       onChanged?.();
-      showToast(dealId ? 'Brief linked to your project' : 'Brief set as a new enquiry', 'success');
+      // Names the project rather than saying "your" — staff file these too,
+      // and a toast that calls it their project reads wrong from manage mode.
+      const filed = projects.find((x) => x.id === dealId);
+      showToast(dealId ? `Filed to ${filed?.title || 'the project'}` : 'Set as a new enquiry', 'success');
     } catch (err) { showToast(err.message, 'error'); } finally { setLinking(false); }
   };
 
@@ -971,7 +980,7 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
         ) : (
           <span style={{ fontSize: 12.5, color: '#6B7785' }}>New enquiry</span>
         )}
-        {canEdit && projects.length > 0 && (
+        {canFile && projects.length > 0 && (
           <select
             value={brief.dealId || ''}
             disabled={linking}
@@ -987,9 +996,10 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
             ))}
           </select>
         )}
-        {!brief.dealId && canEdit && projects.length > 0 && (
+        {!brief.dealId && canFile && projects.length > 0 && (
           <span style={{ fontSize: 11.5, color: '#9AA5B1', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            <Link2 size={11} /> link it so it reaches the right team
+            <Link2 size={11} />
+            {readOnly ? 'not filed to a project yet' : 'link it so it reaches the right team'}
           </span>
         )}
       </div>

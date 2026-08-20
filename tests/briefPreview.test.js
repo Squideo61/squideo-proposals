@@ -52,7 +52,7 @@ function fakeRes() {
 
 // `inserted` is the point of the test: nothing may write a client_briefs row
 // during a preview.
-function stub({ briefs = [] } = {}) {
+function stub({ briefs = [], deals = [] } = {}) {
   const inserted = [];
   const queries = [];
   setSqlHandler((text) => {
@@ -60,6 +60,7 @@ function stub({ briefs = [] } = {}) {
     if (text.includes('INSERT INTO client_briefs')) { inserted.push(text); return []; }
     if (text.includes('FROM companies WHERE id')) return [COMPANY];
     if (text.includes('SELECT c.logo_updated_at FROM companies c')) return [];
+    if (text.includes('FROM deals d')) return deals;
     if (text.includes('FROM client_briefs')) return briefs;
     return [];
   });
@@ -188,5 +189,70 @@ describe('brief delete — manage mode only', () => {
     });
     expect(res.statusCode).toBe(404);
     expect(deletes(queries)).toHaveLength(0);
+  });
+});
+
+// Filing a brief against a job is the ONE thing about a brief that staff may
+// change. The answers stay the client's own account of what they want — staff
+// typing into those would make the activity feed a lie about who said what —
+// but every brief written before briefs could name a job is sitting unfiled,
+// and emailing a client to ask them to tick a box we could tick ourselves is
+// not a system.
+describe('brief filing — manage mode may, read-only may not', () => {
+  const DEAL = { id: 'deal-1', title: 'CareConnect launch film', company_id: COMPANY.id };
+  const attaches = (queries) => queries.filter((q) => q.includes('UPDATE client_briefs SET deal_id'));
+
+  it('refuses a read-only preview', async () => {
+    const { queries } = stub({ briefs: [BRIEF], deals: [DEAL] });
+    const res = await callBrief({
+      method: 'POST', action: 'brief-attach', body: { id: BRIEF.id, dealId: DEAL.id },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(attaches(queries)).toHaveLength(0);
+  });
+
+  it('files it in manage mode', async () => {
+    const { queries } = stub({ briefs: [BRIEF], deals: [DEAL] });
+    const res = await callBrief({
+      method: 'POST', action: 'brief-attach', manage: true,
+      body: { id: BRIEF.id, dealId: DEAL.id },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(attaches(queries)).toHaveLength(1);
+  });
+
+  it('records it as Squideo, not as the client', async () => {
+    const { queries } = stub({ briefs: [BRIEF], deals: [DEAL] });
+    await callBrief({
+      method: 'POST', action: 'brief-attach', manage: true,
+      body: { id: BRIEF.id, dealId: DEAL.id },
+    });
+    // The event exists and carries a staff email rather than a portal user —
+    // the client's feed has to say who filed it, not quietly reattribute it.
+    const events = queries.filter((q) => q.includes('INSERT INTO client_brief_events'));
+    expect(events).toHaveLength(1);
+  });
+
+  it('still files a FINALISED brief for staff — that is when you notice', async () => {
+    const finalised = { ...BRIEF, submitted_at: '2026-08-10T09:00:00.000Z' };
+    const { queries } = stub({ briefs: [finalised], deals: [DEAL] });
+    const res = await callBrief({
+      method: 'POST', action: 'brief-attach', manage: true,
+      body: { id: BRIEF.id, dealId: DEAL.id },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(attaches(queries)).toHaveLength(1);
+  });
+
+  it('will not file a brief onto another organisation\'s deal', async () => {
+    // requireDealInOrg scopes by the preview token's company, so a deal
+    // belonging to someone else simply is not found.
+    const { queries } = stub({ briefs: [BRIEF], deals: [] });
+    const res = await callBrief({
+      method: 'POST', action: 'brief-attach', manage: true,
+      body: { id: BRIEF.id, dealId: 'someone-elses-deal' },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(attaches(queries)).toHaveLength(0);
   });
 });

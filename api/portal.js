@@ -3586,17 +3586,36 @@ async function briefCreateRoute(req, res, user) {
 
 // Point an existing brief at a job — the common case being a brief started as
 // an enquiry that turns into real work.
+//
+// FILING IS NOT ANSWERING, and this is the one thing about a brief that staff
+// may change. The answers stay the client's own account of what they want —
+// staff typing into those would make the activity feed a lie about who said
+// what — but which job a brief belongs to is filing, and every brief written
+// before briefs could name a job is sitting unfiled. Emailing a client to ask
+// them to tick a box we could tick ourselves is not a system.
+//
+// It's recorded as Squideo doing it (see briefActor), so the client's feed says
+// who filed it rather than quietly reattributing it to them.
 async function briefAttachRoute(req, res, user) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   await ensureClientBriefs();
   const companyId = resolveCompanyId(req, res, user);
   if (!companyId) return;
-  if (!user.puid) return res.status(403).json({ error: 'Only the client can change this.' });
+  const asStaff = !user.puid && user.isPreview && user.canManage === true;
+  if (!user.puid && !asStaff) {
+    return res.status(403).json({ error: 'Only the client, or Squideo in manage mode, can change this.' });
+  }
 
   const body = await readJsonBody(req);
   const row = await loadBriefRow(trimOrNull(body.id), companyId);
   if (!row) return res.status(404).json({ error: 'Brief not found' });
-  if (row.submitted_at) return res.status(409).json({ error: 'This brief has been finalised.', locked: true });
+  // Finalising locks the CONTENT. Filing a finalised brief to the job it was
+  // always about changes nothing it says, and a brief filed under the wrong
+  // project is exactly the thing you find out about after it's final — so
+  // staff can still move it. The client can't: for them, final means final.
+  if (row.submitted_at && !asStaff) {
+    return res.status(409).json({ error: 'This brief has been finalised.', locked: true });
+  }
 
   const dealId = trimOrNull(body.dealId);
   let deal = null;
