@@ -22,6 +22,7 @@ import sql from '../db.js';
 import { APP_URL } from '../email.js';
 import { sendNotification } from '../notifications.js';
 import { dealIdForProposal } from '../dealStage.js';
+import { paymentFreshness, paidSubject, catchUpNote } from './paymentFreshness.js';
 
 const escapeHtml = (s = '') =>
   String(s).replace(/[&<>"']/g, (c) => ({
@@ -65,7 +66,7 @@ export async function notifyProposalInvoicePaid({
          SET paid_notified_at = NOW()
        WHERE xero_invoice_id = ${xeroInvoiceId}
          AND paid_notified_at IS NULL
-      RETURNING proposal_id`;
+      RETURNING proposal_id, paid_at`;
   } catch (err) {
     console.warn('[invoicePaid] claim failed', err.message);
     return false;
@@ -73,6 +74,15 @@ export async function notifyProposalInvoicePaid({
   if (!claimed.length) return false;
 
   const proposalId = claimed[0].proposal_id;
+
+  // Same trap as the manual-invoice alert: the invoices sync discovers old
+  // payments, and announcing one as though it just happened is how a team
+  // ends up believing money arrived today. The claim above is already taken,
+  // so a payment judged too old to announce is recorded and stays quiet —
+  // which is also what makes the first sync after this shipped safe, rather
+  // than a broadcast of every invoice ever paid.
+  const freshness = paymentFreshness(paidAt || claimed[0].paid_at);
+  if (freshness.band === 'historic') return false;
   try {
     const [[proposalRow], dealId] = await Promise.all([
       sql`SELECT data FROM proposals WHERE id = ${proposalId}`.catch(() => []),
@@ -83,20 +93,22 @@ export async function notifyProposalInvoicePaid({
     const ref = invoiceNumber || xeroInvoiceId;
     const link = dealId ? `${APP_URL}/#/deal/${dealId}` : `${APP_URL}/?proposal=${proposalId}`;
     const sum = money(amount);
+    const note = catchUpNote(freshness);
 
     // Same key as a card payment: from the money side of the business this IS
     // the client paying, and routing it anywhere else would mean the £ bell
     // tells you about some payments and not others depending on which button
     // the client happened to press.
     await sendNotification('payment.received', {
-      subject: `💰 Invoice paid: ${title}`,
-      html: `<p>The client paid invoice <strong>${escapeHtml(ref)}</strong> for <strong>${escapeHtml(title)}</strong>${sum ? ` — <strong>${escapeHtml(sum)}</strong>` : ''}.</p>
+      subject: paidSubject(title, freshness),
+      html: (note ? `<p style="margin:0 0 14px;padding:10px 12px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;font-size:13px;">${escapeHtml(note)}</p>` : '')
+        + `<p>The client paid invoice <strong>${escapeHtml(ref)}</strong> for <strong>${escapeHtml(title)}</strong>${sum ? ` — <strong>${escapeHtml(sum)}</strong>` : ''}.</p>
              <p>They took the "send me an invoice" route rather than paying by card, so this came in through Xero.</p>
              <p style="margin:16px 0;"><a href="${escapeHtml(link)}" style="display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;">Open the deal</a></p>`,
-      text: `Invoice ${ref} paid${sum ? ` (${sum})` : ''} for "${title}" — via Xero. ${link}`,
+      text: `${note ? note + ' ' : ''}Invoice ${ref} paid${sum ? ` (${sum})` : ''} for "${title}" — via Xero. ${link}`,
       inApp: {
-        title: `Invoice paid: ${title}`,
-        body: `${ref}${sum ? ` · ${sum}` : ''} paid via Xero`,
+        title: paidSubject(title, freshness).replace(/^💰 /, ''),
+        body: note || `${ref}${sum ? ` · ${sum}` : ''} paid via Xero`,
         link: dealId ? `#/deal/${dealId}` : null,
       },
     });

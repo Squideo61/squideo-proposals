@@ -15,6 +15,7 @@ import { advanceStage } from '../dealStage.js';
 import { sendMail, invoicePaidHtml, APP_URL, adminEmailsExcluding } from '../email.js';
 import { sendNotification } from '../notifications.js';
 import { notifyProposalInvoicePaid } from './proposalInvoicePaid.js';
+import { paymentFreshness, paidSubject, catchUpNote } from './paymentFreshness.js';
 import { makeId, trimOrNull, numberOrNull } from './shared.js';
 import { getOrCreateContact, createInvoice, createPayment, voidInvoice, getInvoiceByNumber, getInvoicesByIds, updateContactAddress, getInvoicePdf } from '../xero.js';
 import {
@@ -1411,21 +1412,39 @@ async function notifyInvoicePaid({ row, paidAt, amount, paymentMethod = 'xero', 
     console.error('[invoices] advanceStage failed', err);
   }
   // Payment no longer opens production — a person marks the deal "Good to go".
+  // This runs off a SYNC as well as off someone pressing the button, and a
+  // sync doesn't discover things in the order they happened. An invoice paid
+  // on the 12th can sit here as "issued" until somebody opens the invoices
+  // page on the 20th — and announcing that as "💰 Invoice paid" reads as cash
+  // arriving this morning. It did not. Say which of the two it is.
+  const freshness = paymentFreshness(paidAt);
+  if (freshness.band === 'historic') {
+    // A month-old payment is not news by any reading. The row is already
+    // marked paid, so this stays a silent correction rather than an alert.
+    return;
+  }
   try {
     const [dealRow] = await sql`SELECT title FROM deals WHERE id = ${dealId}`;
     const title = dealRow?.title || row.invoice_number || row.id;
     const link = `${APP_URL}/#/deal/${dealId}`;
+    const note = catchUpNote(freshness);
     await sendNotification('invoice.paid_xero', {
-      subject: `💰 Invoice paid: ${title}`,
-      html: invoicePaidHtml({
-        title,
-        amount: amount != null ? Number(amount) : null,
-        paymentMethod,
-        paidAt,
-        invoiceNumber: row.invoice_number,
-        link,
-      }),
-      text: `Invoice ${row.invoice_number || row.id} paid via ${paymentMethod} — ${link}`,
+      subject: paidSubject(title, freshness),
+      html: (note ? `<p style="margin:0 0 14px;padding:10px 12px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;font-size:13px;">${note}</p>` : '')
+        + invoicePaidHtml({
+          title,
+          amount: amount != null ? Number(amount) : null,
+          paymentMethod,
+          paidAt,
+          invoiceNumber: row.invoice_number,
+          link,
+        }),
+      text: `${note ? note + " " : ""}Invoice ${row.invoice_number || row.id} paid via ${paymentMethod} — ${link}`,
+      inApp: {
+        title: paidSubject(title, freshness),
+        body: note || `${row.invoice_number || row.id} paid via ${paymentMethod}`,
+        link: `#/deal/${dealId}`,
+      },
     });
   } catch (err) {
     console.error('[invoices] notify failed', err);

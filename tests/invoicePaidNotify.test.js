@@ -100,6 +100,29 @@ describe('notifyProposalInvoicePaid', () => {
     expect(sent[0].text).not.toContain('£');
   });
 
+  it('records an old payment without announcing it', async () => {
+    // The sync discovers things out of order. A payment from months ago is not
+    // news, and announcing a batch of them the first time this code runs is how
+    // a new alert earns itself a mute. The claim is still taken, so it can't
+    // resurface later pretending to be fresh.
+    const { claims } = stub();
+    const ok = await notifyProposalInvoicePaid({
+      xeroInvoiceId: 'xero-old', invoiceNumber: 'INV-0001', paidAt: '2025-11-02',
+    });
+    expect(ok).toBe(false);
+    expect(claims).toHaveLength(1);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('announces a recent-but-not-instant payment with the date up front', async () => {
+    stub();
+    const paidAt = new Date(Date.now() - 8 * 86400000).toISOString();
+    await notifyProposalInvoicePaid({ xeroInvoiceId: 'xero-1', invoiceNumber: 'INV-7', paidAt });
+    expect(sent).toHaveLength(1);
+    expect(sent[0].subject).toContain('Invoice paid on');
+    expect(sent[0].inApp.body).toContain('only just picked this up');
+  });
+
   it('does nothing without an invoice id', async () => {
     const { claims } = stub();
     expect(await notifyProposalInvoicePaid({ xeroInvoiceId: null })).toBe(false);
