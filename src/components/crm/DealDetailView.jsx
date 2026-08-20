@@ -4,7 +4,7 @@ import { AlertTriangle, ArrowLeft, Building2, Calendar, CalendarClock, CheckSqua
 import DOMPurify from 'dompurify';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
-import { formatGBP, formatRelativeTime, formatTaskDue, formatDuration, useIsMobile, formatProposalNumber, decodeHtmlEntities, fileSizeLabel, proposalSignedTotalExVat, proposalQuotedExVat } from '../../utils.js';
+import { formatGBP, formatRelativeTime, formatTaskDue, formatDuration, useIsMobile, formatProposalNumber, decodeHtmlEntities, fileSizeLabel, proposalSignedTotalExVat, proposalQuotedExVat, EMBED_FILL_STYLE } from '../../utils.js';
 import { sanitizeEmailBody } from '../../utils/emailImages.js';
 import { ActionMenu, Badge, CallLink, Modal, RefBadge, FormRow } from '../ui.jsx';
 import { EmailComposerModal } from './EmailComposer.jsx';
@@ -700,7 +700,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
                       src={overviewEmbedSrc}
                       title="Project overview preview"
                       tabIndex={-1}
-                      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0, pointerEvents: 'none' }}
+                      style={{ ...EMBED_FILL_STYLE, pointerEvents: 'none' }}
                     />
                     <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.18)' }}>
                       <span style={{ width: 44, height: 44, borderRadius: '50%', background: 'rgba(255,255,255,0.92)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(0,0,0,0.25)' }}>
@@ -734,7 +734,7 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
                 title="Project overview video"
                 allow="autoplay; fullscreen; picture-in-picture"
                 allowFullScreen
-                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', border: 0 }}
+                style={EMBED_FILL_STYLE}
               />
             </div>
           </Modal>

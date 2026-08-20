@@ -7,7 +7,7 @@ import {
 import { BRAND, CONFIG, DEFAULT_PHOTOS } from '../theme.js';
 import { SQUIDEO_LOGO, NEXT_STEPS, extraHasVariants, extraHasQuantity, extraUnitPrice, extraNetUnitPrice, extrasDiscountRate, formatFreeSubtitlesValue, resolveExtraPricing, applyInclusionTokens } from '../defaults.js';
 import { useStore } from '../store.jsx';
-import { formatGBP, sendNotification, useIsMobile, computeBaseDiscount } from '../utils.js';
+import { formatGBP, sendNotification, useIsMobile, computeBaseDiscount, EMBED_FILL_STYLE } from '../utils.js';
 import { openPrintWindow, openReceiptWindow, printOptionsForSigned } from '../utils/printProposal.js';
 import { startStripeCheckout } from '../utils/stripeCheckout.js';
 import { Field, Modal, PageTitle, PaymentOption, PriceRow, StickyCTA } from './ui.jsx';
@@ -922,7 +922,7 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
                   title="Production Process"
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                   allowFullScreen
-                  style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 'none' }}
+                  style={EMBED_FILL_STYLE}
                 />
               </div>
             </div>
@@ -981,7 +981,7 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
                 title={activeExample.title || 'Example video'}
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                 allowFullScreen
-                style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 'none' }}
+                style={EMBED_FILL_STYLE}
               />
             </div>
           </Modal>

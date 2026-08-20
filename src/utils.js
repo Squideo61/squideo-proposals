@@ -328,3 +328,24 @@ export async function sendNotification(trigger, proposal, signature, payment, re
   console.log('[EMAIL STUB]', { to: recipients, subject, body });
   return recipients.length;
 }
+
+// An embedded video that actually fills its box.
+//
+// The 16:9 wrappers around our Vimeo/YouTube iframes are painted black, so
+// there's no flash of white while the player loads. But the wrapper's width
+// is a percentage of a container that is very often fractional — a 900px
+// modal minus padding lands on something like 851.34px — and a browser
+// rounds the iframe's painted box down while the parent's background rounds
+// up. The half-pixel left over is the black wrapper showing through, and it
+// reads as a thin black line down the right-hand edge of the video.
+//
+// Overfilling by a pixel closes it. The wrapper clips with overflow:hidden,
+// so the extra pixel is never painted and the video shifts by half of one.
+export const EMBED_FILL_STYLE = {
+  position: 'absolute',
+  top: 0,
+  left: 0,
+  width: 'calc(100% + 1px)',
+  height: 'calc(100% + 1px)',
+  border: 0,
+};
