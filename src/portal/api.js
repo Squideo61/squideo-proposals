@@ -6,6 +6,8 @@
 // lives in sessionStorage (per-tab, so it never collides with a real client's
 // cookie in the same browser) and rides along as an X-Portal-Preview header.
 
+import { isDemoMode, demoRequest } from './demo/portalDemo.js';
+
 const PREVIEW_KEY = 'squideo:portal:preview';
 
 export function setPreviewToken(token) {
@@ -40,6 +42,10 @@ export function mediaUrl(path) {
 }
 
 async function request(method, path, body) {
+  // The admin portal demo. Answered from fixtures rather than the network,
+  // so every real page renders against invented data with no special cases
+  // and nothing can reach the database — see ./demo/portalDemo.js.
+  if (isDemoMode()) return demoRequest(method, path, body);
   const base = body !== undefined ? { 'Content-Type': 'application/json' } : {};
   const res = await fetch(`/api/portal/${path}`, {
     method,

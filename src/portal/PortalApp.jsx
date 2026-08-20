@@ -9,11 +9,12 @@ import { Toast } from '../components/ui.jsx';
 import {
   Home, Film, FolderOpen, Sparkles, Users, Settings as SettingsIcon, PlusCircle, LogOut, Wallet, UserPlus, GraduationCap, FileText, Handshake, MoreHorizontal, X as XIcon,
 } from 'lucide-react';
-import { Eye, PencilLine } from 'lucide-react';
+import { Eye, PencilLine, FlaskConical } from 'lucide-react';
 import { PortalProvider, usePortal } from './PortalContext.jsx';
 import ClientLogo from './ClientLogo.jsx';
 import NotificationBell from './NotificationBell.jsx';
 import { portalApi, setPreviewToken } from './api.js';
+import { getDemoState, DEMO_STATES } from './demo/portalDemo.js';
 import Login from './pages/Login.jsx';
 import AcceptInvite from './pages/AcceptInvite.jsx';
 import ResetPassword from './pages/ResetPassword.jsx';
@@ -506,6 +507,7 @@ function AuthedApp() {
       ...(fullBleed ? { height: '100vh', overflow: 'hidden' } : { minHeight: '100vh' }),
       background: BRAND.paper, display: 'flex', flexDirection: 'column',
     }}>
+      <DemoBanner />
       <PreviewBanner />
       <Header />
       {fullBleed ? (
@@ -551,6 +553,32 @@ function AuthedApp() {
 // Persistent bar shown only when staff are inside a client's portal. Read-only
 // preview is purple and says so; manage mode is amber — the warning colour —
 // because everything done from there is real and lands on the client's account.
+// Demo mode says so, loudly and permanently. Everything on screen is
+// invented (see demo/portalDemo.js) and none of it can reach the database —
+// but a portal that LOOKS real and is not is exactly the thing that must
+// never be mistaken for a customer's own, so it is labelled on every page
+// rather than only where it was opened from.
+function DemoBanner() {
+  const state = getDemoState();
+  if (!state) return null;
+  const meta = DEMO_STATES.find((x) => x.id === state);
+  return (
+    <div style={{
+      background: '#0F2A3D', color: '#fff', padding: '8px 16px',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
+      fontSize: 13, fontWeight: 600, flexWrap: 'wrap', textAlign: 'center',
+    }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+        <FlaskConical size={15} />
+        Demo portal — nothing here is real.
+        <span style={{ fontWeight: 500, opacity: 0.85 }}>
+          Showing a client {meta ? meta.label.toLowerCase() : 'in progress'}.
+        </span>
+      </span>
+    </div>
+  );
+}
+
 function PreviewBanner() {
   const { preview, showToast } = usePortal();
   const [switching, setSwitching] = useState(false);

@@ -1,0 +1,462 @@
+// A whole client portal, invented.
+//
+// Staff need to see what a client sees at each point in the relationship —
+// before signing, mid-production, at review, once it's delivered — and the only
+// way to do that used to be seeding a demo company, a demo deal and a demo
+// portal invite into the live database. That put a fake customer in the
+// pipeline, in Finance and in the activity feed, and it could only ever be in
+// ONE state at a time: to see the "waiting on your storyboard" screen you had
+// to drag the fake project into that stage and then drag it back.
+//
+// So this is fixtures, following the same reasoning as the sample project in
+// ./fixtures.js: NOTHING HERE TOUCHES THE DATABASE. Demo mode intercepts the
+// portal's API client (src/portal/api.js) and answers from these objects
+// instead, so every real page renders against them with no special cases. The
+// state is a switch, not a migration — flipping from "prospect" to "delivered"
+// is instant and reversible because there was never anything to migrate.
+//
+// The shapes here must match what api/portal.js actually returns. Where they
+// drift the demo shows an empty state rather than a crash, which is the right
+// failure: a demo that lies about a screen is worse than one that admits it
+// hasn't got that screen.
+
+const now = Date.now();
+const ago = (mins) => new Date(now - mins * 60000).toISOString();
+const soon = (mins) => new Date(now + mins * 60000).toISOString();
+
+export const DEMO_QUERY_KEY = 'demo';
+
+// The five moments worth looking at. Each is a point where the portal shows a
+// materially different thing, not just a different label.
+export const DEMO_STATES = [
+  {
+    id: 'prospect',
+    label: 'Prospect',
+    blurb: 'No project yet. The video guide and the brief builder are the whole portal — this is what a lead magnet signup sees.',
+  },
+  {
+    id: 'signed',
+    label: 'Just signed',
+    blurb: 'Deposit paid, nothing filmed. Their task list is at its longest: brand files, script, voiceover, kick-off call.',
+  },
+  {
+    id: 'production',
+    label: 'In production',
+    blurb: 'Storyboard is with them for sign-off. The ball is in their court and the portal says so.',
+  },
+  {
+    id: 'revisions',
+    label: 'In revisions',
+    blurb: 'First cut is up for review. Extras are being offered, and the final download is still locked behind the balance.',
+  },
+  {
+    id: 'delivered',
+    label: 'Delivered',
+    blurb: 'Signed off, paid, downloadable. Library populated, and the portal starts nudging toward the next video.',
+  },
+];
+
+export const DEFAULT_DEMO_STATE = 'signed';
+const isState = (id) => DEMO_STATES.some((s) => s.id === id);
+
+// ── mode ─────────────────────────────────────────────────────────────────────
+// Read from the URL and ONLY from the URL. It was briefly held in
+// sessionStorage, which is wrong in a way worth writing down: an iframe
+// shares its parent tab's sessionStorage, and window.open copies it into the
+// new tab. So the admin panel embedding this demo would leave a "you are in
+// demo mode" flag lying around in the same tab a staff member then opens a
+// REAL client's portal preview from — and a real portal quietly answering
+// from fixtures is the single worst bug this feature could have.
+//
+// The query string survives hash navigation, so the URL carries it for free.
+let cached;
+
+export function readDemoStateFromUrl() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (!params.has(DEMO_QUERY_KEY)) return null;
+    const v = params.get(DEMO_QUERY_KEY);
+    return isState(v) ? v : DEFAULT_DEMO_STATE;
+  } catch { return null; }
+}
+
+// Resolved once per page load: demo mode cannot start or stop mid-session,
+// and re-parsing the URL on every API call would be work for an answer that
+// never changes.
+export function getDemoState() {
+  if (cached === undefined) cached = readDemoStateFromUrl();
+  return cached;
+}
+
+// Exposed for the entry point, which resolves the mode before React mounts.
+export function setDemoState(state) {
+  cached = state && isState(state) ? state : null;
+}
+
+export const isDemoMode = () => !!getDemoState();
+
+// ── the cast ─────────────────────────────────────────────────────────────────
+// Named people, not "User 1". Presence, activity feeds and comment threads are
+// only legible when the names read like colleagues.
+const COMPANY = { id: 'demo-co', name: 'Northwind Care Group', prospect: false, creditVisible: true, logoUrl: null };
+const ME = { id: 'demo-me', name: 'Alex Morgan', email: 'alex@northwindcare.example', jobTitle: 'Marketing Lead' };
+const PRIYA = { id: 'demo-priya', name: 'Priya Shah', email: 'priya@northwindcare.example' };
+const TOM = { id: 'demo-tom', name: 'Tom Ellery', email: 'tom@northwindcare.example' };
+
+const DEAL_ID = 'demo-deal';
+
+const BRIEF_ANSWERS = {
+  projectName: 'CareConnect launch film',
+  goal: 'onboard',
+  goalDetail: 'Introduce the CareConnect ordering portal and show care homes how it simplifies purchasing, manages budgets and keeps spend visible in one place.',
+  action: 'Contact their account manager to book a demonstration.',
+  metric: 'Demo bookings',
+  audience: 'The people responsible for purchasing, budgets and operational efficiency in care homes — owners, group directors, home managers, finance teams and senior administrators.',
+  problem: 'They are managing stock, spend and staff at once, and purchasing is the part that eats a morning.',
+  message: 'Ordering, budgets and approvals in one place, so nothing is chased twice.',
+  tone: 'warm',
+  placements: ['homepage', 'sales'],
+  length: '60-90',
+  deadline: 'Mid-October, ahead of the regional conference',
+  budget: '5-10k',
+  volume: '1',
+};
+
+// A brief three people have been through, which is the whole point of the
+// activity feed — one person's brief has nothing to show.
+const BRIEF_ACTIVITY = [
+  { id: 'd-e6', actorName: 'Priya Shah', portalUserId: PRIYA.id, eventKey: 'answer.changed', questionKey: 'metric', questionLabel: "What's the one number that would tell you it worked?", summary: 'Demo bookings', text: 'Priya Shah answered “What’s the one number that would tell you it worked?”', at: ago(9) },
+  { id: 'd-e5', actorName: 'Tom Ellery', portalUserId: TOM.id, eventKey: 'answer.changed', questionKey: 'budget', questionLabel: 'Roughly what budget do you have in mind?', summary: '£5,000 – £10,000', text: 'Tom Ellery updated “Roughly what budget do you have in mind?”', at: ago(52) },
+  { id: 'd-e4', actorName: 'Alex Morgan', portalUserId: ME.id, eventKey: 'answer.changed', questionKey: 'audience', questionLabel: 'Describe the person you want watching this', summary: 'The people responsible for purchasing, budgets and operational…', text: 'Alex Morgan updated “Describe the person you want watching this”', at: ago(96) },
+  { id: 'd-e3', actorName: 'Priya Shah', portalUserId: PRIYA.id, eventKey: 'answer.changed', questionKey: 'tone', questionLabel: 'How should it feel?', summary: 'Warm and human', text: 'Priya Shah answered “How should it feel?”', at: ago(140) },
+  { id: 'd-e2', actorName: 'Alex Morgan', portalUserId: ME.id, eventKey: 'brief.attached', questionKey: null, questionLabel: null, summary: null, text: 'Alex Morgan linked this brief to CareConnect launch film', at: ago(190) },
+  { id: 'd-e1', actorName: 'Alex Morgan', portalUserId: ME.id, eventKey: 'brief.created', questionKey: null, questionLabel: null, summary: null, text: 'Alex Morgan started this brief', at: ago(240) },
+];
+
+// Someone else mid-sentence, so the presence indicator has something to show.
+const BRIEF_PRESENCE = [
+  { portalUserId: PRIYA.id, name: 'Priya Shah', questionKey: 'problem', at: ago(0) },
+  { portalUserId: TOM.id, name: 'Tom Ellery', questionKey: null, at: ago(1) },
+];
+
+// ── per-state facts ──────────────────────────────────────────────────────────
+// One table rather than five branches: adding a state means adding a row, and
+// what differs between states stays visible side by side.
+const STATE = {
+  prospect: {
+    hasProject: false,
+    briefLocked: false,
+    production: { phase: null, stage: null },
+    stage: 'proposal_sent',
+    nextStep: { court: 'you', title: 'Finish your video brief', detail: 'You’re 12 of 25 questions in.', cta: 'Open the brief', href: '#/brief' },
+    tasks: [],
+    videos: [],
+    libraryCount: 0,
+    extras: 0,
+    unlocked: false,
+  },
+  signed: {
+    hasProject: true,
+    briefLocked: false,
+    production: { phase: 'pre_pro', stage: 'kickoff' },
+    stage: 'paid',
+    nextStep: { court: 'you', title: 'Four things to send us', detail: 'Brand files, your script direction, a voiceover pick and a kick-off call.', cta: 'Open your tasks', href: `#/project/${DEAL_ID}` },
+    tasks: [
+      { key: 'brand', title: 'Upload your brand guidelines & logo', detail: 'Fonts, colours, logo files — whatever you have.', status: 'todo', cta: { action: 'documents', label: 'Upload' } },
+      { key: 'script', title: 'Send us your script & visual direction', detail: 'Or tell us to write it — that’s an option too.', status: 'todo', cta: { action: 'script', label: 'Send' } },
+      { key: 'voiceover', title: 'Choose your voiceover', detail: 'Listen to samples and pick the voice.', status: 'todo', cta: { action: 'voiceover', label: 'Listen' } },
+      { key: 'kickoff', title: 'Book your kick-off call', detail: '30 minutes with your producer.', status: 'done', detailDone: 'Wed 26 Aug, 12:00' },
+    ],
+    videos: [{ stage: 'kickoff', phase: 'pre_pro' }],
+    libraryCount: 0,
+    extras: 6,
+    unlocked: false,
+  },
+  production: {
+    hasProject: true,
+    briefLocked: true,
+    production: { phase: 'production', stage: 'storyboard' },
+    stage: 'paid',
+    nextStep: { court: 'you', title: 'Your storyboard is ready to review', detail: 'Pin notes to any frame, then sign it off.', cta: 'Review the storyboard', href: `#/project/${DEAL_ID}` },
+    tasks: [
+      { key: 'brand', title: 'Upload your brand guidelines & logo', status: 'done', detailDone: '3 files' },
+      { key: 'script', title: 'Send us your script & visual direction', status: 'done', detailDone: 'Received 4 Aug' },
+      { key: 'voiceover', title: 'Choose your voiceover', status: 'done', detailDone: 'Erin — warm, British' },
+      { key: 'storyboard', title: 'Review the storyboard', detail: 'Change it here and it costs nothing.', status: 'todo', cta: { action: 'storyboard', label: 'Review' } },
+    ],
+    videos: [{ stage: 'storyboard', phase: 'production' }],
+    libraryCount: 0,
+    extras: 6,
+    unlocked: false,
+  },
+  revisions: {
+    hasProject: true,
+    briefLocked: true,
+    production: { phase: 'production', stage: 'revisions' },
+    stage: 'paid',
+    nextStep: { court: 'you', title: 'Your first cut is ready', detail: 'Comment at the exact second, then approve.', cta: 'Review the video', href: `#/project/${DEAL_ID}` },
+    tasks: [
+      { key: 'review', title: 'Review the first cut', detail: 'Your whole team comments in one place.', status: 'todo', cta: { action: 'review', label: 'Open review' } },
+    ],
+    videos: [{ stage: 'revisions', phase: 'production' }],
+    libraryCount: 0,
+    extras: 6,
+    unlocked: false,
+  },
+  delivered: {
+    hasProject: true,
+    briefLocked: true,
+    production: { phase: 'completed', stage: 'delivered' },
+    stage: 'paid',
+    nextStep: { court: 'us', title: 'Your video is ready 🎉', detail: 'Download it in any format you need.', cta: 'Open your library', href: '#/library' },
+    tasks: [],
+    videos: [{ stage: 'delivered', phase: 'completed' }],
+    libraryCount: 3,
+    extras: 4,
+    unlocked: true,
+  },
+};
+
+const PHASE_LABEL = {
+  pre_pro: 'Pre-production', production: 'Production', completed: 'Completed',
+};
+const STAGE_LABEL = {
+  kickoff: 'Kick-off', storyboard: 'Storyboard', revisions: 'Your review',
+  signed_off: 'Signed off', delivered: 'Delivered',
+};
+
+function project(s) {
+  return {
+    id: DEAL_ID,
+    title: 'CareConnect launch film',
+    companyId: COMPANY.id,
+    companyName: COMPANY.name,
+    stage: s.stage,
+    stageLabel: s.stage === 'paid' ? 'Signed' : 'Proposal sent',
+    paymentTerms: null,
+    hasPoNumber: false,
+    production: {
+      phase: s.production.phase,
+      phaseLabel: PHASE_LABEL[s.production.phase] || null,
+      phaseColor: '#2BB8E6',
+      stageLabel: STAGE_LABEL[s.production.stage] || null,
+    },
+    inProduction: !!s.production.phase,
+    createdAt: ago(60 * 24 * 26),
+    deliveryDeadline: soon(60 * 24 * 21),
+    nextStep: s.nextStep,
+    tasks: s.tasks,
+    openTasks: s.tasks.filter((t) => t.status !== 'done').length,
+    extrasAvailable: s.extras,
+    videos: s.videos.map((v, i) => ({
+      id: `demo-v${i + 1}`,
+      title: 'CareConnect launch film',
+      reference: '2607-014-01',
+      production: {
+        phase: v.phase,
+        phaseLabel: PHASE_LABEL[v.phase] || null,
+        phaseColor: '#2BB8E6',
+        stageLabel: STAGE_LABEL[v.stage] || null,
+      },
+    })),
+  };
+}
+
+function briefSummary(s) {
+  const answered = s.briefLocked ? 25 : 18;
+  return {
+    id: 'demo-brief',
+    title: 'CareConnect launch film',
+    dealId: s.hasProject ? DEAL_ID : null,
+    dealTitle: s.hasProject ? 'CareConnect launch film' : null,
+    dealReference: s.hasProject ? '2607-014' : null,
+    completedAt: s.briefLocked ? ago(200) : null,
+    submittedAt: s.briefLocked ? ago(198) : null,
+    submittedBy: s.briefLocked ? 'Alex Morgan' : null,
+    reopenedAt: null,
+    locked: s.briefLocked,
+    contributors: 3,
+    createdAt: ago(60 * 30),
+    updatedAt: ago(9),
+    done: answered,
+    total: 25,
+    pct: Math.round((answered / 25) * 100),
+  };
+}
+
+// ── the fake server ──────────────────────────────────────────────────────────
+// Keyed by the portal `action`. Anything absent falls through to `{}`, which
+// every page treats as "nothing here" rather than crashing.
+function respond(state, method, action, query, body) {
+  const s = STATE[state] || STATE[DEFAULT_DEMO_STATE];
+
+  switch (action) {
+    case 'me':
+      return {
+        user: { ...ME, companies: [COMPANY] },
+        sampleProject: { available: true },
+        // Deliberately NOT flagged as a preview: preview chrome says "you're
+        // looking at a real client's portal", and this is the opposite claim.
+        // The demo banner is drawn by the portal shell from demo mode itself.
+        preview: null,
+      };
+
+    case 'overview':
+      return {
+        company: COMPANY,
+        companies: [COMPANY],
+        projects: s.hasProject ? [project(s)] : [],
+        actionNeeded: s.hasProject && s.nextStep.court === 'you' ? 1 : 0,
+        suggestCredit: state === 'delivered',
+        brandFileCount: s.hasProject && state !== 'signed' ? 3 : 0,
+        briefDraft: s.briefLocked ? null : {
+          id: 'demo-brief',
+          updatedAt: ago(9),
+          projectName: BRIEF_ANSWERS.projectName,
+          ...briefSummary(s),
+        },
+      };
+
+    case 'project':
+      if (!s.hasProject) return { project: null };
+      return {
+        project: {
+          ...project(s),
+          finalReleaseUnlocked: s.unlocked,
+          schedule: null,
+          proposal: { id: 'demo-prop', signed: true },
+          reviews: state === 'revisions' || state === 'delivered'
+            ? [{ token: 'demo-sample-project', label: 'CareConnect launch film' }] : [],
+          storyboards: state === 'production'
+            ? [{ token: 'demo-sample-storyboard', label: 'CareConnect storyboard' }] : [],
+          files: s.hasProject && state !== 'signed' ? [
+            { id: 'demo-f1', filename: 'Northwind-brand-guidelines.pdf', mimeType: 'application/pdf', sizeBytes: 2_400_000, createdAt: ago(60 * 24 * 12) },
+            { id: 'demo-f2', filename: 'northwind-logo-pack.zip', mimeType: 'application/zip', sizeBytes: 880_000, createdAt: ago(60 * 24 * 12) },
+          ] : [],
+          extras: state === 'delivered'
+            ? [{ id: 'demo-x1', description: 'Mobile-friendly 9:16 portrait version', amount: 360, status: 'paid', createdAt: ago(60 * 24 * 4) }]
+            : [],
+          extrasAvailable: s.extras,
+          extrasWindowOpen: s.hasProject && state !== 'delivered',
+        },
+      };
+
+    case 'notifications':
+      return {
+        notifications: s.hasProject ? [
+          { id: 'demo-n1', key: 'brief.changed', title: 'Priya Shah updated CareConnect launch film', body: '3 changes — open the brief to see what moved.', link: '#/brief/demo-brief', createdAt: ago(9), readAt: null },
+          { id: 'demo-n2', key: 'project.stage', title: 'Your storyboard is ready', body: 'CareConnect launch film', link: `#/project/${DEAL_ID}`, createdAt: ago(60 * 20), readAt: ago(60 * 19) },
+        ] : [],
+        unreadCount: s.hasProject ? 1 : 0,
+        tasks: s.tasks.filter((t) => t.status !== 'done').map((t) => ({
+          key: `${DEAL_ID}:${t.key}`, title: t.title, detail: t.detail || null,
+          dealId: DEAL_ID, dealTitle: 'CareConnect launch film',
+        })),
+      };
+
+    // ── the brief, which is the thing most worth demoing ──────────────────
+    case 'brief': {
+      const brief = briefSummary(s);
+      if (query.get('id')) {
+        return {
+          brief: { ...brief, answers: BRIEF_ANSWERS },
+          activity: BRIEF_ACTIVITY,
+          presence: brief.locked ? [] : BRIEF_PRESENCE,
+          readOnly: false,
+          canReopen: false,
+        };
+      }
+      return {
+        briefs: [brief],
+        activeId: brief.id,
+        projects: s.hasProject
+          ? [{ id: DEAL_ID, title: 'CareConnect launch film', reference: '2607-014', signed: true }]
+          : [],
+        readOnly: false,
+      };
+    }
+
+    case 'brief-tick':
+      return {
+        presence: s.briefLocked ? [] : BRIEF_PRESENCE,
+        events: [],
+        answers: BRIEF_ANSWERS,
+        updatedAt: ago(9),
+        locked: s.briefLocked,
+      };
+
+    case 'library':
+      return {
+        items: s.libraryCount ? [
+          { id: 'demo-l1', title: 'CareConnect launch film', kind: 'delivered', createdAt: ago(60 * 24 * 2), thumbnailUrl: null, downloadUrl: null },
+          { id: 'demo-l2', title: 'CareConnect launch film — 9:16', kind: 'delivered', createdAt: ago(60 * 24 * 2), thumbnailUrl: null, downloadUrl: null },
+          { id: 'demo-l3', title: 'Northwind recruitment film (2025)', kind: 'past', createdAt: ago(60 * 24 * 400), thumbnailUrl: null, downloadUrl: null },
+        ] : [],
+      };
+
+    case 'files':
+      return {
+        files: state === 'signed' || !s.hasProject ? [] : [
+          { id: 'demo-f1', filename: 'Northwind-brand-guidelines.pdf', category: 'brand', mimeType: 'application/pdf', sizeBytes: 2_400_000, createdAt: ago(60 * 24 * 12) },
+          { id: 'demo-f2', filename: 'northwind-logo-pack.zip', category: 'brand', mimeType: 'application/zip', sizeBytes: 880_000, createdAt: ago(60 * 24 * 12) },
+        ],
+      };
+
+    case 'extras':
+      return {
+        dealId: DEAL_ID,
+        dealTitle: 'CareConnect launch film',
+        windowOpen: s.hasProject && state !== 'delivered',
+        discount: 0.1,
+        offers: s.extras ? [
+          { key: 'prop:vo', kind: 'proposal', title: 'Professional human voiceover artist', description: null, originalAmount: 125, amount: 112.5, hasQuantity: false, alreadyPurchased: false },
+          { key: 'prop:short', kind: 'proposal', title: 'Short edit — cut from main content', description: null, originalAmount: 300, amount: 270, hasQuantity: false, alreadyPurchased: false },
+          { key: 'prop:subs', kind: 'proposal', title: 'Hard-coded English subtitled version', description: null, originalAmount: 125, amount: 112.5, hasQuantity: false, alreadyPurchased: false },
+          { key: 'prop:portrait', kind: 'proposal', title: 'Mobile-friendly 9:16 portrait version', description: null, originalAmount: 400, amount: 360, hasQuantity: false, alreadyPurchased: false },
+        ].slice(0, s.extras) : [],
+        accepted: state === 'delivered'
+          ? [{ id: 'demo-x1', description: 'Mobile-friendly 9:16 portrait version', amount: 360, status: 'paid' }]
+          : [],
+      };
+
+    case 'team':
+      return {
+        members: [
+          { id: ME.id, name: ME.name, email: ME.email, jobTitle: ME.jobTitle, lastLoginAt: ago(3), disabledAt: null },
+          { id: PRIYA.id, name: PRIYA.name, email: PRIYA.email, jobTitle: 'Operations Director', lastLoginAt: ago(40), disabledAt: null },
+          { id: TOM.id, name: TOM.name, email: TOM.email, jobTitle: 'Finance', lastLoginAt: ago(60 * 30), disabledAt: null },
+        ],
+        invites: [],
+      };
+
+    case 'video-credit':
+      return {
+        balance: { issued: 0, used: 0, remaining: 0 },
+        pricing: { ratePerMin: 950, tiers: [] },
+        orders: [],
+      };
+
+    // Writes and telemetry: accepted and dropped. A demo that errors when you
+    // click something is a demo of an error.
+    case 'track':
+    case 'course-progress':
+    case 'demo-event':
+      return { ok: true };
+
+    default:
+      return {};
+  }
+}
+
+// Called by src/portal/api.js in place of fetch. Async so it matches the real
+// client's contract exactly — a page that awaits is a page that awaits.
+export async function demoRequest(method, path, body) {
+  const state = getDemoState() || DEFAULT_DEMO_STATE;
+  const qi = path.indexOf('?');
+  const action = qi === -1 ? path : path.slice(0, qi);
+  const query = new URLSearchParams(qi === -1 ? '' : path.slice(qi + 1));
+  // A beat of latency, so loading states are visible rather than skipped —
+  // staff reviewing the portal should see what a client sees, spinners included.
+  await new Promise((r) => setTimeout(r, 120));
+  return respond(state, method, action, query, body);
+}
