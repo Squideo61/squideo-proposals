@@ -66,16 +66,18 @@ function stub({ briefs = [] } = {}) {
   return { inserted, queries };
 }
 
-async function callBrief({ method = 'GET', manage = false, body = undefined }) {
+async function callBrief({ method = 'GET', manage = false, body = undefined, action = 'brief' }) {
   const token = await signPortalPreviewToken({
     companyId: COMPANY.id, staffEmail: 'adam@squideo.co.uk', manage,
   });
   const res = fakeRes();
   await handler({
     method,
-    query: { action: 'brief' },
+    query: { action },
     headers: { 'x-portal-preview': token, 'content-type': 'application/json' },
-    body,
+    // readRawBody takes a Buffer straight through; anything else it tries to
+    // consume as a stream, which a plain object isn't.
+    body: body === undefined ? undefined : Buffer.from(JSON.stringify(body)),
   }, res);
   return res;
 }
@@ -131,5 +133,60 @@ describe('brief builder — staff preview', () => {
     stub({ briefs: [BRIEF] });
     const res = await callBrief({ manage: true });
     expect(res.body.readOnly).toBe(true);
+  });
+});
+
+// Deleting a brief is the one destructive thing staff CAN do to it, and it
+// exists because briefs stopped being per-person: orgs are left holding empty
+// drafts nobody will finish. The answers, the change history and the record of
+// who wrote them all go together, and nothing else keeps a copy.
+describe('brief delete — manage mode only', () => {
+  const EMPTY = { ...BRIEF, id: 'brief-empty', title: null, answers: {} };
+  const deletes = (queries) => queries.filter((q) => q.includes('DELETE FROM client_briefs'));
+
+  it('refuses a read-only preview', async () => {
+    const { queries } = stub({ briefs: [EMPTY] });
+    const res = await callBrief({ method: 'POST', action: 'brief-delete', body: { id: EMPTY.id } });
+    expect(res.statusCode).toBe(403);
+    expect(deletes(queries)).toHaveLength(0);
+  });
+
+  it('deletes an empty draft in manage mode', async () => {
+    const { queries } = stub({ briefs: [EMPTY] });
+    const res = await callBrief({ method: 'POST', action: 'brief-delete', manage: true, body: { id: EMPTY.id } });
+    expect(res.statusCode).toBe(200);
+    const d = deletes(queries);
+    expect(d).toHaveLength(1);
+    // Scoped by company as well as id: a preview token is scoped to one
+    // organisation, and an id alone would let a guessed one reach past it.
+    expect(d[0]).toContain('company_id');
+  });
+
+  it('refuses a brief with answers in it unless told twice', async () => {
+    const { queries } = stub({ briefs: [BRIEF] });
+    const res = await callBrief({ method: 'POST', action: 'brief-delete', manage: true, body: { id: BRIEF.id } });
+    expect(res.statusCode).toBe(409);
+    expect(res.body.needsForce).toBe(true);
+    expect(res.body.answered).toBeGreaterThan(0);
+    expect(deletes(queries)).toHaveLength(0);
+  });
+
+  it('goes through on an explicit force', async () => {
+    const { queries } = stub({ briefs: [BRIEF] });
+    const res = await callBrief({
+      method: 'POST', action: 'brief-delete', manage: true,
+      body: { id: BRIEF.id, force: true },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(deletes(queries)).toHaveLength(1);
+  });
+
+  it('404s for a brief that is not this organisation’s', async () => {
+    const { queries } = stub({ briefs: [] });
+    const res = await callBrief({
+      method: 'POST', action: 'brief-delete', manage: true, body: { id: 'someone-elses' },
+    });
+    expect(res.statusCode).toBe(404);
+    expect(deletes(queries)).toHaveLength(0);
   });
 });

@@ -412,67 +412,103 @@ function ActivityFeed({ events, open, onToggle }) {
 // What you land on when the organisation already has briefs. One per project
 // plus one loose "new enquiry", which is the shape a client actually needs:
 // they brief the job they've signed, and they brief the next one.
-function BriefList({ data, onOpen, onCreate, busy }) {
+function BriefList({ data, onOpen, onCreate, onDelete, busy, manageMode }) {
   const [picking, setPicking] = useState(false);
   const briefs = data.briefs || [];
   const projects = data.projects || [];
   const usedDeals = new Set(briefs.filter((b) => !b.locked && b.dealId).map((b) => b.dealId));
   const hasLoose = briefs.some((b) => !b.locked && !b.dealId);
+  // Staff are looking, not filling one in. Starting a brief on the client's
+  // behalf is refused by the server (it would put our words under their name),
+  // so don't offer it.
+  const canCreate = !data.readOnly;
 
   return (
     <div style={{ maxWidth: 720, margin: '0 auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
         <FileText size={20} style={{ color: BRAND.blue }} />
-        <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: BRAND.ink }}>Video briefs</h1>
+        <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: BRAND.ink }}>
+          {data.readOnly ? 'Their video briefs' : 'Video briefs'}
+        </h1>
       </div>
       <p style={{ margin: '0 0 18px', fontSize: 14, lineHeight: 1.6, color: '#6B7785' }}>
-        Everyone on your team can work on these together — answers save as you type,
-        and you'll see who changed what.
+        {data.readOnly
+          ? 'Everything this organisation has briefed. Open one to read it and see who wrote what.'
+          : 'Everyone on your team can work on these together — answers save as you type, and you\'ll see who changed what.'}
       </p>
 
       {briefs.map((b) => (
-        <button
-          key={b.id} type="button" onClick={() => onOpen(b.id)}
+        // A row, not a button: the delete control has to be a sibling of the
+        // open control rather than nested inside it.
+        <div
+          key={b.id}
           style={{
-            display: 'flex', alignItems: 'center', gap: 12, width: '100%', textAlign: 'left',
-            padding: '13px 15px', marginBottom: 8, background: '#fff', cursor: 'pointer',
-            border: '1px solid #E8EEF3', borderRadius: 10, fontFamily: 'inherit',
+            display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8,
+            background: '#fff', border: '1px solid #E8EEF3', borderRadius: 10,
+            padding: '0 8px 0 0',
           }}
         >
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 14.5, fontWeight: 600, color: BRAND.ink }}>
-                {b.title || 'Untitled brief'}
-              </span>
-              {b.locked && (
-                <span style={{
-                  display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px',
-                  borderRadius: 999, background: '#F0FDF4', border: '1px solid #BBF7D0',
-                  fontSize: 10.5, fontWeight: 700, color: '#15803D', textTransform: 'uppercase',
-                }}><Lock size={10} /> Final</span>
-              )}
+          <button
+            type="button" onClick={() => onOpen(b.id)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0,
+              textAlign: 'left', padding: '13px 6px 13px 15px', background: 'none',
+              border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 14.5, fontWeight: 600, color: BRAND.ink }}>
+                  {b.title || 'Untitled brief'}
+                </span>
+                {b.locked && (
+                  <span style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px',
+                    borderRadius: 999, background: '#F0FDF4', border: '1px solid #BBF7D0',
+                    fontSize: 10.5, fontWeight: 700, color: '#15803D', textTransform: 'uppercase',
+                  }}><Lock size={10} /> Final</span>
+                )}
+              </div>
+              <div style={{ fontSize: 12.5, color: '#6B7785', marginTop: 3 }}>
+                {b.dealTitle
+                  ? <><Briefcase size={11} style={{ verticalAlign: -1 }} /> {b.dealTitle}</>
+                  : 'New enquiry'}
+                {' · '}
+                {b.locked
+                  ? `sent ${relTime(b.submittedAt)}`
+                  : `${b.done} of ${b.total} answered`}
+                {b.contributors > 1 && <> · <Users size={11} style={{ verticalAlign: -1 }} /> {b.contributors} people</>}
+              </div>
             </div>
-            <div style={{ fontSize: 12.5, color: '#6B7785', marginTop: 3 }}>
-              {b.dealTitle
-                ? <><Briefcase size={11} style={{ verticalAlign: -1 }} /> {b.dealTitle}</>
-                : 'New enquiry'}
-              {' · '}
-              {b.locked
-                ? `sent ${relTime(b.submittedAt)}`
-                : `${b.done} of ${b.total} answered`}
-              {b.contributors > 1 && <> · <Users size={11} style={{ verticalAlign: -1 }} /> {b.contributors} people</>}
-            </div>
-          </div>
-          {!b.locked && (
-            <div style={{ width: 46, height: 5, background: '#E8EEF3', borderRadius: 999, overflow: 'hidden', flexShrink: 0 }}>
-              <div style={{ width: `${b.pct}%`, height: '100%', background: BRAND.blue }} />
-            </div>
+            {!b.locked && (
+              <div style={{ width: 46, height: 5, background: '#E8EEF3', borderRadius: 999, overflow: 'hidden', flexShrink: 0 }}>
+                <div style={{ width: `${b.pct}%`, height: '100%', background: BRAND.blue }} />
+              </div>
+            )}
+            <ArrowRight size={15} style={{ color: '#9AA5B1', flexShrink: 0 }} />
+          </button>
+
+          {/* Staff-only. Chiefly for the empty drafts left behind when briefs
+              stopped being per-person — the client shouldn't have to look at
+              our mess, and they can't be trusted to tell which of their own
+              briefs is the abandoned one. */}
+          {manageMode && (
+            <button
+              type="button" disabled={busy} onClick={() => onDelete(b)}
+              title="Delete this brief (staff only)"
+              aria-label={`Delete ${b.title || 'untitled brief'}`}
+              style={{
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                width: 32, height: 32, flexShrink: 0, borderRadius: 8,
+                background: 'none', border: '1px solid transparent', cursor: 'pointer',
+                color: '#C2410C',
+              }}
+            ><Trash2 size={15} /></button>
           )}
-          <ArrowRight size={15} style={{ color: '#9AA5B1', flexShrink: 0 }} />
-        </button>
+        </div>
       ))}
 
-      {!picking ? (
+      {!canCreate ? null : !picking ? (
         <button
           type="button" onClick={() => setPicking(true)} disabled={busy}
           style={{
@@ -543,6 +579,7 @@ function BriefList({ data, onOpen, onCreate, busy }) {
 
 // ── page ─────────────────────────────────────────────────────────────────────
 export default function Brief({ briefId: routeId = null }) {
+  const { manageMode, showToast } = usePortal();
   const [index, setIndex] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -562,20 +599,55 @@ export default function Brief({ briefId: routeId = null }) {
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   };
 
+  // Two-step on purpose. An empty draft is a click to clear; one with answers
+  // in it takes a second, differently-worded confirmation that says how much is
+  // about to go, because nothing else in the system holds a copy of it.
+  const remove = async (brief) => {
+    const name = brief.title || 'this untitled brief';
+    if (!window.confirm(`Delete ${name}? This can't be undone.`)) return;
+    setBusy(true);
+    try {
+      await portalApi.post('brief-delete', { id: brief.id });
+      showToast('Brief deleted');
+      await loadIndex();
+      if (routeId === brief.id) navigate('#/brief');
+    } catch (err) {
+      if (err.status === 409) {
+        const ok = window.confirm(
+          `${name} has ${brief.done} of ${brief.total} questions answered.\n\n`
+          + 'Deleting it destroys those answers and the record of who wrote them. '
+          + 'Nothing else keeps a copy.\n\nDelete it anyway?'
+        );
+        if (!ok) { setBusy(false); return; }
+        try {
+          await portalApi.post('brief-delete', { id: brief.id, force: true });
+          showToast('Brief deleted');
+          await loadIndex();
+          if (routeId === brief.id) navigate('#/brief');
+        } catch (e2) { showToast(e2.message); }
+      } else {
+        showToast(err.message);
+      }
+    } finally { setBusy(false); }
+  };
+
   if (error) return <EmptyState title="Couldn't open your brief" body={error} />;
   if (!index) return <div style={{ padding: 32, color: '#6B7785' }}>Loading…</div>;
 
-  // A brief named in the URL opens straight into it. So does the only one they
-  // have — the lead-magnet email points at #/brief, and landing a first-time
-  // visitor on a one-item list instead of the questions loses them.
-  const openId = routeId || (index.briefs?.length === 1 ? index.activeId : null);
+  // A brief named in the URL opens straight into it. So does the only one a
+  // CLIENT has — the lead-magnet email points at #/brief, and landing a
+  // first-time visitor on a one-item list instead of the questions loses them.
+  // Staff always get the list first: it's where the delete lives, and skipping
+  // it would hide the only way to clear an abandoned draft.
+  const autoOpen = !index.readOnly && index.briefs?.length === 1;
+  const openId = routeId || (autoOpen ? index.activeId : null);
   if (openId) {
     return (
       <BriefEditor
         key={openId}
         briefId={openId}
         projects={index.projects || []}
-        showBack={(index.briefs || []).length > 1}
+        showBack={!!routeId || (index.briefs || []).length > 1}
         onChanged={loadIndex}
       />
     );
@@ -589,7 +661,16 @@ export default function Brief({ briefId: routeId = null }) {
       />
     );
   }
-  return <BriefList data={index} busy={busy} onOpen={(id) => navigate(`#/brief/${id}`)} onCreate={create} />;
+  return (
+    <BriefList
+      data={index}
+      busy={busy}
+      manageMode={manageMode}
+      onOpen={(id) => navigate(`#/brief/${id}`)}
+      onCreate={create}
+      onDelete={remove}
+    />
+  );
 }
 
 function BriefEditor({ briefId, projects, showBack, onChanged }) {

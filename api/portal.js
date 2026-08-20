@@ -610,6 +610,7 @@ export default async function handler(req, res) {
       case 'brief-attach': return briefAttachRoute(req, res, user);
       case 'brief-tick': return briefTickRoute(req, res, user);
       case 'brief-reopen': return briefReopenRoute(req, res, user);
+      case 'brief-delete': return briefDeleteRoute(req, res, user);
       case 'demo-project': return demoProjectRoute(req, res, user);
       case 'demo-event': return demoEventRoute(req, res, user);
       case 'overview': return overviewRoute(req, res, user);
@@ -3694,6 +3695,47 @@ async function briefReopenRoute(req, res, user) {
     dealId: row.deal_id || null,
   }).catch(() => {});
   return res.status(200).json({ ok: true });
+}
+
+// Staff-only delete, from manage mode.
+//
+// This exists because of the day briefs stopped being per-person: an
+// organisation whose people each opened the builder has a trail of empty
+// drafts nobody will ever finish, and the client should not have to look at
+// their own mess to tidy it. It is staff-only for the same reason the brief
+// is otherwise untouchable by staff — a client's account of what they want is
+// theirs — but tidying up after our own schema change is our job.
+//
+// A brief with real answers in it is refused unless the caller says so
+// explicitly (` force `). Deleting one is genuinely destructive: the answers,
+// every recorded change and the record of who made them all go with it, and
+// nothing else in the system holds a second copy. The events and presence
+// rows cascade (ON DELETE CASCADE); a raised quote request does NOT, because
+// it is a real lead that really happened.
+async function briefDeleteRoute(req, res, user) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  await ensureClientBriefs();
+  const companyId = resolveCompanyId(req, res, user);
+  if (!companyId) return;
+  if (!(user.isPreview && user.canManage)) {
+    return res.status(403).json({ error: 'Only Squideo can delete a brief, from manage mode.' });
+  }
+
+  const body = await readJsonBody(req);
+  const row = await loadBriefRow(trimOrNull(body.id), companyId);
+  if (!row) return res.status(404).json({ error: 'Brief not found' });
+
+  const answered = briefProgress(row.answers || {}).done;
+  if (answered > 0 && body.force !== true) {
+    return res.status(409).json({
+      error: 'This brief has answers in it — deleting it destroys them and the record of who wrote them.',
+      answered,
+      needsForce: true,
+    });
+  }
+
+  await sql`DELETE FROM client_briefs WHERE id = ${row.id} AND company_id = ${companyId}`;
+  return res.status(200).json({ ok: true, answered });
 }
 
 // ═════════════════════════ video credit ═════════════════════════
