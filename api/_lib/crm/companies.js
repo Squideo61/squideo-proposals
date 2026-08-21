@@ -858,7 +858,7 @@ async function computeCompanyBalance(companyId) {
     const [[stripeRow], [partnerRow], [manualPayRow]] = await Promise.all([
       sql`SELECT COALESCE(SUM(amount), 0) AS s FROM payments WHERE proposal_id = ANY(${propIds})`,
       sql`SELECT COALESCE(SUM(amount), 0) AS s FROM partner_invoices WHERE proposal_id = ANY(${propIds})`,
-      sql`SELECT COALESCE(SUM(amount), 0) AS s FROM manual_payments WHERE proposal_id = ANY(${propIds}) AND manual_invoice_id IS NULL`,
+      sql`SELECT COALESCE(SUM(amount), 0) AS s FROM manual_payments_counted WHERE proposal_id = ANY(${propIds}) AND manual_invoice_id IS NULL`,
     ]);
     paid += Number(stripeRow.s) + Number(partnerRow.s) + Number(manualPayRow.s);
   }
@@ -961,7 +961,7 @@ async function computeCompanyLifetime(companyId) {
   const [stripeR, partnerR, manualR, invR, pbR] = await Promise.all([
     sql`SELECT amount, paid_at FROM payments WHERE proposal_id = ANY(${noneP})`,
     sql`SELECT amount, paid_at FROM partner_invoices WHERE proposal_id = ANY(${noneP})`,
-    sql`SELECT amount, paid_at FROM manual_payments WHERE proposal_id = ANY(${noneP}) AND manual_invoice_id IS NULL`,
+    sql`SELECT amount, paid_at FROM manual_payments_counted WHERE proposal_id = ANY(${noneP}) AND manual_invoice_id IS NULL`,
     sql`SELECT amount, paid_at FROM manual_invoices
          WHERE status='paid' AND (company_id=${companyId} OR deal_id = ANY(${noneD}) OR proposal_id = ANY(${noneP}))`,
     sql`SELECT pb.paid_amount AS amount, pb.paid_at FROM proposal_billing pb
@@ -1010,7 +1010,7 @@ export async function computeCompanyDealBalances(companyId) {
           FROM partner_invoices pi JOIN proposals p ON p.id=pi.proposal_id JOIN deals d ON d.id=p.deal_id
          WHERE d.company_id=${companyId} GROUP BY d.id`,
     sql`SELECT d.id AS did, COALESCE(SUM(mp.amount),0) AS v
-          FROM manual_payments mp JOIN proposals p ON p.id=mp.proposal_id JOIN deals d ON d.id=p.deal_id
+          FROM manual_payments_counted mp JOIN proposals p ON p.id=mp.proposal_id JOIN deals d ON d.id=p.deal_id
          WHERE mp.manual_invoice_id IS NULL AND d.company_id=${companyId} GROUP BY d.id`,
     sql`SELECT COALESCE(mi.deal_id, dp.id) AS did, COALESCE(SUM(mi.amount),0) AS v
           FROM manual_invoices mi
@@ -1086,7 +1086,7 @@ export async function allCompanyBalances() {
           FROM partner_invoices pi JOIN proposals p ON p.id = pi.proposal_id JOIN deals d ON d.id = p.deal_id
          WHERE d.company_id IS NOT NULL GROUP BY d.company_id`,
     sql`SELECT d.company_id AS cid, COALESCE(SUM(mp.amount), 0) AS v
-          FROM manual_payments mp JOIN proposals p ON p.id = mp.proposal_id JOIN deals d ON d.id = p.deal_id
+          FROM manual_payments_counted mp JOIN proposals p ON p.id = mp.proposal_id JOIN deals d ON d.id = p.deal_id
          WHERE mp.manual_invoice_id IS NULL AND d.company_id IS NOT NULL GROUP BY d.company_id`,
     // Paid invoices that count toward signed work — attributed to a deal/proposal
     // (company-level ad-hoc invoices are handled as "extra" below, not here).

@@ -587,7 +587,7 @@ export async function fetchPaidRows(sinceISO, untilISO) {
          WHERE pi.paid_at >= ${sinceISO} AND pi.paid_at < ${untilISO}`,
     sql`SELECT mp.amount AS inc, mp.paid_at, pr.data->>'vatRate' AS rate, pr.id AS proposal_id,
                d.owner_email, d.id AS deal_id, d.company_id
-          FROM manual_payments mp JOIN proposals pr ON pr.id = mp.proposal_id
+          FROM manual_payments_counted mp JOIN proposals pr ON pr.id = mp.proposal_id
           LEFT JOIN deals d ON d.id = pr.deal_id
          WHERE mp.manual_invoice_id IS NULL
            AND mp.paid_at >= ${sinceISO} AND mp.paid_at < ${untilISO}`,
@@ -841,7 +841,7 @@ async function companiesWithIncomeBefore(sinceISO) {
     const results = await Promise.all([
       sql`SELECT DISTINCT d.company_id FROM payments pay JOIN proposals pr ON pr.id = pay.proposal_id JOIN deals d ON d.id = pr.deal_id WHERE pay.paid_at < ${sinceISO}`,
       sql`SELECT DISTINCT d.company_id FROM partner_invoices pi JOIN proposals pr ON pr.id = pi.proposal_id JOIN deals d ON d.id = pr.deal_id WHERE pi.paid_at < ${sinceISO}`,
-      sql`SELECT DISTINCT d.company_id FROM manual_payments mp JOIN proposals pr ON pr.id = mp.proposal_id JOIN deals d ON d.id = pr.deal_id WHERE mp.manual_invoice_id IS NULL AND mp.paid_at < ${sinceISO}`,
+      sql`SELECT DISTINCT d.company_id FROM manual_payments_counted mp JOIN proposals pr ON pr.id = mp.proposal_id JOIN deals d ON d.id = pr.deal_id WHERE mp.manual_invoice_id IS NULL AND mp.paid_at < ${sinceISO}`,
       sql`SELECT DISTINCT COALESCE(mi.company_id, d.company_id) AS company_id FROM manual_invoices mi LEFT JOIN proposals pr ON pr.id = mi.proposal_id LEFT JOIN deals d ON d.id = COALESCE(mi.deal_id, pr.deal_id) WHERE mi.status = 'paid' AND mi.paid_at < ${sinceISO}`,
       sql`SELECT DISTINCT d.company_id FROM proposal_billing pb JOIN proposals pr ON pr.id = pb.proposal_id JOIN deals d ON d.id = pr.deal_id WHERE pb.paid_amount IS NOT NULL AND pb.paid_at < ${sinceISO}`,
     ]);
@@ -1394,7 +1394,7 @@ async function pendingPaymentsReport() {
     sql`SELECT d.id AS did, COALESCE(SUM(pi.amount),0) AS v
           FROM partner_invoices pi JOIN proposals p ON p.id=pi.proposal_id JOIN deals d ON d.id=p.deal_id GROUP BY d.id`,
     sql`SELECT d.id AS did, COALESCE(SUM(mp.amount),0) AS v
-          FROM manual_payments mp JOIN proposals p ON p.id=mp.proposal_id JOIN deals d ON d.id=p.deal_id
+          FROM manual_payments_counted mp JOIN proposals p ON p.id=mp.proposal_id JOIN deals d ON d.id=p.deal_id
          WHERE mp.manual_invoice_id IS NULL GROUP BY d.id`,
     sql`SELECT COALESCE(mi.deal_id, dp.id) AS did, COALESCE(SUM(mi.amount),0) AS v
           FROM manual_invoices mi
@@ -2081,7 +2081,7 @@ async function incomeReport(action) {
          WHERE pi.paid_at >= ${since} AND pi.paid_at < ${until}`,
     sql`SELECT mp.amount AS inc, mp.paid_at, pr.data->>'vatRate' AS rate, mp.id AS edit_key, mp.payment_method AS method, pr.id AS proposal_id,
                d.id AS deal_id, c.name AS company, pr.number_year AS ny, pr.number_seq AS ns
-          FROM manual_payments mp
+          FROM manual_payments_counted mp
           JOIN proposals pr ON pr.id = mp.proposal_id
           LEFT JOIN deals d ON d.id = pr.deal_id
           LEFT JOIN companies c ON c.id = d.company_id

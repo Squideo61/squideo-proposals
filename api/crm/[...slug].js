@@ -2,6 +2,7 @@
 // in api/_lib/crm/<resource>.js. Kept as a single Vercel function so the
 // project stays well under the 12-function cap.
 import { cors, requireAuth, timingSafeEqualStr } from '../_lib/middleware.js';
+import { ensureManualPaymentLink } from '../_lib/crm/manualPaymentLink.js';
 import { companiesRoute } from '../_lib/crm/companies.js';
 import { contactsRoute } from '../_lib/crm/contacts.js';
 import { dealsRoute } from '../_lib/crm/deals.js';
@@ -100,6 +101,13 @@ export default async function handler(req, res) {
 
   const user = await requireAuth(req, res);
   if (!user) return;
+
+  // manual_payments_counted — the one definition of which hand-recorded
+  // payments count towards a deal. Ensured HERE rather than in each of the
+  // dozen modules that read it: every CRM route comes through this handler,
+  // so one call covers the deal page, the pipeline, company balances,
+  // Finance and commission, and none of them can be the one that forgot.
+  await ensureManualPaymentLink();
 
   // The staff activity log itself — who did what, with before → after on the
   // records we track. Gated tightly: it spans everyone's work.

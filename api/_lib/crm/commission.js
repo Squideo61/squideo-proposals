@@ -211,7 +211,7 @@ async function loadRecognitionEvents() {
             SELECT p.deal_id, x.paid_at
               FROM (
                 SELECT proposal_id, paid_at FROM payments WHERE paid_at IS NOT NULL
-                UNION ALL SELECT proposal_id, paid_at FROM manual_payments WHERE manual_invoice_id IS NULL AND paid_at IS NOT NULL
+                UNION ALL SELECT proposal_id, paid_at FROM manual_payments_counted WHERE manual_invoice_id IS NULL AND paid_at IS NOT NULL
                 UNION ALL SELECT proposal_id, paid_at FROM proposal_billing WHERE paid_at IS NOT NULL
                 UNION ALL SELECT proposal_id, paid_at FROM partner_invoices WHERE paid_at IS NOT NULL
               ) x

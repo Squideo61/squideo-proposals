@@ -332,7 +332,7 @@ export async function annotateDeals(rows) {
          WHERE p.deal_id = ANY(${ids}) GROUP BY p.deal_id
         UNION ALL
         SELECT p.deal_id AS did, COALESCE(SUM(mp.amount),0) AS v
-          FROM manual_payments mp JOIN proposals p ON p.id=mp.proposal_id
+          FROM manual_payments_counted mp JOIN proposals p ON p.id=mp.proposal_id
          WHERE mp.manual_invoice_id IS NULL AND p.deal_id = ANY(${ids}) GROUP BY p.deal_id
         UNION ALL
         SELECT COALESCE(mi.deal_id, pr.deal_id) AS did, COALESCE(SUM(mi.amount),0) AS v

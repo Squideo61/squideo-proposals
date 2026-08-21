@@ -346,7 +346,7 @@ export default async function handler(req, res) {
             SELECT (
                 (SELECT COALESCE(SUM(amount),0) FROM payments WHERE proposal_id = ${id} AND paid_at IS NOT NULL)
               + COALESCE((SELECT paid_amount FROM proposal_billing WHERE proposal_id = ${id}), 0)
-              + (SELECT COALESCE(SUM(amount),0) FROM manual_payments WHERE proposal_id = ${id} AND manual_invoice_id IS NULL)
+              + (SELECT COALESCE(SUM(amount),0) FROM manual_payments_counted WHERE proposal_id = ${id} AND manual_invoice_id IS NULL)
               + (SELECT COALESCE(SUM(amount),0) FROM manual_invoices WHERE proposal_id = ${id} AND status = 'paid')
               + (SELECT COALESCE(SUM(amount),0) FROM partner_invoices WHERE proposal_id = ${id})
             ) AS paid_total
@@ -488,7 +488,7 @@ async function list(req, res) {
            -- on the card even when there is no Stripe payments row.
            ( (SELECT COALESCE(SUM(amount),0) FROM payments WHERE proposal_id = p.id AND paid_at IS NOT NULL)
            + COALESCE(pb.paid_amount, 0)
-           + (SELECT COALESCE(SUM(amount),0) FROM manual_payments WHERE proposal_id = p.id AND manual_invoice_id IS NULL)
+           + (SELECT COALESCE(SUM(amount),0) FROM manual_payments_counted WHERE proposal_id = p.id AND manual_invoice_id IS NULL)
            + (SELECT COALESCE(SUM(amount),0) FROM manual_invoices WHERE proposal_id = p.id AND status = 'paid')
            + (SELECT COALESCE(SUM(amount),0) FROM partner_invoices WHERE proposal_id = p.id)
            ) AS paid_total

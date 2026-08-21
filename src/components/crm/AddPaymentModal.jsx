@@ -25,6 +25,10 @@ export function AddPaymentModal({ dealId, proposals = [], onClose, onCreated }) 
   const [paidAt, setPaidAt] = useState(new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState('');
   const [manualInvoiceId, setManualInvoiceId] = useState('');
+  // A payment can settle either kind of invoice, so the picker holds a
+  // "kind:id" key and the two ids are split back out on submit.
+  const [xeroInvoiceId, setXeroInvoiceId] = useState('');
+  const [xeroInvoices, setXeroInvoices] = useState([]);
   const [uploadingInvoice, setUploadingInvoice] = useState(false);
   const [saving, setSaving] = useState(false);
   // What the deal committed to vs what's already recorded, plus the invoices a
@@ -39,6 +43,19 @@ export function AddPaymentModal({ dealId, proposals = [], onClose, onCreated }) 
   }, [dealId]);
   useEffect(() => { loadBalance(); }, [loadBalance]);
 
+  // The Xero invoices raised off this proposal that nothing has been paid
+  // against yet. These are the ones a BACS payment usually settles — the
+  // client was sent an invoice and paid it — and naming it here is what stops
+  // the money being counted again when Xero reconciles days later.
+  useEffect(() => {
+    if (!proposalId) { setXeroInvoices([]); return; }
+    let live = true;
+    api.get(`/api/crm/payments/outstanding-invoices?proposalId=${encodeURIComponent(proposalId)}`)
+      .then((r) => { if (live) setXeroInvoices(Array.isArray(r) ? r : []); })
+      .catch(() => { if (live) setXeroInvoices([]); });
+    return () => { live = false; };
+  }, [proposalId]);
+
   const invoices = balance?.invoices || [];
   const amt = Number(amount);
   const remaining = balance?.known ? balance.remaining : null;
@@ -48,9 +65,16 @@ export function AddPaymentModal({ dealId, proposals = [], onClose, onCreated }) 
 
   // Attaching the payment to an invoice is what stops the same money being
   // counted twice (once here, once when that invoice is marked paid).
-  const pickInvoice = (invId) => {
-    setManualInvoiceId(invId);
-    const inv = invoices.find((i) => i.id === invId);
+  // "manual:<id>" / "xero:<id>" / "" — one control, two destinations.
+  const settles = manualInvoiceId ? `manual:${manualInvoiceId}` : xeroInvoiceId ? `xero:${xeroInvoiceId}` : '';
+  const pickInvoice = (key) => {
+    const [kind, ...rest] = String(key || '').split(':');
+    const invId = rest.join(':');
+    setManualInvoiceId(kind === 'manual' ? invId : '');
+    setXeroInvoiceId(kind === 'xero' ? invId : '');
+    const inv = kind === 'manual'
+      ? invoices.find((i) => i.id === invId)
+      : xeroInvoices.find((i) => i.xeroInvoiceId === invId);
     if (inv?.amount != null && !amount) setAmount(String(inv.amount));
   };
 
@@ -67,6 +91,7 @@ export function AddPaymentModal({ dealId, proposals = [], onClose, onCreated }) 
         paidAt: new Date(paidAt).toISOString(),
         notes: notes.trim() || null,
         manualInvoiceId: manualInvoiceId || null,
+        xeroInvoiceId: xeroInvoiceId || null,
         ...(confirmOverpay ? { confirmOverpay: true } : {}),
       });
       showMsg?.('Payment recorded', 'success');
@@ -140,14 +165,21 @@ export function AddPaymentModal({ dealId, proposals = [], onClose, onCreated }) 
         <Field label="Settles which invoice? (recommended)">
           <div style={{ display: 'flex', gap: 8 }}>
             <select
-              value={manualInvoiceId}
+              value={settles}
               onChange={(e) => pickInvoice(e.target.value)}
               className="input"
               style={{ flex: 1 }}
             >
               <option value="">— Not against an invoice —</option>
+              {xeroInvoices.map((inv) => (
+                <option key={inv.xeroInvoiceId} value={`xero:${inv.xeroInvoiceId}`}>
+                  {(inv.invoiceNumber || inv.xeroInvoiceId.slice(0, 12))}
+                  {inv.amount != null ? ` · ${formatGBP(inv.amount)}` : ''}
+                  {' · Xero, awaiting payment'}
+                </option>
+              ))}
               {invoices.map((inv) => (
-                <option key={inv.id} value={inv.id}>
+                <option key={inv.id} value={`manual:${inv.id}`}>
                   {(inv.invoiceNumber || inv.id.slice(0, 12))}
                   {inv.amount != null ? ` · ${formatGBP(inv.amount)}` : ''}
                   {inv.status === 'paid' ? ' · already marked paid' : ''}
@@ -159,6 +191,7 @@ export function AddPaymentModal({ dealId, proposals = [], onClose, onCreated }) 
           <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 5, lineHeight: 1.45 }}>
             Linking it keeps the money counted once. Leave it unlinked and, if that
             invoice is also marked paid, the deal books the amount twice.
+            {xeroInvoices.length > 0 && ' A Xero invoice keeps showing this payment until Xero reconciles it, then hands over — so nothing disappears while you wait.'}
           </div>
         </Field>
 

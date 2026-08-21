@@ -16,6 +16,7 @@ import { sendNotification } from '../notifications.js';
 import { makeId, trimOrNull, lowerOrNull, numberOrNull } from './shared.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
+import { ensureManualPaymentLink, outstandingProposalInvoices } from './manualPaymentLink.js';
 
 // ── Payment balance guard ────────────────────────────────────────────────────
 // What a deal committed to (its signed inc-VAT total) versus what's already been
@@ -48,7 +49,7 @@ export async function dealPaymentBalance(dealId) {
            WHERE p.deal_id = ${dealId}
           UNION ALL
           SELECT COALESCE(SUM(mp.amount), 0)
-            FROM manual_payments mp JOIN proposals p ON p.id = mp.proposal_id
+            FROM manual_payments_counted mp JOIN proposals p ON p.id = mp.proposal_id
            WHERE mp.manual_invoice_id IS NULL AND p.deal_id = ${dealId}
           UNION ALL
           SELECT COALESCE(SUM(mi.amount), 0)
@@ -165,7 +166,7 @@ export async function paymentsRoute(req, res, id, action, user) {
             FROM partner_invoices WHERE proposal_id = ANY(${proposalIds})
             ORDER BY paid_at ASC`,
       sql`SELECT id, proposal_id, amount, payment_method, payment_type, paid_at,
-                 notes, manual_invoice_id, recorded_by
+                 notes, manual_invoice_id, xero_invoice_id, recorded_by
             FROM manual_payments WHERE proposal_id = ANY(${proposalIds})
             ORDER BY paid_at DESC`,
     ]);
@@ -226,7 +227,7 @@ export async function paymentsRoute(req, res, id, action, user) {
         paymentType: r.payment_type,
         paidAt: r.paid_at,
         receiptUrl: null,
-        xeroInvoiceId: null,
+        xeroInvoiceId: r.xero_invoice_id || null,
         manualInvoiceId: r.manual_invoice_id || null,
         notes: r.notes || null,
         recordedBy: r.recorded_by || null,
@@ -235,6 +236,15 @@ export async function paymentsRoute(req, res, id, action, user) {
 
     out.sort((a, b) => new Date(b.paidAt || 0) - new Date(a.paidAt || 0));
     return res.status(200).json(out);
+  }
+
+  // --- GET /api/crm/payments/outstanding-invoices?proposalId=… ---------------
+  // What the "record a payment" form offers to link to. Kept a separate read
+  // rather than folded into the payments list: the form needs it before there
+  // is a payment to list.
+  if (id === 'outstanding-invoices' && req.method === 'GET') {
+    const proposalId = trimOrNull(req.query.proposalId);
+    return res.status(200).json(await outstandingProposalInvoices(proposalId));
   }
 
   // --- POST /api/crm/payments — create a manual payment
@@ -247,6 +257,11 @@ export async function paymentsRoute(req, res, id, action, user) {
     const paidAt        = trimOrNull(body.paidAt);
     const notes         = trimOrNull(body.notes);
     const manualInvoiceId = trimOrNull(body.manualInvoiceId);
+    // Which Xero invoice this settles, when it settles one. Recording a BACS
+    // payment by hand is the fast path — the bank tells the CRM nothing — and
+    // naming the invoice is what stops it being counted a second time when
+    // Xero reconciles days later. See manualPaymentLink.js.
+    const xeroInvoiceId = trimOrNull(body.xeroInvoiceId);
 
     if (!proposalId) return res.status(400).json({ error: 'proposalId required' });
     if (amount == null || amount <= 0) return res.status(400).json({ error: 'amount must be positive' });
@@ -273,14 +288,15 @@ export async function paymentsRoute(req, res, id, action, user) {
     }
 
     const newId = makeId('mp');
+    await ensureManualPaymentLink();
     await sql`
       INSERT INTO manual_payments (
         id, proposal_id, amount, payment_method, payment_type,
-        paid_at, notes, manual_invoice_id, recorded_by
+        paid_at, notes, manual_invoice_id, xero_invoice_id, recorded_by
       ) VALUES (
         ${newId}, ${proposalId}, ${amount}, ${paymentMethod}, ${paymentType},
         ${paidAt || new Date().toISOString()}, ${notes}, ${manualInvoiceId},
-        ${user.email || null}
+        ${xeroInvoiceId}, ${user.email || null}
       )
     `;
 
