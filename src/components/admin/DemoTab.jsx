@@ -7,7 +7,6 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { FlaskConical, Trash2, PlayCircle, KeyRound, Film, ExternalLink, Copy, Check } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { api } from '../../api.js';
-import { PortalDemoPanel } from './PortalDemoPanel.jsx';
 
 // Step 1 can't be a plain link: invite tokens are stored hashed, so a link
 // issued at seed time is unreadable once the page reloads — which used to leave
@@ -102,12 +101,9 @@ export function DemoTab() {
 
   return (
     <div style={{ maxWidth: 980 }}>
-      {/* Fixtures first: it answers "what does a client see" for every state
-          at once, with nothing to set up and nothing to clean away. The seeded
-          project below is for the flows a fixture cannot fake. */}
-      <PortalDemoPanel />
-
-      <div style={{ maxWidth: 720, borderTop: '1px solid ' + BRAND.border, paddingTop: 26 }}>
+      {/* The fixture portal used to sit above this and now has its own tab —
+          see AdminView. This is the half that genuinely writes. */}
+      <div style={{ maxWidth: 720 }}>
       <h2 style={{ fontSize: 18, fontWeight: 700, margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: 8 }}>
         <FlaskConical size={20} color={BRAND.blue} /> Client journey demo
       </h2>

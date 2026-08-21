@@ -1,4 +1,4 @@
-// Admin → Testing: the portal, live, in whatever state you want to look at.
+// Admin → Client portal: the portal, live, in whatever state you want to look at.
 //
 // Seeing what a client sees used to mean seeding a demo company, a demo deal
 // and a demo portal invite into the live database — which put a fake customer
@@ -9,9 +9,9 @@
 // This is the same portal, answering from fixtures instead of the network (see
 // src/portal/demo/portalDemo.js). Nothing is seeded, nothing is written, and
 // the state is a radio button: switching from "prospect" to "delivered" is a
-// reload, not a migration. The seeded demo below it still exists, because a
+// reload, not a migration. The seeded demo still exists, because a
 // fixture can't test a flow that genuinely has to write — real invites, real
-// uploads, a real payment gate.
+// uploads, a real payment gate. That one lives under Testing.
 import React, { useMemo, useState } from 'react';
 import { MonitorPlay, ExternalLink, RefreshCw, Smartphone, Monitor } from 'lucide-react';
 import { BRAND } from '../../theme.js';

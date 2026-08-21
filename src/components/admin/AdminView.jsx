@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronLeft, Users, Shield, Bell, Wallet, CalendarClock, Percent, Plane, FileText, Mic, BellRing, FlaskConical, Activity, GraduationCap } from 'lucide-react';
+import { ChevronLeft, Users, Shield, Bell, Wallet, CalendarClock, Percent, Plane, FileText, Mic, BellRing, FlaskConical, Activity, GraduationCap, MonitorPlay } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
@@ -14,6 +14,7 @@ import { HolidayTab } from './HolidayTab.jsx';
 import { DefaultProposalTab } from './DefaultProposalTab.jsx';
 import { VoiceoverCatalogueTab } from './VoiceoverCatalogueTab.jsx';
 import { DemoTab } from './DemoTab.jsx';
+import { PortalDemoPanel } from './PortalDemoPanel.jsx';
 import { TaskRemindersTab } from './TaskRemindersTab.jsx';
 import { StaffActivityTab } from './StaffActivityTab.jsx';
 import { CourseTab } from './CourseTab.jsx';
@@ -31,6 +32,11 @@ const TABS = [
   { id: 'voiceovers', label: 'Voiceovers', icon: Mic, perm: ['voiceovers.manage', 'settings.manage'] },
   { id: 'course', label: 'Video guide', icon: GraduationCap, perm: 'settings.manage' },
   { id: 'task-reminders', label: 'Task reminders', icon: BellRing, perm: 'settings.manage' },
+  // Its own entry rather than the top half of Testing. 'Testing' reads as
+  // set-up-and-tear-down, so nobody looks in there for "what does the client
+  // see right now" — which is the question this answers, and the one asked
+  // most often. Testing keeps the seeded journey, which genuinely is a test.
+  { id: 'portal', label: 'Client portal', icon: MonitorPlay, perm: 'settings.manage' },
   { id: 'demo', label: 'Testing', icon: FlaskConical, perm: 'settings.manage' },
 ];
 
@@ -194,6 +200,7 @@ export function AdminView({ tab = 'users', onBack, onChangeTab, onEditDefault, o
           {active?.id === 'voiceovers' && <VoiceoverCatalogueTab />}
           {active?.id === 'course' && <CourseTab />}
           {active?.id === 'task-reminders' && <TaskRemindersTab />}
+          {active?.id === 'portal' && <PortalDemoPanel />}
           {active?.id === 'demo' && <DemoTab />}
         </div>
       </div>
