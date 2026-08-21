@@ -12,8 +12,13 @@
 // is right on a landing page that has to grab someone in two seconds, and wrong
 // on a document they will sit with for ten minutes across three sittings.
 // Twenty-five questions is already intimidating; chrome shouting alongside it
-// makes it worse. The quote form still owns the funnel look; this owns the
-// working look, and the two are allowed to differ now.
+// makes it worse.
+//
+// The quote form has since been brought over to match — same accent, same
+// hairlines, same near-black headings, same mascot. They are the same product
+// to the person who fills in both, this one as a prospect and the brief later
+// as a client, so restyle one and look at the other:
+// src/components/QuoteRequestForm.css.
 //
 // One accent, and it is the brand blue. The green said "done" loudly, but two
 // signal colours on one screen is one more than the content can carry.

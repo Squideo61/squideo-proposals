@@ -1,3 +1,35 @@
+/*
+ * The marketing quote form.
+ *
+ * ── THE 2026-08 RESTYLE ─────────────────────────────────────────────────────
+ * This form used to be loud on purpose: saturated green, 2px borders, gradient
+ * badges, a heading in the accent colour. That was a defensible read of a
+ * landing page with two seconds to grab someone.
+ *
+ * It now matches the portal's brief builder instead — hairlines rather than
+ * borders, one accent used sparingly, near-black headings with tight tracking,
+ * badges tinted close enough to white to read as footnotes. The reason is that
+ * they are the same product to the person filling both in: this one as a
+ * prospect, the brief three weeks later as a client, and a jarring change of
+ * character between them is a change of company as far as they can tell.
+ *
+ * The DOM did not change. Every selector below is the one that was already
+ * here; only values moved. That is deliberate on the form that brings the work
+ * in — the behaviour (validation, resume, attribution, the height handshake) is
+ * untouched and untestable from CSS.
+ *
+ * Tokens rather than literals so the next pass is an edit here, not thirty-odd
+ * find-and-replaces. Values match src/theme.js and src/portal/ProgressChrome.jsx.
+ */
+.quote-request-widget {
+  --sq-accent: #2bb8e6;
+  --sq-accent-deep: #1fa4d1;
+  --sq-ink: #0f2a3d;
+  --sq-muted: #5c6b77;
+  --sq-hairline: rgba(15, 42, 61, 0.11);
+  --sq-surface: #f7f9fb;
+}
+
 .quote-request-widget .optional-label {
   font-weight: 400;
   color: #9ca3af;
@@ -8,9 +40,10 @@
   top: 0;
   left: 0;
   right: 0;
-  background: linear-gradient(135deg, #7ac943 0%, #6bb635 100%);
-  padding: 20px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  background: #ffffff;
+  border-bottom: 1px solid var(--sq-hairline);
+  padding: 16px 20px;
+  box-shadow: 0 1px 2px rgba(15, 42, 61, 0.04), 0 10px 26px rgba(15, 42, 61, 0.06);
   z-index: 9999;
   opacity: 0;
   transform: translateY(-100%);
@@ -29,23 +62,25 @@
   position: relative;
 }
 .quote-request-widget .welcome-back-content .welcome-icon {
-  width: 40px;
-  height: 40px;
-  color: #ffffff;
+  width: 26px;
+  height: 26px;
+  color: var(--sq-accent);
   flex-shrink: 0;
 }
 .quote-request-widget .welcome-back-content .welcome-text {
   flex: 1;
 }
 .quote-request-widget .welcome-back-content .welcome-text .welcome-title {
-  font-size: 18px;
-  font-weight: 700;
-  color: #ffffff;
-  margin: 0 0 4px 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--sq-ink);
+  margin: 0 0 2px 0;
 }
 .quote-request-widget .welcome-back-content .welcome-text .welcome-description {
-  font-size: 14px;
-  color: rgba(255, 255, 255, 0.9);
+  font-size: 13.5px;
+  letter-spacing: -0.01em;
+  color: var(--sq-muted);
   margin: 0;
 }
 .quote-request-widget .welcome-back-content .welcome-actions {
@@ -55,28 +90,30 @@
 }
 .quote-request-widget .welcome-back-content .btn-welcome-resume,
 .quote-request-widget .welcome-back-content .btn-welcome-dismiss {
-  padding: 10px 20px;
-  border-radius: 6px;
-  font-size: 14px;
+  padding: 9px 16px;
+  border-radius: 10px;
+  font-size: 13.5px;
   font-weight: 600;
+  letter-spacing: -0.01em;
   cursor: pointer;
   transition: all 0.2s ease;
   border: none;
   white-space: nowrap;
 }
-.quote-request-widget .welcome-back-content .btn-welcome-resume:hover,
+.quote-request-widget .welcome-back-content .btn-welcome-resume:hover {
+  background: var(--sq-accent-deep);
+}
 .quote-request-widget .welcome-back-content .btn-welcome-dismiss:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+  color: var(--sq-ink);
 }
 .quote-request-widget .welcome-back-content .btn-welcome-resume {
-  background: #ffffff;
-  color: #7ac943;
+  background: var(--sq-accent);
+  color: #ffffff;
 }
 .quote-request-widget .welcome-back-content .btn-welcome-dismiss {
-  background: rgba(255, 255, 255, 0.2);
-  color: #ffffff;
-  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: none;
+  color: var(--sq-muted);
+  border: none;
 }
 .quote-request-widget .welcome-back-content .welcome-close {
   position: absolute;
@@ -120,51 +157,69 @@
 .quote-request-widget .time-estimate-badge {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 18px;
-  background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
-  border: 2px solid #bae6fd;
-  border-radius: 30px;
-  margin-bottom: 24px;
-  font-size: 14px;
-  font-weight: 600;
-  color: #0369a1;
-  box-shadow: 0 2px 8px rgba(3, 105, 161, 0.1);
+  gap: 6px;
+  padding: 5px 12px 5px 10px;
+  background: var(--sq-surface);
+  border: 1px solid var(--sq-hairline);
+  border-radius: 999px;
+  margin-bottom: 22px;
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--sq-muted);
 }
 .quote-request-widget .time-estimate-badge .time-icon {
-  width: 18px;
-  height: 18px;
-  color: #0284c7;
+  width: 13px;
+  height: 13px;
+  color: var(--sq-muted);
 }
 .quote-request-widget .time-estimate-badge .time-text {
   transition: all 0.3s ease;
 }
 .quote-request-widget .time-estimate-badge .time-text.time-update {
   transform: scale(1.1);
-  color: #7ac943;
+  color: var(--sq-accent);
 }
 .quote-request-widget .privacy-badge {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 16px;
-  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
-  border-left: 4px solid #7ac943;
-  border-radius: 8px;
+  gap: 8px;
+  padding: 7px 14px 7px 11px;
+  background: #f3faf6;
+  border: 1px solid #dcede3;
+  border-radius: 999px;
   margin-bottom: 24px;
-  font-size: 13px;
-  color: #166534;
+  font-size: 12.5px;
+  line-height: 1.45;
+  letter-spacing: -0.01em;
+  color: #356b4c;
   font-weight: 500;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 .quote-request-widget .privacy-badge .privacy-icon {
-  width: 20px;
-  height: 20px;
-  color: #7ac943;
+  width: 14px;
+  height: 14px;
+  color: #356b4c;
   flex-shrink: 0;
 }
+/* 96, not 50, because the mascot sits in this gap. At 50 he overlapped the
+   step labels; a character standing on the navigation is a character in the
+   way. Back to 50 on a phone, where he does not render at all. */
 .quote-request-widget .progress-header {
-  margin-bottom: 50px;
+  margin-bottom: 96px;
+}
+
+.quote-request-widget .form-perch {
+  position: relative;
+}
+/* Pulled up by most of his own height, so his feet land on the card's top edge
+   and the rest of him is above it. A character beside a card is a sticker; one
+   overlapping its edge is sitting on it. */
+.quote-request-widget .mascot-seat {
+  position: absolute;
+  top: -84px;
+  right: 18px;
+  z-index: 1;
+  pointer-events: none;
 }
 .quote-request-widget .progress-steps {
   display: flex;
@@ -181,11 +236,11 @@
   z-index: 2;
 }
 .quote-request-widget .progress-step .step-circle {
-  width: 50px;
-  height: 50px;
+  width: 40px;
+  height: 40px;
   border-radius: 50%;
-  background: #f3f4f6;
-  border: 3px solid #e5e7eb;
+  background: #ffffff;
+  border: 1.5px solid var(--sq-hairline);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -193,42 +248,43 @@
   transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .quote-request-widget .progress-step .step-circle .step-number {
-  font-size: 18px;
-  font-weight: 700;
-  color: #9ca3af;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--sq-muted);
   transition: all 0.3s ease;
 }
 .quote-request-widget .progress-step .step-circle .step-check {
   position: absolute;
-  width: 24px;
-  height: 24px;
+  width: 19px;
+  height: 19px;
   color: #ffffff;
   opacity: 0;
   transform: scale(0);
   transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 .quote-request-widget .progress-step .step-label {
-  font-size: 13px;
-  font-weight: 600;
-  color: #9ca3af;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--sq-muted);
   transition: color 0.3s ease;
 }
 .quote-request-widget .progress-step.active .step-circle {
-  background: #7ac943;
-  border-color: #7ac943;
-  transform: scale(1.1);
-  box-shadow: 0 0 0 4px rgba(122, 201, 67, 0.2);
+  background: var(--sq-accent);
+  border-color: var(--sq-accent);
+  box-shadow: 0 0 0 5px rgba(43, 184, 230, 0.13);
 }
 .quote-request-widget .progress-step.active .step-circle .step-number {
   color: #ffffff;
 }
 .quote-request-widget .progress-step.active .step-label {
-  color: #7ac943;
+  color: var(--sq-ink);
+  font-weight: 600;
 }
 .quote-request-widget .progress-step.completed .step-circle {
-  background: #7ac943;
-  border-color: #7ac943;
-  animation: qrSuccessPulse 0.6s ease;
+  background: var(--sq-accent);
+  border-color: var(--sq-accent);
 }
 .quote-request-widget .progress-step.completed .step-circle .step-number {
   opacity: 0;
@@ -239,20 +295,15 @@
   transform: scale(1);
 }
 .quote-request-widget .progress-step.completed .step-label {
-  color: #7ac943;
-}
-@keyframes qrSuccessPulse {
-  0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(122, 201, 67, 0.7); }
-  50% { transform: scale(1.15); box-shadow: 0 0 0 10px rgba(122, 201, 67, 0); }
-  100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(122, 201, 67, 0); }
+  color: var(--sq-ink);
 }
 .quote-request-widget .progress-connector {
   flex: 1;
-  height: 3px;
-  background: #e5e7eb;
-  margin: 0 8px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--sq-hairline);
+  margin: 0 8px 26px;
   position: relative;
-  margin-bottom: 30px;
 }
 .quote-request-widget .progress-connector .connector-fill {
   position: absolute;
@@ -260,17 +311,18 @@
   left: 0;
   height: 100%;
   width: 0%;
-  background: linear-gradient(90deg, #7ac943 0%, #6bb635 100%);
-  transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: 0 0 8px rgba(122, 201, 67, 0.4);
+  background: var(--sq-accent);
+  border-radius: 2px;
+  transition: width 0.55s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 .quote-request-widget .progress-connector .connector-fill.filled {
   width: 100%;
 }
 .quote-request-widget .multi-step-form {
   background: #ffffff;
-  border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  border-radius: 18px;
+  border: 1px solid var(--sq-hairline);
+  box-shadow: 0 1px 2px rgba(15, 42, 61, 0.04), 0 12px 32px rgba(15, 42, 61, 0.05);
   padding: 40px;
 }
 .quote-request-widget .form-step {
@@ -284,18 +336,24 @@
   from { opacity: 0; transform: translateY(30px); }
   to { opacity: 1; transform: translateY(0); }
 }
+/* Near-black, not the accent. A coloured heading on all four steps makes the
+   accent mean nothing by the third, and the loudest thing here should be the
+   question being asked. */
 .quote-request-widget .step-title {
-  font-size: 28px;
-  font-weight: 700;
-  color: #2BB8E6;
-  margin-bottom: 8px;
-  line-height: 1.3;
+  font-size: 30px;
+  font-weight: 600;
+  color: var(--sq-ink);
+  letter-spacing: -0.025em;
+  margin-bottom: 10px;
+  line-height: 1.18;
 }
 .quote-request-widget .step-description {
-  font-size: 16px;
-  color: #6b7280;
-  margin-bottom: 32px;
+  font-size: 15px;
+  color: var(--sq-muted);
+  letter-spacing: -0.005em;
+  margin-bottom: 30px;
   line-height: 1.6;
+  max-width: 58ch;
 }
 .quote-request-widget .form-group {
   margin-bottom: 24px;
@@ -350,20 +408,21 @@
 }
 .quote-request-widget .form-input {
   width: 100%;
-  padding: 12px 16px;
-  border: 2px solid #e5e7eb;
-  border-radius: 8px;
+  padding: 12px 15px;
+  border: 1px solid #dce4eb;
+  border-radius: 12px;
   font-size: 15px;
-  color: #111827;
-  transition: all 0.2s ease;
+  color: var(--sq-ink);
+  letter-spacing: -0.01em;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
   background: #ffffff;
   font-family: inherit;
   line-height: 1.5;
 }
 .quote-request-widget .form-input:focus {
   outline: none;
-  border-color: #7ac943;
-  box-shadow: 0 0 0 3px rgba(122, 201, 67, 0.1);
+  border-color: var(--sq-accent);
+  box-shadow: 0 0 0 4px rgba(43, 184, 230, 0.12);
 }
 .quote-request-widget .form-input::placeholder {
   color: #9ca3af;
@@ -377,17 +436,17 @@
   box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.1);
 }
 .quote-request-widget .form-input.field-highlight {
-  border-color: #7ac943;
-  box-shadow: 0 0 0 4px rgba(122, 201, 67, 0.25);
+  border-color: var(--sq-accent);
+  box-shadow: 0 0 0 4px rgba(43, 184, 230, 0.25);
   animation: qrFieldPulse 1s ease-in-out;
 }
 .quote-request-widget .project-details-large {
   min-height: 200px !important;
 }
 @keyframes qrFieldPulse {
-  0% { box-shadow: 0 0 0 0 rgba(122, 201, 67, 0.4); }
-  50% { box-shadow: 0 0 0 8px rgba(122, 201, 67, 0.1); }
-  100% { box-shadow: 0 0 0 4px rgba(122, 201, 67, 0.25); }
+  0% { box-shadow: 0 0 0 0 rgba(43, 184, 230, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(43, 184, 230, 0.1); }
+  100% { box-shadow: 0 0 0 4px rgba(43, 184, 230, 0.25); }
 }
 .quote-request-widget .phone-input-wrapper {
   display: flex;
@@ -415,13 +474,13 @@
   min-height: 48px;
 }
 .quote-request-widget .country-selector-btn:hover {
-  border-color: #7ac943;
+  border-color: var(--sq-accent);
   background: #f9fafb;
 }
 .quote-request-widget .country-selector-btn:focus {
   outline: none;
-  border-color: #7ac943;
-  box-shadow: 0 0 0 3px rgba(122, 201, 67, 0.1);
+  border-color: var(--sq-accent);
+  box-shadow: 0 0 0 3px rgba(43, 184, 230, 0.1);
 }
 .quote-request-widget .country-selector-btn .selected-code {
   font-weight: 600;
@@ -479,7 +538,7 @@
 }
 .quote-request-widget .country-search-wrapper .country-search:focus {
   outline: none;
-  border-color: #7ac943;
+  border-color: var(--sq-accent);
 }
 .quote-request-widget .country-search-wrapper .country-search::placeholder {
   color: #9ca3af;
@@ -556,7 +615,7 @@
 .quote-request-widget .email-suggestion .suggestion-link {
   background: none;
   border: none;
-  color: #7ac943;
+  color: var(--sq-accent);
   font-weight: 600;
   cursor: pointer;
   text-decoration: underline;
@@ -564,7 +623,7 @@
   font-size: inherit;
 }
 .quote-request-widget .email-suggestion .suggestion-link:hover {
-  color: #6bb635;
+  color: var(--sq-accent-deep);
 }
 .quote-request-widget .error-message {
   display: none;
@@ -626,13 +685,13 @@
   text-align: center;
 }
 .quote-request-widget .file-upload-wrapper .file-upload-label:hover {
-  border-color: #7ac943;
+  border-color: var(--sq-accent);
   background: #f0f9ff;
 }
 .quote-request-widget .file-upload-wrapper .file-upload-label .upload-icon {
   width: 40px;
   height: 40px;
-  color: #7ac943;
+  color: var(--sq-accent);
   margin-bottom: 12px;
 }
 .quote-request-widget .file-upload-wrapper .file-upload-label .upload-text {
@@ -673,7 +732,7 @@
   color: #374151;
 }
 .quote-request-widget .file-upload-wrapper .file-display .file-list-header .file-total-size {
-  color: #7ac943;
+  color: var(--sq-accent);
   font-weight: 600;
 }
 .quote-request-widget .file-upload-wrapper .file-display .file-item {
@@ -695,7 +754,7 @@
 .quote-request-widget .file-upload-wrapper .file-display .file-item .file-icon {
   width: 24px;
   height: 24px;
-  color: #7ac943;
+  color: var(--sq-accent);
   flex-shrink: 0;
 }
 .quote-request-widget .file-upload-wrapper .file-display .file-item .file-info {
@@ -753,7 +812,7 @@
   width: 18px;
   height: 18px;
   cursor: pointer;
-  accent-color: #7ac943;
+  accent-color: var(--sq-accent);
 }
 .quote-request-widget .checkbox-wrapper .checkbox-label {
   font-size: 14px;
@@ -778,7 +837,7 @@
   transition: all 0.2s ease;
 }
 .quote-request-widget .captcha-box:hover {
-  border-color: #7ac943;
+  border-color: var(--sq-accent);
   background: #f0f9ff;
 }
 .quote-request-widget .captcha-checkbox-wrapper {
@@ -820,15 +879,15 @@
   transform: rotate(45deg);
 }
 .quote-request-widget .captcha-checkbox:checked ~ .captcha-label .captcha-checkmark {
-  background: #7ac943;
-  border-color: #7ac943;
+  background: var(--sq-accent);
+  border-color: var(--sq-accent);
   transform: scale(1.05);
 }
 .quote-request-widget .captcha-checkbox:checked ~ .captcha-label .captcha-checkmark::after {
   display: block;
 }
 .quote-request-widget .captcha-checkbox:focus ~ .captcha-label .captcha-checkmark {
-  box-shadow: 0 0 0 3px rgba(122, 201, 67, 0.2);
+  box-shadow: 0 0 0 3px rgba(43, 184, 230, 0.2);
 }
 .quote-request-widget .captcha-text {
   flex: 1;
@@ -892,16 +951,16 @@
   animation: qrButtonPulse 1.5s ease-in-out infinite;
 }
 @keyframes qrButtonPulse {
-  0% { box-shadow: 0 0 0 0 rgba(122, 201, 67, 0.7); }
-  50% { box-shadow: 0 0 0 10px rgba(122, 201, 67, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(122, 201, 67, 0); }
+  0% { box-shadow: 0 0 0 0 rgba(43, 184, 230, 0.7); }
+  50% { box-shadow: 0 0 0 10px rgba(43, 184, 230, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(43, 184, 230, 0); }
 }
 .quote-request-widget .btn-primary {
-  background: #7ac943;
+  background: var(--sq-accent);
   color: #ffffff;
 }
 .quote-request-widget .btn-primary:hover {
-  background: #6bb635;
+  background: var(--sq-accent-deep);
 }
 .quote-request-widget .btn-secondary {
   background: #f3f4f6;
@@ -929,10 +988,10 @@
 .quote-request-widget .success-message .success-icon svg {
   width: 48px;
   height: 48px;
-  stroke: #7ac943;
+  stroke: var(--sq-accent);
 }
 .quote-request-widget .success-message .step-title {
-  color: #7ac943;
+  color: var(--sq-accent);
 }
 @keyframes qrSuccessFadeIn {
   from { opacity: 0; transform: scale(0.9); }
@@ -1047,10 +1106,10 @@
 }
 .quote-request-widget .exit-progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, #7ac943 0%, #6bb635 100%);
+  background: linear-gradient(90deg, var(--sq-accent) 0%, var(--sq-accent-deep) 100%);
   border-radius: 999px;
   transition: width 0.6s ease;
-  box-shadow: 0 0 10px rgba(122, 201, 67, 0.5);
+  box-shadow: 0 0 10px rgba(43, 184, 230, 0.5);
 }
 .quote-request-widget .exit-progress-text {
   font-size: 14px;
@@ -1082,6 +1141,7 @@
   .quote-request-widget .time-estimate-badge { font-size: 13px; padding: 8px 14px; }
   .quote-request-widget .time-estimate-badge .time-icon { width: 16px; height: 16px; }
   .quote-request-widget .progress-header { margin-bottom: 32px; }
+  .quote-request-widget .progress-header { margin-bottom: 40px; }
   .quote-request-widget .progress-steps { gap: 8px; }
   .quote-request-widget .progress-step .step-circle { width: 40px; height: 40px; }
   .quote-request-widget .progress-step .step-circle .step-number { font-size: 16px; }

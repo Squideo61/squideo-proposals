@@ -1,8 +1,12 @@
-// The Squideo mascot, sat on top of the brief.
+// The Squideo mascot, sat on top of a form.
 //
-// He is decoration with a job: twenty-six questions is a long way to walk on
-// your own, and something reacting when you answer one is the cheapest possible
+// He is decoration with a job: a long form is a long way to walk on your own,
+// and something reacting when you answer a question is the cheapest possible
 // company. He performs on arrival and once more each time you move on.
+//
+// Shared by the brief builder in the portal and the quote form on squideo.com.
+// Those two are the same product to the person filling in both — this one as a
+// prospect, the brief later as a client — so the same character greets them.
 //
 // ── WHY LOTTIE, AND WHY THE LIGHT BUILD ─────────────────────────────────────
 // lottie-web renders the After Effects export as SVG, so it stays sharp at any

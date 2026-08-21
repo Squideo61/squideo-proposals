@@ -52,7 +52,7 @@ import { usePortal } from '../PortalContext.jsx';
 import { Card, EmptyState } from '../components.jsx';
 import { navigate } from '../PortalApp.jsx';
 import { GuideVideoModal } from '../GuideVideo.jsx';
-import Mascot from '../Mascot.jsx';
+import Mascot from '../../components/Mascot.jsx';
 import {
   StepProgress, PartProgress, TimeBadge, ReassuranceBadge, ResumeBanner, StepTitle, greeting, EASE,
 } from '../ProgressChrome.jsx';

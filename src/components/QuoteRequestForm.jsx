@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { resolveRedirect } from '../lib/embedRedirect.js';
 import confetti from 'canvas-confetti';
 import './QuoteRequestForm.css';
+import Mascot from './Mascot.jsx';
 
 const TOTAL_STEPS = 4;
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
@@ -726,6 +727,17 @@ export function QuoteRequestForm(props = {}) {
   const isSuccess = step === 'success';
   const numericStep = typeof step === 'number' ? step : TOTAL_STEPS;
 
+  // What the mascot performs for: reaching a new step, success included. Not a
+  // failed validation — that is not a step forward and he should not applaud it.
+  const [mascotTrigger, setMascotTrigger] = useState(0);
+  const mascotSeen = useRef(null);
+  useEffect(() => {
+    if (mascotSeen.current === null) { mascotSeen.current = step; return; }
+    if (mascotSeen.current === step) return;
+    mascotSeen.current = step;
+    setMascotTrigger((n) => n + 1);
+  }, [step]);
+
   return (
     <div className={`quote-request-widget ${welcomeBanner && welcomeBanner.visible ? 'has-welcome-banner' : ''}`}>
       {welcomeBanner && (
@@ -780,6 +792,15 @@ export function QuoteRequestForm(props = {}) {
           </div>
         </div>
 
+        {/* He sits in the gap between the stepper and the card, feet on the
+            card's top edge. The gap is widened for him in the CSS rather than
+            him being squeezed into the old one — at the old 50px he landed on
+            the "Finish" label, and a character standing on the navigation is a
+            character in the way. */}
+        <div className="form-perch">
+          <div className="mascot-seat">
+            <Mascot trigger={mascotTrigger} />
+          </div>
         <form className="multi-step-form" onSubmit={onSubmit} noValidate>
           {!isSuccess && (
             <div className="time-estimate-badge">
@@ -1107,6 +1128,7 @@ export function QuoteRequestForm(props = {}) {
             </div>
           )}
         </form>
+        </div>
       </div>
 
       {exitOpen && cfg.enableExitIntent && (
