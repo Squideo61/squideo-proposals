@@ -69,6 +69,17 @@ describe('locateQuestion', () => {
   it('returns null for a key that is not a question', () => {
     expect(locateQuestion('notAQuestion')).toBeNull();
   });
+
+  it('can always find a REQUIRED question', () => {
+    // The review screen lists every outstanding required answer with an
+    // "Answer now" beside it, and that button is locateQuestion. A required
+    // question this cannot place is a button that does nothing on the one
+    // screen standing between a client and sending us their brief — and it
+    // would look like the form was broken at the worst possible moment.
+    for (const q of ALL_QUESTIONS.filter((x) => x.required)) {
+      expect(locateQuestion(q.key), q.key).not.toBeNull();
+    }
+  });
 });
 
 describe('the submitted document', () => {

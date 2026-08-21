@@ -1227,6 +1227,16 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
     setPart(Math.max(0, partIndex));
   }, []);
 
+  // Straight to one question, wherever it lives. Three callers now — the
+  // summary's edit links, "Answer now" on an outstanding question, and the
+  // bounce from a Finalise that couldn't go through — and landing on the right
+  // SCREEN but the wrong part would leave someone looking at a question they
+  // have already answered, wondering what we wanted.
+  const jumpToQuestion = useCallback((key) => {
+    const at = locateQuestion(key);
+    if (at) goTo(at.screenIndex, at.partIndex);
+  }, [goTo]);
+
   // Back and Next cross screen boundaries so that Next always means the same
   // thing. Back lands on the LAST part of the previous screen — the one you
   // were actually looking at — rather than dumping you at its top.
@@ -1385,8 +1395,7 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
     await flush();
     if (missing.length) {
       setShowInvalid(true);
-      const at = locateQuestion(missing[0].key);
-      goTo(at ? at.screenIndex : 0, at ? at.partIndex : 0);
+      jumpToQuestion(missing[0].key);
       showToast(`${missing.length} question${missing.length === 1 ? '' : 's'} still needs an answer`, 'error');
       return;
     }
@@ -1799,10 +1808,16 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
       {isReview && (
         <Card style={CARD_SHELL}>
           <div style={STEP_BAND}>
+            {/* goTo, not setStep — see the note on goTo. Jumping out of Review
+                with setStep left `part` wherever it happened to be, so leaving
+                Review for a screen with fewer parts than the one you were last
+                on showed you its FIRST part while the sub-progress bar claimed
+                you were further in. Now that "Answer now" sends people out to a
+                question and back, this path gets used properly. */}
             <StepProgress
               steps={stepperSteps}
               current={step}
-              onJump={setStep}
+              onJump={(i) => goTo(i, 0)}
               markers={busyScreens}
             />
           </div>
@@ -1816,10 +1831,54 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
             <strong> finalising locks it</strong>. Our team works from this exact version, so it
             can't move underneath them afterwards. We can always reopen it for you if it needs to.
           </StepTitle>
-          <BriefSummary answers={answers} onEdit={(k) => {
-            const at = locateQuestion(k);
-            if (at) goTo(at.screenIndex, at.partIndex);
-          }} />
+          <BriefSummary answers={answers} onEdit={jumpToQuestion} />
+
+          {/* Above the buttons, not below them. This used to be a sentence
+              under "Finalise and send" naming the questions — which told you
+              what was wrong, left you to go and find each one, and sat where
+              you only looked after the button had already bounced you. It is a
+              to-do list, so it goes where a to-do list goes: in front of the
+              thing it blocks, with a way to act on each line. */}
+          {missing.length > 0 && (
+            <div style={{
+              margin: '20px 0 0', padding: '13px 15px', borderRadius: 12,
+              background: '#FFFBEB', border: '1px solid #FDE68A',
+            }}>
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4,
+                fontSize: 13.5, fontWeight: 600, color: '#8A6320', letterSpacing: '-0.01em',
+              }}>
+                <Info size={15} style={{ flexShrink: 0 }} />
+                {missing.length} question{missing.length === 1 ? '' : 's'} still to answer
+              </div>
+              {missing.map((m) => (
+                <div
+                  key={m.key}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+                    padding: '8px 0 8px 23px', borderTop: '1px solid #FDE68A',
+                    marginTop: 8,
+                  }}
+                >
+                  <span style={{
+                    flex: '1 1 220px', minWidth: 0, fontSize: 13, lineHeight: 1.5, color: '#8A6320',
+                  }}>{m.label}</span>
+                  <button
+                    type="button"
+                    onClick={() => jumpToQuestion(m.key)}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 6,
+                      padding: '7px 13px', borderRadius: 9, cursor: 'pointer',
+                      fontSize: 13, fontWeight: 600, fontFamily: 'inherit',
+                      letterSpacing: '-0.01em', color: '#7A5714',
+                      background: '#fff', border: '1px solid #EBCE86',
+                    }}
+                  >Answer now <ArrowRight size={14} /></button>
+                </div>
+              ))}
+            </div>
+          )}
+
           <div style={{ display: 'flex', gap: 10, marginTop: 20, flexWrap: 'wrap' }}>
             <button type="button" onClick={() => goTo(screens.length - 1, lastPartOf(screens.length - 1))} style={btnGhost}>
               <ArrowLeft size={15} /> Back
@@ -1834,12 +1893,6 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
               <Send size={15} /> {sending ? 'Sending…' : 'Finalise and send'}
             </button>
           </div>
-          {missing.length > 0 && (
-            <p style={{ margin: '14px 0 0', fontSize: 13, lineHeight: 1.6, color: '#8A6320' }}>
-              {missing.length} question{missing.length === 1 ? '' : 's'} still to answer:{' '}
-              {missing.map((m) => m.label).join(' · ')}
-            </p>
-          )}
           </div>
         </Card>
       )}
