@@ -53,6 +53,7 @@ import { Card, EmptyState } from '../components.jsx';
 import { navigate } from '../PortalApp.jsx';
 import { GuideVideoModal } from '../GuideVideo.jsx';
 import Mascot from '../../components/Mascot.jsx';
+import { openBriefPrintWindow } from '../../utils/printBrief.js';
 import {
   StepProgress, PartProgress, TimeBadge, ReassuranceBadge, ResumeBanner, StepTitle, greeting, EASE,
 } from '../ProgressChrome.jsx';
@@ -883,7 +884,7 @@ export default function Brief({ briefId: routeId = null }) {
 }
 
 function BriefEditor({ briefId, projects, showBack, onChanged }) {
-  const { showToast, manageMode, user } = usePortal();
+  const { showToast, manageMode, user, company } = usePortal();
   // Only for the mascot's lane — he doesn't render on a phone, so nothing needs
   // reserving there and the banner gets its full width back.
   const isMobile = useIsMobile();
@@ -1299,6 +1300,14 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
     } finally { setSending(false); }
   };
 
+  // Not window.print(). Printing the page printed the page: nav rail, header,
+  // activity feed and all. A brief is a document somebody forwards to their
+  // MD, so it gets built as one — see src/utils/printBrief.js.
+  const printDoc = () => {
+    const ok = openBriefPrintWindow({ answers, brief: data.brief || {}, company, progress });
+    if (!ok) showToast('Allow pop-ups for this site to open your brief as a PDF', 'error');
+  };
+
   const reopen = async () => {
     try {
       await portalApi.post('brief-reopen', { id: briefId });
@@ -1318,7 +1327,7 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
   const others = presence;
 
   const header = (
-    <div className="brief-noprint" style={{ marginBottom: 18 }}>
+    <div style={{ marginBottom: 18 }}>
       {showBack && (
         <button
           type="button" onClick={() => navigate('#/brief')}
@@ -1429,7 +1438,7 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
           </div>
           <BriefSummary answers={answers} />
           <div style={{ display: 'flex', gap: 10, marginTop: 18, flexWrap: 'wrap' }}>
-            <button type="button" onClick={() => window.print()} style={btnGhost}>
+            <button type="button" onClick={printDoc} style={btnGhost}>
               <Printer size={15} /> Print or save as PDF
             </button>
             {data.canReopen && (
@@ -1440,11 +1449,6 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
           </div>
         </Card>
         <ActivityFeed events={activity} open={activityOpen} onToggle={() => setActivityOpen((v) => !v)} />
-        <div className="brief-print">
-          <h1 style={{ fontSize: 20, marginBottom: 4 }}>{brief.title || 'Video brief'}</h1>
-          <p style={{ fontSize: 12, color: '#666', marginTop: 0 }}>Video brief · Squideo</p>
-          <BriefSummary answers={answers} print />
-        </div>
       </div>
     );
   }
@@ -1483,12 +1487,6 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
   return (
     <div style={{ maxWidth: BRIEF_MAX, margin: '0 auto' }}>
       <style>{`
-        @media print {
-          .brief-noprint { display: none !important; }
-          .brief-print   { display: block !important; }
-        }
-        .brief-print { display: none; }
-
         /* Each screen arrives rather than appearing. 10px and 320ms: enough to
            read as a step forward, short enough that someone moving quickly
            through the form never waits for it. Keyed on the step index, so it
@@ -1536,28 +1534,26 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
           they have just started there is nothing to resume, and a card
           announcing that they have done nothing is worse than no card. */}
       {resumeOffer !== null && (
-        <div className="brief-noprint">
-          <ResumeBanner
-            name={firstName}
-            done={progress.done}
-            total={progress.total}
-            reserveRight={isMobile ? 0 : MASCOT_LANE}
-            onResume={() => { goTo(resumeOffer.screenIndex, resumeOffer.partIndex); setResumeOffer(null); }}
-            onDismiss={() => setResumeOffer(null)}
-          />
-        </div>
+        <ResumeBanner
+          name={firstName}
+          done={progress.done}
+          total={progress.total}
+          reserveRight={isMobile ? 0 : MASCOT_LANE}
+          onResume={() => { goTo(resumeOffer.screenIndex, resumeOffer.partIndex); setResumeOffer(null); }}
+          onDismiss={() => setResumeOffer(null)}
+        />
       )}
 
       {/* ── the current screen ──────────────────────────────────────────── */}
       {!isReview && screen && (
         <div style={{ position: 'relative' }}>
-        <div className="brief-noprint" style={MASCOT_PERCH}>
+        <div style={MASCOT_PERCH}>
           <Mascot trigger={moves} size={MASCOT_SIZE} />
         </div>
         <Card style={CARD_SHELL}>
           {/* The stepper rides on the card rather than floating above it, so
               the page reads as one object instead of three stacked ones. */}
-          <div className="brief-noprint" style={STEP_BAND}>
+          <div style={STEP_BAND}>
             <StepProgress
               steps={stepperSteps}
               current={step}
@@ -1679,7 +1675,7 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
       {/* ── review + finalise ───────────────────────────────────────────── */}
       {isReview && (
         <Card style={CARD_SHELL}>
-          <div className="brief-noprint" style={STEP_BAND}>
+          <div style={STEP_BAND}>
             <StepProgress
               steps={stepperSteps}
               current={step}
@@ -1705,7 +1701,7 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
             <button type="button" onClick={() => goTo(screens.length - 1, lastPartOf(screens.length - 1))} style={btnGhost}>
               <ArrowLeft size={15} /> Back
             </button>
-            <button type="button" onClick={() => window.print()} style={btnGhost}>
+            <button type="button" onClick={printDoc} style={btnGhost}>
               <Printer size={15} /> Print or save as PDF
             </button>
             <button type="button" onClick={finalise} disabled={sending} style={{
@@ -1733,19 +1729,11 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
         <GuideVideoModal moduleNumber={watching} onClose={() => setWatching(null)} />
       )}
 
-      {/* Print-only: the whole brief on one page, no chrome. */}
-      <div className="brief-print">
-        <h1 style={{ fontSize: 20, marginBottom: 4 }}>
-          {brief.title || answers.projectName || 'Video brief'}
-        </h1>
-        <p style={{ fontSize: 12, color: '#666', marginTop: 0 }}>Video brief · Squideo</p>
-        <BriefSummary answers={answers} print />
-      </div>
     </div>
   );
 }
 
-function BriefSummary({ answers, onEdit = null, print = false }) {
+function BriefSummary({ answers, onEdit = null }) {
   return (
     <div>
       {SCREENS.map((s) => {
