@@ -14,8 +14,9 @@
 // like this, and the asset is a planning tool, not a bank account.
 
 import React, { useState } from 'react';
-import { ArrowRight, Check } from 'lucide-react';
+import { ArrowRight, Check, Star } from 'lucide-react';
 import { BRAND } from '../theme.js';
+import { SUMMARY } from '../reviewsData.js';
 import { MARKETING_CONSENT_TEXT, consentRecord } from '../lib/courseConsent.js';
 
 const PORTAL_ORIGIN = window.location.origin;
@@ -45,18 +46,67 @@ function goTop(url) {
   try { window.location.href = url; return true; } catch { return false; }
 }
 
-// Two shapes, one page — the same trick /reviews uses with ?theme and ?speed,
-// so a second embed costs a query param rather than another rollup input,
+// The pitch, in one place, because three variants render it and copy that
+// drifts between two embeds of the same offer is worse than copy that is merely
+// wrong — at least wrong copy is wrong consistently.
+//
+// EYEBROW names the thing, because the button that sent them here names it too.
+// An eyebrow reading "Free planning tool" after a click on "Free Online Brief
+// Builder" leaves people checking they landed in the right place. "Free" stays:
+// it is the offer, not decoration.
+const PITCH = {
+  eyebrow: 'Free · Online Brief Builder',
+  intro: "The brief builder walks you through the same questions we'd ask on a kick-off "
+    + 'call — what it’s for, who it’s for, and the one thing it has to land. Answer '
+    + 'what you can; we can work from as little as a list of key points.',
+  bullets: [
+    'Saves as you type — stop halfway and come back whenever',
+    'Twenty-five questions, and only five that really matter',
+    'Ends with a document any production company could work from',
+    'Free, no card, and no password to remember',
+  ],
+};
+
+// Word for word the "How it works" steps on squideo.com/online-brief-builder.
+// Two pages selling one thing in two different sets of words is how a visitor
+// ends up wondering whether they are the same thing.
+const STEPS = [
+  {
+    title: 'Answer the questions',
+    body: 'Who the video is for, what it has to make them do, what already exists. Plain '
+      + 'questions, no jargon, and you can skip the ones you don’t know yet.',
+  },
+  {
+    title: 'Come back whenever',
+    body: 'It saves as you type and it’s tied to your account, so a brief started on a '
+      + 'Tuesday lunchtime is still there on Thursday. Your colleagues can add to it too.',
+  },
+  {
+    title: 'Take the document',
+    body: 'You end up with a written brief you own — usable with us, with another studio, '
+      + 'or as the thing that finally gets your own team agreeing on what the video is.',
+  },
+];
+
+// Three shapes, one page — the same trick /reviews uses with ?theme and ?speed,
+// so another embed costs a query param rather than another rollup input,
 // rewrite, CSP block and lookahead entry.
 //
-//   compact (default) — just the card. For the dedicated landing page, where
-//                       the page around it is already doing the selling.
-//   full              — card plus the pitch. For dropping into a homepage or a
-//                       process page, where nothing else explains what this is.
+//   compact (default) — just the card. For a page whose own copy is already
+//                       doing the selling.
+//   full              — card plus the pitch, on one transparent band. For
+//                       dropping into a homepage or a process page section
+//                       where nothing around it explains what this is.
+//   landing           — the whole landing page, minus the site chrome, for
+//                       iframing into Duda. Mirrors
+//                       squideo.com/online-brief-builder so the two sites make
+//                       the same offer in the same words until Duda retires.
 export function BriefStart({ getAttribution, variant = 'compact' }) {
-  const full = variant === 'full';
-  const form = <BriefStartForm getAttribution={getAttribution} full={full} />;
-  return full ? <BriefPromo>{form}</BriefPromo> : form;
+  const carded = variant === 'full' || variant === 'landing';
+  const form = <BriefStartForm getAttribution={getAttribution} full={carded} />;
+  if (variant === 'landing') return <BriefLanding>{form}</BriefLanding>;
+  if (variant === 'full') return <BriefPromo>{form}</BriefPromo>;
+  return form;
 }
 
 // Deliberately no JS breakpoints: inside an iframe the useful width is the
@@ -72,16 +122,7 @@ function BriefPromo({ children }) {
       fontFamily: 'inherit', color: BRAND.ink,
     }}>
       <div style={{ flex: '1 1 380px', minWidth: 0, maxWidth: 520 }}>
-        <div style={{
-          display: 'inline-block', fontSize: 11.5, fontWeight: 700, letterSpacing: 1.1,
-          textTransform: 'uppercase', color: BRAND.blue, marginBottom: 12,
-        }}>
-          {/* Names the thing, because the button that sent them here names it
-              too. An eyebrow reading "Free planning tool" after a click on
-              "Free Online Brief Builder" leaves people checking they landed in
-              the right place. "Free" stays: it is the offer. */}
-          Free · Online Brief Builder
-        </div>
+        <div style={EYEBROW}>{PITCH.eyebrow}</div>
         <h2 style={{
           margin: '0 0 14px', fontSize: 'clamp(25px, 3.4vw, 34px)', lineHeight: 1.15,
           fontWeight: 800, letterSpacing: '-0.02em', color: BRAND.ink,
@@ -89,28 +130,158 @@ function BriefPromo({ children }) {
           You know you need a video.<br />Briefing it is the hard part.
         </h2>
         <p style={{ margin: '0 0 20px', fontSize: 15.5, lineHeight: 1.65, color: '#5A7382' }}>
-          The brief builder walks you through the same questions we'd ask on a kick-off
-          call — what it's for, who it's for, and the one thing it has to land. Answer
-          what you can; we can work from as little as a list of key points.
+          {PITCH.intro}
         </p>
-        <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'grid', gap: 11 }}>
-          {[
-            'Saves as you type — stop halfway and come back whenever',
-            'Twenty-five questions, and only five that really matter',
-            'Ends with a document any production company could work from',
-            'Free, no card, and no password to remember',
-          ].map((line) => (
-            <li key={line} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', fontSize: 14.5, lineHeight: 1.5 }}>
-              <Check size={17} strokeWidth={3} style={{ color: BRAND.blue, flexShrink: 0, marginTop: 2 }} />
-              <span>{line}</span>
-            </li>
-          ))}
-        </ul>
+        <Bullets tone="light" />
       </div>
       <div style={{ flex: '1 1 340px', minWidth: 0, maxWidth: 460, width: '100%' }}>
         {children}
       </div>
     </div>
+  );
+}
+
+/**
+ * The full landing page with no header, footer or logo, so Duda's own chrome
+ * wraps it and it reads as a page on squideo.com rather than a widget.
+ *
+ * WHY THE FORM SITS IN THE HERO rather than below the steps, which is the order
+ * the page on the new site uses: this is embedded in an auto-height iframe, so
+ * the frame has no scrollbar of its own — the parent page does the scrolling.
+ * An in-page "Start your brief" button jumping to an anchor further down would
+ * scroll a viewport that isn't scrollable and appear to do nothing. Putting the
+ * card in the hero removes the need for one.
+ *
+ * WHY <h2> AND NOT <h1>: the Duda page around it carries the h1, and an iframe's
+ * headings are a separate document anyway. Give the Duda page a real heading —
+ * nothing in here can do that job for it.
+ *
+ * Each band paints its own background. The page background stays transparent
+ * (see brief-start.html), which is right for the other two variants and
+ * invisible here because the bands cover the frame edge to edge.
+ */
+function BriefLanding({ children }) {
+  return (
+    <div style={{ fontFamily: 'inherit', color: BRAND.ink }}>
+
+      {/* ── Hero ───────────────────────────────────────────────────────────── */}
+      <section style={{ background: BRAND.ink, padding: '52px 22px 56px' }}>
+        <div style={{
+          display: 'flex', flexWrap: 'wrap', gap: 40, alignItems: 'center',
+          justifyContent: 'center', maxWidth: 1060, margin: '0 auto',
+        }}>
+          <div style={{ flex: '1 1 380px', minWidth: 0, maxWidth: 520 }}>
+            <div style={{ ...EYEBROW, color: '#7FD5F2' }}>{PITCH.eyebrow}</div>
+            <h2 style={{
+              margin: '0 0 16px', fontSize: 'clamp(27px, 3.6vw, 38px)', lineHeight: 1.12,
+              fontWeight: 800, letterSpacing: '-0.02em', color: '#fff',
+            }}>
+              You know you need a video.<br />Briefing it is the hard part.
+            </h2>
+            {/* Not pure white: on a saturated navy it vibrates and is genuinely
+                harder to read. Same call the new site's ink sections make. */}
+            <p style={{ margin: '0 0 22px', fontSize: 16, lineHeight: 1.65, color: '#B9CEDB' }}>
+              {PITCH.intro}
+            </p>
+            <Bullets tone="dark" />
+          </div>
+          <div style={{ flex: '1 1 340px', minWidth: 0, maxWidth: 460, width: '100%' }}>
+            {children}
+          </div>
+        </div>
+      </section>
+
+      {/* ── How it works ───────────────────────────────────────────────────── */}
+      <section style={{ background: '#fff', padding: '52px 22px' }}>
+        <div style={{ maxWidth: 1060, margin: '0 auto' }}>
+          <h3 style={{
+            margin: '0 0 30px', fontSize: 'clamp(21px, 2.4vw, 26px)', fontWeight: 800,
+            letterSpacing: '-0.01em', color: BRAND.ink,
+          }}>
+            How it works
+          </h3>
+          <ol style={{
+            margin: 0, padding: 0, listStyle: 'none', display: 'grid', gap: 30,
+            gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+          }}>
+            {STEPS.map((step, i) => (
+              <li key={step.title} style={{ borderTop: `1px solid ${BRAND.border}`, paddingTop: 18 }}>
+                <div style={{
+                  fontSize: 12.5, fontWeight: 800, letterSpacing: 1, color: BRAND.blue,
+                  marginBottom: 8,
+                }}>
+                  {String(i + 1).padStart(2, '0')}
+                </div>
+                <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 8, color: BRAND.ink }}>
+                  {step.title}
+                </div>
+                <p style={{ margin: 0, fontSize: 14.5, lineHeight: 1.6, color: '#5A7382' }}>
+                  {step.body}
+                </p>
+              </li>
+            ))}
+          </ol>
+        </div>
+      </section>
+
+      {/* ── Proof ──────────────────────────────────────────────────────────── */}
+      <section style={{ background: BRAND.paper, borderTop: `1px solid ${BRAND.border}`, padding: '30px 22px' }}>
+        <div style={{
+          maxWidth: 1060, margin: '0 auto', display: 'flex', flexWrap: 'wrap',
+          alignItems: 'center', gap: '10px 16px', justifyContent: 'center',
+          textAlign: 'center', fontSize: 14.5, color: '#5A7382',
+        }}>
+          <span style={{ display: 'inline-flex', gap: 2 }} aria-hidden>
+            {[0, 1, 2, 3, 4].map((i) => (
+              <Star key={i} size={17} strokeWidth={0} style={{ fill: '#F5A623' }} />
+            ))}
+          </span>
+          <span>
+            <strong style={{ color: BRAND.ink, fontWeight: 700 }}>{SUMMARY.rating}</strong>
+            {' '}from {SUMMARY.count} reviews ·{' '}
+            {/* _blank, not _top: reading a review should not throw away the
+                half-filled form behind it. */}
+            <a
+              href={SUMMARY.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: BRAND.blue, fontWeight: 600 }}
+            >
+              read them
+            </a>
+          </span>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+const EYEBROW = {
+  display: 'inline-block', fontSize: 11.5, fontWeight: 700, letterSpacing: 1.1,
+  textTransform: 'uppercase', color: BRAND.blue, marginBottom: 12,
+};
+
+function Bullets({ tone }) {
+  const dark = tone === 'dark';
+  return (
+    <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'grid', gap: 11 }}>
+      {PITCH.bullets.map((line) => (
+        <li
+          key={line}
+          style={{
+            display: 'flex', gap: 10, alignItems: 'flex-start',
+            fontSize: 14.5, lineHeight: 1.5, color: dark ? '#DCEAF2' : 'inherit',
+          }}
+        >
+          <Check
+            size={17}
+            strokeWidth={3}
+            style={{ color: dark ? '#7FD5F2' : BRAND.blue, flexShrink: 0, marginTop: 2 }}
+          />
+          <span>{line}</span>
+        </li>
+      ))}
+    </ul>
   );
 }
 

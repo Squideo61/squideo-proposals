@@ -65,14 +65,20 @@ if (inIframe) {
   } catch { /* ignore */ }
 }
 
-// ?variant=full adds the pitch beside the form, for embedding somewhere that
-// isn't already explaining what this is (a homepage section, the process page).
-// Default stays compact — the dedicated landing page does its own selling.
-const variant = new URLSearchParams(window.location.search).get('variant') === 'full'
-  ? 'full'
-  : 'compact';
+// ?variant=full    adds the pitch beside the form, for embedding somewhere that
+//                  isn't already explaining what this is (a homepage section,
+//                  the process page).
+// ?variant=landing is the whole landing page without the site chrome, for the
+//                  Duda page that mirrors squideo.com/online-brief-builder.
+// Default stays compact — a page with its own selling copy wants only the card.
+const requested = new URLSearchParams(window.location.search).get('variant');
+const variant = requested === 'full' || requested === 'landing' ? requested : 'compact';
 
 const container = document.getElementById('brief-start-root');
+// The landing variant's bands run edge to edge and paint their own backgrounds,
+// so the 4px gutter the card variants need would show as a hairline of the host
+// page down both sides of every band.
+if (variant === 'landing') container.style.padding = '0';
 // The no-JS fallback in the HTML is real content a crawler can read; clear it
 // before mounting so it can't show through behind the form.
 container.innerHTML = '';

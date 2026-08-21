@@ -482,9 +482,12 @@ function snippetConfig() {
   // same `squideo-quote-form:height` message, so a page already handling one
   // needs no second listener.
   //
-  // Two variants. `full` carries its own headline and bullets, for a homepage
-  // or process-page section where nothing around it explains the offer.
-  // `compact` is just the card, for the dedicated landing page.
+  // Three variants. `landing` is the whole landing page minus the site chrome,
+  // for a Duda page of its own — it mirrors squideo.com/online-brief-builder so
+  // the old site and the new one make the same offer in the same words. `full`
+  // carries a headline and bullets, for a homepage or process-page section where
+  // nothing around it explains the offer. `compact` is just the card, for a page
+  // whose own copy is already doing the selling.
   const heightListener = `<script>
 window.addEventListener('message', function (e) {
   if (e.origin !== '${origin}') return;
@@ -493,6 +496,13 @@ window.addEventListener('message', function (e) {
   if (f) f.height = e.data.height;
 });
 <\/script>`;
+
+  // Taller starting height than the others: the landing variant is three bands,
+  // and `height` is only the floor until the first height message lands. Too low
+  // and the page visibly jumps on load.
+  const briefLandingEmbed = `<iframe src="${origin}/brief-start?variant=landing" title="Online Brief Builder"
+        style="width:100%;border:0;display:block" height="1200" loading="lazy"></iframe>
+${heightListener}`;
 
   const briefEmbedFull = `<iframe src="${origin}/brief-start?variant=full" title="Build your video brief"
         style="width:100%;border:0;display:block" height="560" loading="lazy"></iframe>
@@ -504,7 +514,7 @@ ${heightListener}`;
 ${heightListener}`;
 
   return {
-    appOrigin: origin, scriptTag, finalUrlSuffix, briefEmbed, briefEmbedFull,
+    appOrigin: origin, scriptTag, finalUrlSuffix, briefEmbed, briefEmbedFull, briefLandingEmbed,
     adsConfigured: adsConfigured(), gscConfigured: gscConfigured(), ga4Configured: ga4Configured(),
   };
 }

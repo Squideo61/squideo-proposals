@@ -1308,6 +1308,16 @@ function SettingsTab({ snippet, onSync, onReloadStatus, cutoff, onCutoffChange }
           portal when someone signs up, and a sandbox would trap them inside the frame.
         </p>
         <p style={{ fontSize: 13, color: BRAND.ink, fontWeight: 600, margin: '14px 0 6px' }}>
+          A page of its own (Duda)
+        </p>
+        <p style={{ fontSize: 12.5, color: BRAND.muted, margin: '0 0 8px' }}>
+          The whole landing page without a header or logo, so Duda's own chrome wraps it. It
+          mirrors <strong>squideo.com/online-brief-builder</strong> on the new site, word for
+          word, so both sites make the same offer while Duda is still live. Give the Duda page
+          a real heading of its own — the frame deliberately doesn't carry an H1.
+        </p>
+        <CopyBox value={snippet.briefLandingEmbed} />
+        <p style={{ fontSize: 13, color: BRAND.ink, fontWeight: 600, margin: '16px 0 6px' }}>
           Homepage or process page
         </p>
         <p style={{ fontSize: 12.5, color: BRAND.muted, margin: '0 0 8px' }}>
