@@ -32,7 +32,7 @@ import { notifyProposalInvoicePaid } from '../api/_lib/crm/proposalInvoicePaid.j
 
 // `claimable` models the paid_notified_at column: the conditional UPDATE
 // returns a row the first time and nothing afterwards, exactly like Postgres.
-function stub({ claimable = true, proposalId = 'prop-1' } = {}) {
+function stub({ claimable = true, proposalId = 'prop-1', alreadyRecorded = 0 } = {}) {
   let taken = !claimable;
   const claims = [];
   setSqlHandler((text) => {
@@ -43,8 +43,12 @@ function stub({ claimable = true, proposalId = 'prop-1' } = {}) {
       taken = true;
       return [{ proposal_id: proposalId }];
     }
+    // "Has anyone already recorded this money by another route?"
+    if (text.includes('FROM manual_payments WHERE proposal_id')) {
+      return [{ n: alreadyRecorded }];
+    }
     if (text.includes('FROM proposals WHERE id')) {
-      return [{ data: { proposalTitle: 'CareConnect launch film' } }];
+      return [{ data: { proposalTitle: 'CareConnect launch film', contactBusinessName: 'Northwind Care' } }];
     }
     return [];
   });
@@ -96,7 +100,9 @@ describe('notifyProposalInvoicePaid', () => {
   it('quotes no figure rather than a wrong one when Xero gives no total', async () => {
     stub();
     await notifyProposalInvoicePaid({ xeroInvoiceId: 'xero-1', invoiceNumber: 'INV-9' });
-    expect(sent[0].inApp.body).toBe('INV-9 paid via Xero');
+    expect(sent[0].inApp.body).toBe('Northwind Care · INV-9 paid via Xero');
+    // The point: no figure at all beats a figure we'd be guessing at.
+    expect(sent[0].inApp.body).not.toContain('£');
     expect(sent[0].text).not.toContain('£');
   });
 
@@ -121,6 +127,28 @@ describe('notifyProposalInvoicePaid', () => {
     expect(sent).toHaveLength(1);
     expect(sent[0].subject).toContain('Invoice paid on');
     expect(sent[0].inApp.body).toContain('only just picked this up');
+  });
+
+  it('stays quiet when the money is already recorded another way', async () => {
+    // A colleague records the payment by hand the moment the client says it's
+    // gone out; days later Xero confirms the invoice. One payment, two
+    // discoveries — and a second "the client paid" alert reads as a second
+    // payment, which is worse than noise.
+    const { claims } = stub({ alreadyRecorded: 1 });
+    const ok = await notifyProposalInvoicePaid({ xeroInvoiceId: 'xero-1', invoiceNumber: 'INV-6131' });
+    expect(ok).toBe(false);
+    // Claimed regardless, so it can't fire on the next sync either.
+    expect(claims).toHaveLength(1);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('names the client, since every proposal has the same title', async () => {
+    stub();
+    await notifyProposalInvoicePaid({ xeroInvoiceId: 'xero-1', invoiceNumber: 'INV-6131' });
+    // "Explainer Video Proposal" on its own identifies nothing — two alerts a
+    // day apart can name the same thing and be about different clients.
+    expect(sent[0].subject).toContain('Northwind Care');
+    expect(sent[0].inApp.body).toContain('Northwind Care');
   });
 
   it('does nothing without an invoice id', async () => {

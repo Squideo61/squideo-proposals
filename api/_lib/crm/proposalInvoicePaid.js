@@ -83,6 +83,28 @@ export async function notifyProposalInvoicePaid({
   // than a broadcast of every invoice ever paid.
   const freshness = paymentFreshness(paidAt || claimed[0].paid_at);
   if (freshness.band === 'historic') return false;
+
+  // ALREADY TOLD? The same money can reach the CRM by more than one road. A
+  // colleague records the payment by hand the moment the client says it has
+  // gone out, and days later Xero confirms the invoice is paid — one payment,
+  // two discoveries, and without this check two "the client paid" alerts for
+  // it. The second one is worse than noise: it reads as a second payment.
+  //
+  // If any payment is already recorded against this proposal, somebody has
+  // already been told. The claim above is still taken, so this stays quiet
+  // for good rather than firing on the next sync.
+  try {
+    const [known] = await sql`
+      SELECT (
+        (SELECT COUNT(*) FROM payments WHERE proposal_id = ${proposalId})
+        + (SELECT COUNT(*) FROM manual_payments WHERE proposal_id = ${proposalId})
+      )::int AS n`;
+    if ((known?.n || 0) > 0) return false;
+  } catch (err) {
+    // Can't tell — say something rather than nothing. A duplicate alert is
+    // recoverable by reading it; silence about real money is not.
+    console.warn('[invoicePaid] duplicate check failed', err.message);
+  }
   try {
     const [[proposalRow], dealId] = await Promise.all([
       sql`SELECT data FROM proposals WHERE id = ${proposalId}`.catch(() => []),
@@ -90,6 +112,12 @@ export async function notifyProposalInvoicePaid({
     ]);
     const proposal = proposalRow?.data || {};
     const title = proposal.proposalTitle || proposal.clientName || proposalId;
+    // "Explainer Video Proposal" is the DEFAULT title, so on its own it
+    // identifies nothing — two alerts a day apart can name the same thing and
+    // be about different clients, which is exactly how a real payment gets
+    // mistaken for a duplicate and ignored.
+    const who = proposal.contactBusinessName || proposal.clientName || null;
+    const forWhom = who && who !== title ? ` — ${escapeHtml(who)}` : '';
     const ref = invoiceNumber || xeroInvoiceId;
     const link = dealId ? `${APP_URL}/#/deal/${dealId}` : `${APP_URL}/?proposal=${proposalId}`;
     const sum = money(amount);
@@ -100,15 +128,15 @@ export async function notifyProposalInvoicePaid({
     // tells you about some payments and not others depending on which button
     // the client happened to press.
     await sendNotification('payment.received', {
-      subject: paidSubject(title, freshness),
+      subject: paidSubject(who && who !== title ? `${title} (${who})` : title, freshness),
       html: (note ? `<p style="margin:0 0 14px;padding:10px 12px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;font-size:13px;">${escapeHtml(note)}</p>` : '')
-        + `<p>The client paid invoice <strong>${escapeHtml(ref)}</strong> for <strong>${escapeHtml(title)}</strong>${sum ? ` — <strong>${escapeHtml(sum)}</strong>` : ''}.</p>
+        + `<p>The client paid invoice <strong>${escapeHtml(ref)}</strong> for <strong>${escapeHtml(title)}</strong>${forWhom}${sum ? ` — <strong>${escapeHtml(sum)}</strong>` : ''}.</p>
              <p>They took the "send me an invoice" route rather than paying by card, so this came in through Xero.</p>
              <p style="margin:16px 0;"><a href="${escapeHtml(link)}" style="display:inline-block;background:#2BB8E6;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;">Open the deal</a></p>`,
-      text: `${note ? note + ' ' : ''}Invoice ${ref} paid${sum ? ` (${sum})` : ''} for "${title}" — via Xero. ${link}`,
+      text: `${note ? note + ' ' : ''}Invoice ${ref} paid${sum ? ` (${sum})` : ''} for "${title}"${who && who !== title ? ` (${who})` : ''} — via Xero. ${link}`,
       inApp: {
         title: paidSubject(title, freshness).replace(/^💰 /, ''),
-        body: note || `${ref}${sum ? ` · ${sum}` : ''} paid via Xero`,
+        body: note || `${who ? who + ' · ' : ''}${ref}${sum ? ` · ${sum}` : ''} paid via Xero`,
         link: dealId ? `#/deal/${dealId}` : null,
       },
     });
