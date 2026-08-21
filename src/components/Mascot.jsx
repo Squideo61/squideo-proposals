@@ -27,6 +27,21 @@ import { useIsMobile } from '../utils.js';
 
 const SRC = '/mascot/squideo-desk.json';
 
+// ── IF YOU REPLACE THE ARTWORK ──────────────────────────────────────────────
+// Two things about this file are load-bearing, and neither is obvious from
+// looking at it in After Effects.
+//
+// 1. HIS LEGS MUST NOT MOVE. He is perched with the card's top edge cutting
+//    across his thighs (see MASCOT_LIFT in src/portal/pages/Brief.jsx), so the
+//    lower half of him is behind the card. The first version of this file
+//    kicked: ±19° of rotation and a 22px drop on the legs at frames 33 and 166.
+//    In AE that reads as him swinging his feet; on the page it reads as his
+//    legs detaching, because the part that moves is the part you cannot see.
+// 2. THE HIPS DECIDE THE OFFSET. MASCOT_LIFT is derived from where the hips
+//    layer sits in world space — 378..443 of a 600-unit comp. Move him within
+//    the frame and that number has to move too, on the brief AND on
+//    .mascot-seat in src/components/QuoteRequestForm.css.
+
 // The file is 180 frames at 30fps. The pose at the last frame matches the pose
 // at the first, so playing the whole thing is always seamless — starting from
 // the middle is not, because the eyebrows and arms sit somewhere else there.
