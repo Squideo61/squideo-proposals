@@ -148,8 +148,14 @@ const CARD_BODY = { padding: '34px 30px 26px' };
 //
 // z-index below the modal (2000) and above the card, so a guide video still
 // opens over him.
+const MASCOT_SIZE = 132;
+const MASCOT_RIGHT = 18;
+// How much of the right-hand edge he occupies. The resume banner reserves
+// exactly this, so the two can't drift apart the next time he moves.
+const MASCOT_LANE = MASCOT_SIZE + MASCOT_RIGHT;
+
 const MASCOT_PERCH = {
-  position: 'absolute', top: -96, right: 18, zIndex: 1,
+  position: 'absolute', top: -96, right: MASCOT_RIGHT, zIndex: 1,
   pointerEvents: 'none',
 };
 
@@ -862,6 +868,9 @@ export default function Brief({ briefId: routeId = null }) {
 
 function BriefEditor({ briefId, projects, showBack, onChanged }) {
   const { showToast, manageMode, user } = usePortal();
+  // Only for the mascot's lane — he doesn't render on a phone, so nothing needs
+  // reserving there and the banner gets its full width back.
+  const isMobile = useIsMobile();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [answers, setAnswers] = useState({});
@@ -1516,6 +1525,7 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
             name={firstName}
             done={progress.done}
             total={progress.total}
+            reserveRight={isMobile ? 0 : MASCOT_LANE}
             onResume={() => { goTo(resumeOffer.screenIndex, resumeOffer.partIndex); setResumeOffer(null); }}
             onDismiss={() => setResumeOffer(null)}
           />
@@ -1526,7 +1536,7 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
       {!isReview && screen && (
         <div style={{ position: 'relative' }}>
         <div className="brief-noprint" style={MASCOT_PERCH}>
-          <Mascot trigger={moves} />
+          <Mascot trigger={moves} size={MASCOT_SIZE} />
         </div>
         <Card style={CARD_SHELL}>
           {/* The stepper rides on the card rather than floating above it, so

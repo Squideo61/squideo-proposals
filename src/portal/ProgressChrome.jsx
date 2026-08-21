@@ -281,11 +281,17 @@ export function ReassuranceBadge({ children, tone = 'good' }) {
  * brief is a shared document colleagues may have contributed to — that button
  * has no business being one tap away.
  */
-export function ResumeBanner({ name, done, total, onResume, onDismiss }) {
+export function ResumeBanner({ name, done, total, onResume, onDismiss, reserveRight = 0 }) {
   return (
+    // `reserveRight` keeps the buttons out from under whatever overlaps this
+    // banner's right end — the mascot, who is perched on the card below and
+    // pokes up into it. The banner keeps its full width so it still lines up
+    // with that card; only its contents stop short, which leaves him sitting on
+    // an empty corner of it rather than on top of the Continue button.
     <div style={{
       display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
-      padding: '15px 18px', marginBottom: 22, borderRadius: 14,
+      padding: '15px 18px', paddingRight: 18 + reserveRight,
+      marginBottom: 22, borderRadius: 14,
       background: '#fff', border: `1px solid ${HAIRLINE}`,
       boxShadow: '0 1px 2px rgba(15,42,61,.04), 0 10px 26px rgba(15,42,61,.05)',
     }}>
