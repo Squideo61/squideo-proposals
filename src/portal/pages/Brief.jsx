@@ -115,7 +115,7 @@ const TICK_MS = 8000;
 // crowding its labels into each other. Prose inside is capped tighter still —
 // see StepTitle — because a 90-character line is hard to read however much room
 // there is for it.
-const BRIEF_MAX = 880;
+const BRIEF_MAX = 960;
 
 // A hairline rather than a border. At 11% it separates without drawing a box
 // round everything, which is most of why the page reads calm now.

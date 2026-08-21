@@ -39,17 +39,14 @@ import DemoProject from './pages/DemoProject.jsx';
 import { sampleSeen, markSampleSeen } from './demo/store.js';
 import { LEAD_MAGNET } from '../lib/leadMagnet.js';
 
+// How wide the content column is allowed to get. The rail sits outside it and
+// costs it nothing: the rail is flush to the screen edge and the column is
+// centred in whatever is left, so widening the rail moves the content, it does
+// not squeeze it.
 const MAX_WIDTH = 1080;
-// The left rail, plus the gap to the content. The shell is widened by exactly
-// this much so the content column keeps the width every page was designed
-// against — otherwise adding the rail would have quietly narrowed every table
-// and player in the portal.
-// Wide enough for the longest label — "Partner Programme" at 14px — to sit on
-// one line. The shell max below grows by the same amount, so widening the rail
-// costs the content column nothing.
+// Wide enough for the longest label — "Partner Programme" at 14px — on one line.
 const SIDEBAR_W = 224;
 const SIDEBAR_GAP = 26;
-const SHELL_MAX = MAX_WIDTH + SIDEBAR_W + SIDEBAR_GAP;
 
 // #/view/param?a=b — the query is optional and only the review pages use it
 // (?item=/?draft= say which video/storyboard/draft a link was sent about), but
@@ -161,13 +158,15 @@ function Header() {
   return (
     <header style={{
       background: BRAND.ink,
-      padding: isMobile ? '10px 16px' : '12px 24px',
+      // Left padding matches the rail's gutter so the logo sits directly above
+      // the nav. A header centred on a narrower block while the rail below it
+      // is flush left is the one arrangement that looks broken on a wide screen.
+      padding: isMobile ? '10px 16px' : '12px 24px 12px 16px',
       position: 'sticky', top: 0, zIndex: 40,
     }}>
       {/* Wraps rather than overflows: three action buttons plus the org
           switcher and account controls is a lot for one row on a laptop. */}
       <div style={{
-        maxWidth: SHELL_MAX, margin: '0 auto',
         display: 'flex', alignItems: 'center', gap: 10, rowGap: 8, flexWrap: 'wrap',
       }}>
         <a href="#/" style={{ display: 'flex', alignItems: 'center', gap: 10, textDecoration: 'none' }}>
@@ -273,9 +272,13 @@ function NavBadge({ count, style }) {
 
 function SideNav({ view, company, sampleAvailable, sampleBadge }) {
   return (
+    // The COLUMN is flush to the screen edge; the items sit 16px in, so an
+    // active pill's white background never touches the viewport edge — which
+    // reads as a clipping bug rather than as a design.
     <nav style={{
-      width: SIDEBAR_W, flexShrink: 0, alignSelf: 'flex-start',
-      position: 'sticky', top: 18, padding: '4px 0',
+      width: SIDEBAR_W + 16, flexShrink: 0, alignSelf: 'flex-start',
+      position: 'sticky', top: 18, padding: '4px 0 4px 16px',
+      boxSizing: 'border-box',
       display: 'flex', flexDirection: 'column', gap: 2,
     }}>
       {visibleNav(company, sampleAvailable).filter((n) => n.view !== 'request').map(({ view: v, label, hash, Icon }) => {
@@ -520,10 +523,15 @@ function AuthedApp() {
           {page}
         </div>
       ) : (
+        // Full width, with the rail pinned to the left edge of the SCREEN
+        // rather than to the left edge of a centred block. On a wide monitor the
+        // old arrangement left the rail floating in the middle-left with empty
+        // page to its left, which reads as a layout that failed rather than as
+        // navigation.
         <div style={{
-          maxWidth: SHELL_MAX, margin: '0 auto', width: '100%',
+          width: '100%',
           display: 'flex', gap: isMobile ? 0 : SIDEBAR_GAP,
-          padding: isMobile ? '18px 16px 90px' : '22px 24px 60px',
+          padding: isMobile ? '18px 16px 90px' : '22px 24px 60px 0',
           boxSizing: 'border-box', alignItems: 'flex-start',
         }}>
           {!isMobile && (
@@ -536,9 +544,14 @@ function AuthedApp() {
           )}
           {/* minWidth:0 matters — without it a wide table or a long unbroken
               string inside the page pushes the whole flex row wider than the
-              shell and the rail slides off to the left. */}
+              viewport and the rail slides off to the left. */}
           <main style={{ flex: 1, minWidth: 0 }}>
-            {page}
+            {/* Centred in the space beside the rail, not stretched across it.
+                Left-aligned against a flush rail, the content would sit further
+                from the middle of the screen the wider the monitor got. */}
+            <div style={{ maxWidth: MAX_WIDTH, margin: '0 auto', width: '100%' }}>
+              {page}
+            </div>
           </main>
         </div>
       )}
