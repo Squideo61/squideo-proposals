@@ -44,8 +44,12 @@ WITH candidate AS (
    WHERE mp.manual_invoice_id IS NULL
      AND mp.xero_invoice_id IS NULL
      AND pb.xero_invoice_id IS NOT NULL
-     AND pb.invoice_amount IS NOT NULL
-     AND ABS(mp.amount - pb.invoice_amount) < 0.01
+     -- invoice_amount is only filled in by a sync and is often still NULL, so
+     -- fall back to what Xero says was PAID — which, for an invoice that has
+     -- been settled, is the more reliable of the two anyway. Matching on
+     -- invoice_amount alone silently linked nothing.
+     AND COALESCE(pb.invoice_amount, pb.paid_amount) IS NOT NULL
+     AND ABS(mp.amount - COALESCE(pb.invoice_amount, pb.paid_amount)) < 0.01
      AND (SELECT COUNT(*) FROM manual_payments m2
            WHERE m2.proposal_id = mp.proposal_id
              AND m2.manual_invoice_id IS NULL) = 1
