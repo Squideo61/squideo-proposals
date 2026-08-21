@@ -201,25 +201,24 @@
   color: #356b4c;
   flex-shrink: 0;
 }
-/* 124, not 50, because the mascot sits in this gap: 112 of him is above the
-   card, and the rest is clearance so he is not standing on the "Finish" label.
-   A character on the navigation is a character in the way. Back to 40 on a
-   phone, where he does not render at all. */
+/* 116, not 50, because the mascot sits in this gap: 104 of him is above the
+   card, and the remaining 12 is clearance so he is not standing on the "Finish"
+   label. A character on the navigation is a character in the way. Back to 40 on
+   a phone, where he does not render at all. */
 .quote-request-widget .progress-header {
-  margin-bottom: 124px;
+  margin-bottom: 116px;
 }
 
 .quote-request-widget .form-perch {
   position: relative;
 }
-/* Pulled up by nearly all of his own height, so his feet land just below the
-   card's top edge and his legs hang over the front of it. A character beside a
-   card is a sticker, one sunk into it is wading, and one with its legs over the
-   edge is sitting on it. Matches MASCOT_LIFT in src/portal/pages/Brief.jsx —
-   same artwork at the same size wants the same offset. */
+/* The card's top edge cuts across his thighs, so the rest of his legs hang over
+   the front of it. Measured from the artwork, not nudged into place — see
+   MASCOT_LIFT in src/portal/pages/Brief.jsx for where 104 comes from. Keep the
+   two in step: same artwork at the same size wants the same offset. */
 .quote-request-widget .mascot-seat {
   position: absolute;
-  top: -112px;
+  top: -104px;
   right: 18px;
   z-index: 1;
   pointer-events: none;
