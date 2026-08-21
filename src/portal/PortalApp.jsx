@@ -7,7 +7,7 @@ import { SQUIDEO_LOGO } from '../defaults.js';
 import { useIsMobile } from '../utils.js';
 import { Toast } from '../components/ui.jsx';
 import {
-  Home, Film, FolderOpen, Sparkles, Users, Settings as SettingsIcon, PlusCircle, LogOut, Wallet, UserPlus, GraduationCap, FileText, Handshake, MoreHorizontal, X as XIcon,
+  PlusCircle, LogOut, Wallet, UserPlus, FileText, MoreHorizontal, X as XIcon,
 } from 'lucide-react';
 import { Eye, PencilLine, FlaskConical } from 'lucide-react';
 import { PortalProvider, usePortal } from './PortalContext.jsx';
@@ -37,7 +37,7 @@ import Brief from './pages/Brief.jsx';
 import Partner from './pages/Partner.jsx';
 import DemoProject from './pages/DemoProject.jsx';
 import { sampleSeen, markSampleSeen } from './demo/store.js';
-import { LEAD_MAGNET } from '../lib/leadMagnet.js';
+import { navGroups, visibleNav, isProspectCompany } from './nav.js';
 
 // How wide the content column is allowed to get. The rail sits outside it and
 // costs it nothing: the rail is flush to the screen edge and the column is
@@ -62,77 +62,6 @@ function parseHash() {
 
 export function navigate(hash) {
   window.location.hash = hash;
-}
-
-const NAV = [
-  // shortLabel is what the mobile tab bar uses — "Current projects" doesn't fit
-  // under an icon at phone width.
-  //
-  // mobilePrimary:true earns an item its own tab in the phone bar. The bar lays
-  // items out evenly with no scroll, so past about six they stop being tappable
-  // — everything else goes behind "More" rather than being dropped. The old
-  // mobile:false hid three sections from phones outright, which meant they were
-  // reachable only by typing a hash: the portal is an installable PWA, so every
-  // section has to be reachable at phone width.
-  //
-  // The five primaries cover both arrivals: a prospect lives in Course and
-  // Brief, a client in Projects, Library and New video.
-  // Ordered for the way people now ARRIVE, not for how a long-standing client
-  // uses it. Most new accounts come in through the course, so the course and
-  // then the brief sit above Current projects — for a prospect that page is
-  // empty, and an empty first screen is a bad first impression. A client with
-  // live work reaches their projects in one more glance; a prospect who lands
-  // on nothing may not come back at all.
-  // Named from LEAD_MAGNET so the rail, the landing page and the button on
-  // squideo.com can't drift apart. "Free" is dropped in here: they've already
-  // got it, and still selling it to someone who owns it reads badly.
-  { view: 'course', label: LEAD_MAGNET.navLabel, shortLabel: LEAD_MAGNET.navShort, hash: '#/course', Icon: GraduationCap, mobilePrimary: true },
-  // "Online Brief Builder", not "Brief Builder": this is the lead magnet now,
-  // so the rail has to read the same as the button on squideo.com that sent
-  // them here — a name that changes at the door makes people wonder whether
-  // they've landed on the right thing. shortLabel stays "Brief": the mobile tab
-  // bar fits one short word per tab.
-  { view: 'brief', label: 'Online Brief Builder', shortLabel: 'Brief', hash: '#/brief', Icon: FileText, mobilePrimary: true },
-  // Shown to everyone, badged until they've opened it once. It was prospect-only
-  // and buried in an empty state, which meant the best thing in the portal was
-  // invisible to most of the people in it — including every client waiting on a
-  // first draft, who is exactly the person wondering what reviewing one is like.
-  // Sits directly under the brief because that's the order the funnel runs in:
-  // read the course, describe the job, then see what working with us feels like.
-  { view: 'demo', label: 'Sample project', shortLabel: 'Sample', hash: '#/demo', Icon: Sparkles, needsSample: true },
-  { view: 'home', label: 'Current projects', shortLabel: 'Projects', hash: '#/', Icon: Home, mobilePrimary: true },
-  { view: 'library', label: 'Your Video Library', shortLabel: 'Library', hash: '#/library', Icon: Film, mobilePrimary: true },
-  { view: 'video-credit', label: 'Video credit', hash: '#/video-credit', Icon: Wallet },
-  // Sits under Video credit because it's the same idea committed to monthly.
-  // Unlike Video credit it shows no rate — the plan is scoped on a call — so
-  // it needs no prospect gate.
-  { view: 'partner', label: 'Partner Programme', shortLabel: 'Partner', hash: '#/partner', Icon: Handshake },
-  { view: 'documents', label: 'Documents', hash: '#/documents', Icon: FolderOpen },
-  { view: 'request', label: 'New video', hash: '#/request', Icon: PlusCircle, highlight: true, mobilePrimary: true },
-  // shortLabel matters here now the full labels are possessive — "Your Video
-  // Library" under a phone tab-bar icon would wrap to three lines.
-  { view: 'team', label: 'Your Team', shortLabel: 'Team', hash: '#/team', Icon: Users },
-  { view: 'settings', label: 'Settings', hash: '#/settings', Icon: SettingsIcon },
-];
-
-// One filter, used by both the rail and the phone tab bar, so a section can't
-// end up hidden in one and visible in the other.
-//
-// `video-credit` is the rate card, and it belongs to clients: credit is the rung
-// AFTER a first project, when a style exists to repeat. A video-guide signup
-// has a `prospect` org and shouldn't be shown £/min before we've scoped
-// anything — that number would anchor every quote they get afterwards. The
-// real enforcement is CLIENT_ONLY in api/portal.js; this is the door.
-function visibleNav(company, sampleAvailable = false) {
-  // `creditVisible` is resolved server-side from the company's override plus
-  // the default rule, so the nav can't disagree with the API guard. Undefined
-  // (an older session payload) falls through to visible rather than hiding a
-  // paying client's own balance.
-  const hideCredit = company?.creditVisible === false;
-  // The sample project appears for everyone, but only once there's something in
-  // it — see the `sampleProject` flag on /api/portal/me.
-  return NAV.filter((n) => !(hideCredit && n.view === 'video-credit'))
-    .filter((n) => !(n.needsSample && !sampleAvailable));
 }
 
 // Header actions. The primary is the blue call-to-action; secondaries are
@@ -216,9 +145,20 @@ function Header() {
                 <Wallet size={15} /> Order credit
               </a>
             )}
-            <a href="#/request" style={HEADER_BTN.primary}>
-              <PlusCircle size={15} /> New video
-            </a>
+            {/* A prospect's one action is the brief, not "New video". The rail
+                puts New video under "when your project starts"; leaving it as
+                the blue button in the header would have the chrome arguing with
+                itself, and it asks for a decision from someone we have not
+                scoped anything for yet. The brief is that conversation. */}
+            {isProspectCompany(activeCompany) ? (
+              <a href="#/brief" style={HEADER_BTN.primary}>
+                <FileText size={15} /> Start your brief
+              </a>
+            ) : (
+              <a href="#/request" style={HEADER_BTN.primary}>
+                <PlusCircle size={15} /> New video
+              </a>
+            )}
           </>
         )}
         {/* Two bells, the CRM's own arrangement: the specialised feed to the
@@ -281,34 +221,56 @@ function SideNav({ view, company, sampleAvailable, sampleBadge }) {
       boxSizing: 'border-box',
       display: 'flex', flexDirection: 'column', gap: 2,
     }}>
-      {visibleNav(company, sampleAvailable).filter((n) => n.view !== 'request').map(({ view: v, label, hash, Icon }) => {
-        const active = view === v || (v === 'home' && view === 'project');
-        const badge = v === 'demo' ? sampleBadge : 0;
+      {navGroups(company, sampleAvailable).map((group) => {
+        const items = group.items.filter((n) => n.view !== 'request');
+        if (!items.length) return null;
         return (
-          <a
-            key={v}
-            href={hash}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 10,
-              padding: '10px 13px', borderRadius: 9, textDecoration: 'none',
-              // A label that outgrows the rail on some font stack wraps to a
-              // second line rather than spilling out of its own background.
-              lineHeight: 1.3,
-              fontSize: 14, fontWeight: active ? 700 : 500,
-              color: active ? BRAND.ink : '#61798A',
-              background: active ? '#fff' : 'transparent',
-              border: `1px solid ${active ? BRAND.border : 'transparent'}`,
-              // The active item is the one thing that should read instantly at
-              // a glance, so it gets the accent bar as well as the weight.
-              boxShadow: active ? `inset 3px 0 0 ${BRAND.blue}` : 'none',
-            }}
-          >
-            {/* flexShrink:0 — a two-line label must squash the text box, never
-                the icon, or the row's icons stop lining up with each other. */}
-            <Icon size={17} strokeWidth={active ? 2.3 : 2} style={{ flexShrink: 0 }} />
-            <span style={{ flex: 1, minWidth: 0 }}>{label}</span>
-            <NavBadge count={badge} />
-          </a>
+          <React.Fragment key={group.key}>
+            {group.heading && (
+              <div style={{
+                // Space above, almost none below: the heading has to belong to
+                // what follows it rather than float between the two groups.
+                margin: '20px 0 4px', padding: '0 13px',
+                fontSize: 10.5, fontWeight: 700, letterSpacing: '0.09em',
+                textTransform: 'uppercase', color: '#7C94A5',
+              }}>{group.heading}</div>
+            )}
+            {items.map(({ view: v, label, hash, Icon }) => {
+              const active = view === v || (v === 'home' && view === 'project');
+              const badge = v === 'demo' ? sampleBadge : 0;
+              return (
+                <a
+                  key={v}
+                  href={hash}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    padding: '10px 13px', borderRadius: 9, textDecoration: 'none',
+                    // A label that outgrows the rail on some font stack wraps to a
+                    // second line rather than spilling out of its own background.
+                    lineHeight: 1.3,
+                    fontSize: 14, fontWeight: active ? 700 : 500,
+                    color: active ? BRAND.ink : '#61798A',
+                    background: active ? '#fff' : 'transparent',
+                    border: `1px solid ${active ? BRAND.border : 'transparent'}`,
+                    // The active item is the one thing that should read instantly at
+                    // a glance, so it gets the accent bar as well as the weight.
+                    boxShadow: active ? `inset 3px 0 0 ${BRAND.blue}` : 'none',
+                    // Waiting on a project, not disabled. Faded enough to sit
+                    // back from the sections they can use today, solid enough
+                    // to still look like something they own — and full strength
+                    // the moment they open one, so it never reads as broken.
+                    opacity: group.muted && !active ? 0.55 : 1,
+                  }}
+                >
+                  {/* flexShrink:0 — a two-line label must squash the text box, never
+                      the icon, or the row's icons stop lining up with each other. */}
+                  <Icon size={17} strokeWidth={active ? 2.3 : 2} style={{ flexShrink: 0 }} />
+                  <span style={{ flex: 1, minWidth: 0 }}>{label}</span>
+                  <NavBadge count={badge} />
+                </a>
+              );
+            })}
+          </React.Fragment>
         );
       })}
     </nav>
@@ -324,8 +286,24 @@ const tabStyle = (active, highlight) => ({
 function MobileTabBar({ view, company, sampleAvailable, sampleBadge }) {
   const [moreOpen, setMoreOpen] = useState(false);
   const items = visibleNav(company, sampleAvailable);
-  const primary = items.filter((n) => n.mobilePrimary);
-  const overflow = items.filter((n) => !n.mobilePrimary);
+  // A prospect's primaries are their own: three of the client ones (Projects,
+  // Library, New video) are sections with nothing in them yet, and leading a
+  // five-tab phone bar with empty rooms is the same mistake the rail was just
+  // fixed for, in less space.
+  const isPrimary = isProspectCompany(company)
+    ? (n) => !!n.prospectPrimary
+    : (n) => !!n.mobilePrimary;
+  const primary = items.filter(isPrimary);
+  const overflow = items.filter((n) => !isPrimary(n));
+  // The "More" sheet, split the way the rail is. For a client it stays one flat
+  // list — the grouping only exists for someone who has nothing in those
+  // sections yet.
+  const overflowGroups = isProspectCompany(company)
+    ? [
+        { key: 'now', heading: null, items: overflow.filter((n) => n.group !== 'later') },
+        { key: 'later', heading: 'When your project starts', muted: true, items: overflow.filter((n) => n.group === 'later') },
+      ].filter((g) => g.items.length)
+    : [{ key: 'all', heading: null, items: overflow }];
   // "More" lights up when the section you're actually in lives behind it —
   // otherwise the bar would show nothing selected and you'd have no idea where
   // you were.
@@ -364,22 +342,37 @@ function MobileTabBar({ view, company, sampleAvailable, sampleBadge }) {
                 }}
               ><XIcon size={18} /></button>
             </div>
-            {overflow.map(({ view: v, label, hash, Icon }) => {
-              const active = view === v;
-              return (
-                <a key={v} href={hash} onClick={() => setMoreOpen(false)} style={{
-                  display: 'flex', alignItems: 'center', gap: 12,
-                  padding: '13px 12px', textDecoration: 'none', borderRadius: 10,
-                  color: active ? BRAND.ink : '#5A7382',
-                  background: active ? '#EAF7FD' : 'transparent',
-                  fontSize: 15, fontWeight: active ? 700 : 500,
-                }}>
-                  <Icon size={19} strokeWidth={active ? 2.4 : 2} />
-                  <span style={{ flex: 1, minWidth: 0 }}>{label}</span>
-                  <NavBadge count={v === 'demo' ? sampleBadge : 0} />
-                </a>
-              );
-            })}
+            {/* Same split as the rail, so the two don't tell a prospect
+                different stories about the same section. Settings and friends
+                first, then everything waiting on a project. */}
+            {overflowGroups.map((group) => (
+              <React.Fragment key={group.key}>
+                {group.heading && (
+                  <div style={{
+                    margin: '12px 0 2px', padding: '0 12px',
+                    fontSize: 10.5, fontWeight: 700, letterSpacing: '0.09em',
+                    textTransform: 'uppercase', color: '#7C94A5',
+                  }}>{group.heading}</div>
+                )}
+                {group.items.map(({ view: v, label, hash, Icon }) => {
+                  const active = view === v;
+                  return (
+                    <a key={v} href={hash} onClick={() => setMoreOpen(false)} style={{
+                      display: 'flex', alignItems: 'center', gap: 12,
+                      padding: '13px 12px', textDecoration: 'none', borderRadius: 10,
+                      color: active ? BRAND.ink : '#5A7382',
+                      background: active ? '#EAF7FD' : 'transparent',
+                      fontSize: 15, fontWeight: active ? 700 : 500,
+                      opacity: group.muted && !active ? 0.62 : 1,
+                    }}>
+                      <Icon size={19} strokeWidth={active ? 2.4 : 2} />
+                      <span style={{ flex: 1, minWidth: 0 }}>{label}</span>
+                      <NavBadge count={v === 'demo' ? sampleBadge : 0} />
+                    </a>
+                  );
+                })}
+              </React.Fragment>
+            ))}
           </div>
         </>
       )}

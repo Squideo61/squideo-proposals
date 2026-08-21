@@ -111,6 +111,16 @@ export const isDemoMode = () => !!getDemoState();
 // product named after the invented company, so it cannot drift onto a real
 // one later.
 const COMPANY = { id: 'demo-co', name: 'Northwind Care Group', prospect: false, creditVisible: true, logoUrl: null };
+
+// The org as the SELECTED state sees it. A prospect — someone who signed
+// themselves up off a landing page and has no project yet — gets a portal that
+// is genuinely shaped differently: the rail splits under "When your project
+// starts", the header offers the brief rather than "New video", and the rate
+// card is gone. The demo has to reproduce that, or the one state that shows the
+// newest visitor's experience is the one state that shows it wrong.
+const companyFor = (state) => (state === 'prospect'
+  ? { ...COMPANY, prospect: true, creditVisible: false }
+  : COMPANY);
 const ME = { id: 'demo-me', name: 'Alex Morgan', email: 'alex@northwindcare.example', jobTitle: 'Marketing Lead' };
 const PRIYA = { id: 'demo-priya', name: 'Priya Shah', email: 'priya@northwindcare.example' };
 const TOM = { id: 'demo-tom', name: 'Tom Ellery', email: 'tom@northwindcare.example' };
@@ -360,7 +370,7 @@ function respond(state, method, action, query, body) {
   switch (action) {
     case 'me':
       return {
-        user: { ...ME, companies: [COMPANY] },
+        user: { ...ME, companies: [companyFor(state)] },
         sampleProject: { available: true },
         // Deliberately NOT flagged as a preview: preview chrome says "you're
         // looking at a real client's portal", and this is the opposite claim.
@@ -370,8 +380,8 @@ function respond(state, method, action, query, body) {
 
     case 'overview':
       return {
-        company: COMPANY,
-        companies: [COMPANY],
+        company: companyFor(state),
+        companies: [companyFor(state)],
         projects: s.hasProject ? [project(s)] : [],
         actionNeeded: s.hasProject && s.nextStep.court === 'you' ? 1 : 0,
         suggestCredit: state === 'delivered',
