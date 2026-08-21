@@ -513,7 +513,7 @@ function AuthedApp() {
     // grow-and-scroll behaviour.
     <div style={{
       ...(fullBleed ? { height: '100vh', overflow: 'hidden' } : { minHeight: '100vh' }),
-      background: BRAND.paper, display: 'flex', flexDirection: 'column',
+      background: BRAND.portalBg, display: 'flex', flexDirection: 'column',
     }}>
       <DemoBanner />
       <PreviewBanner />
@@ -673,7 +673,7 @@ function PreviewBanner() {
 function PreviewLinkError({ message }) {
   const needsSignIn = /unauthoris|session expired/i.test(message);
   return (
-    <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: BRAND.paper, padding: 20 }}>
+    <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: BRAND.portalBg, padding: 20 }}>
       <div style={{
         maxWidth: 440, background: '#fff', border: `1px solid ${BRAND.border}`,
         borderRadius: 14, padding: 28, textAlign: 'center',
@@ -761,7 +761,7 @@ function Boot() {
 
   if (booting || magicState === 'pending' || previewState === 'pending') {
     return (
-      <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: BRAND.paper }}>
+      <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: BRAND.portalBg }}>
         <div style={{ color: BRAND.muted, fontSize: 14 }}>
           {previewState === 'pending' ? 'Opening the client’s portal…' : 'Loading your portal…'}
         </div>

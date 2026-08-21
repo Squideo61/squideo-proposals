@@ -133,7 +133,10 @@ const CARD_SHELL = {
 };
 const STEP_BAND = {
   padding: '22px 28px 20px',
-  background: '#F8FAFC',
+  // brand-50, the tint one step lighter than the page behind the card. A neutral
+  // grey band here read as dirty once the page went blue — a band that is a
+  // shade of the same hue reads as part of the card instead.
+  background: '#F0F9FF',
   borderBottom: `1px solid ${HAIRLINE}`,
 };
 const CARD_BODY = { padding: '34px 30px 26px' };
@@ -1237,7 +1240,7 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
             {brief.dealReference && <span style={{ opacity: 0.7 }}>· {brief.dealReference}</span>}
           </span>
         ) : (
-          <span style={{ fontSize: 12.5, color: '#6B7785' }}>New enquiry</span>
+          <span style={{ fontSize: 12.5, color: BRAND.muted }}>New enquiry</span>
         )}
         {canFile && projects.length > 0 && (
           <select
@@ -1256,7 +1259,7 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
           </select>
         )}
         {!brief.dealId && canFile && projects.length > 0 && (
-          <span style={{ fontSize: 11.5, color: '#9AA5B1', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <span style={{ fontSize: 11.5, color: BRAND.muted, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
             <Link2 size={11} />
             {readOnly ? 'not filed to a project yet' : 'link it so it reaches the right team'}
           </span>
@@ -1268,7 +1271,7 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
       {others.length > 0 && (
         <div style={{
           display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap', marginBottom: 10,
-          fontSize: 12.5, color: '#5A7382',
+          fontSize: 12.5, color: BRAND.muted,
         }}>
           <span style={{ display: 'flex' }}>
             {others.map((p) => (

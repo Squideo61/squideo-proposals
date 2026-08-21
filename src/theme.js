@@ -3,7 +3,23 @@ export const BRAND = {
   ink: '#0F2A3D',
   paper: '#FAFBFC',
   border: '#E5E9EE',
-  muted: '#6B7785'
+  // Darkened from #6B7785. That value was 4.45:1 on white — under the 4.5
+  // threshold for the 12–13px text it is mostly used for, so it was already
+  // failing before the portal took a tinted background, which pushed it to
+  // 3.8:1. This clears 4.5:1 on white AND on portalBg below. The shift is about
+  // three percent of lightness: legible on a laptop in daylight, invisible as a
+  // restyle.
+  muted: '#5C6B77',
+  // The portal's page background — brand-100 from the design system on
+  // squideo.com, the tint one step off white. White cards on a white page have
+  // to be outlined to exist at all; on this they read as objects sitting on a
+  // surface, which is the whole reason the brief builder now looks like a
+  // document rather than a region of the page.
+  //
+  // NOT `paper`, which stays near-white: that is the backdrop behind the video
+  // and storyboard review players, and a blue wash behind someone's footage
+  // would shift how they judge their own colour grade.
+  portalBg: '#DCEEF7',
 };
 
 // Caps how wide the CRM content (and the top bar's inner row) can grow, so it
