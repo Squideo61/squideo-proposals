@@ -124,3 +124,37 @@ describe('the portal demo fixture', () => {
     }
   });
 });
+
+describe('the demo guide fixture', () => {
+  // The brief points six questions at a guide video by NUMBER. If the demo's
+  // course fixture does not carry those numbers, every one of those links opens
+  // a modal saying the video cannot be found — which is what happened before
+  // this test, because the demo had no course fixture at all and the request
+  // fell through to an empty object.
+  it('has a module for every videoRef the brief cites', async () => {
+    const demo = await import('../src/portal/demo/portalDemo.js');
+    const course = await demo.demoRequest('GET', 'course');
+    const numbers = new Set((course.modules || []).map((m) => m.moduleNumber));
+    const cited = ALL_QUESTIONS.filter((q) => q.videoRef).map((q) => q.videoRef);
+    expect(cited.length).toBeGreaterThan(0);
+    for (const n of cited) expect(numbers, `videoRef ${n}`).toContain(n);
+  });
+
+  it('matches the shape the real course route returns', async () => {
+    const demo = await import('../src/portal/demo/portalDemo.js');
+    const course = await demo.demoRequest('GET', 'course');
+    expect(course).toMatchObject({
+      modules: expect.any(Array),
+      completedCount: expect.any(Number),
+      totalCount: expect.any(Number),
+      percentComplete: expect.any(Number),
+      allComplete: expect.any(Boolean),
+    });
+    for (const m of course.modules) {
+      expect(Object.keys(m).sort()).toEqual([
+        'completed', 'description', 'durationSeconds', 'id', 'moduleNumber',
+        'posterUrl', 'resumeSeconds', 'slug', 'started', 'subtitle', 'title',
+      ]);
+    }
+  });
+});

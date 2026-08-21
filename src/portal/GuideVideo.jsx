@@ -17,10 +17,12 @@
 // the nudge emails keep telling them to.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Check, RotateCcw } from 'lucide-react';
+import { Check, RotateCcw, PlayCircle } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { Modal } from '../components/ui.jsx';
 import { portalApi, mediaUrl } from './api.js';
+import { isDemoMode } from './demo/portalDemo.js';
+import { LEAD_MAGNET } from '../lib/leadMagnet.js';
 import { usePortal } from './PortalContext.jsx';
 
 const HEARTBEAT_MS = 15000;
@@ -30,6 +32,46 @@ export const fmtDuration = (s) => {
   const m = Math.floor(s / 60);
   return `${m}:${String(Math.round(s % 60)).padStart(2, '0')}`;
 };
+
+/**
+ * Which video this is, how long it runs, and whether it has been watched.
+ * Shared by the real player and the demo placeholder — the metadata is real in
+ * both, and duplicating it is how the two quietly stop matching.
+ */
+function GuideMeta({ module: m, onRestart = null }) {
+  return (
+    <>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
+        <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.8, textTransform: 'uppercase', color: BRAND.blue }}>
+          Video {m.moduleNumber}
+        </span>
+        <span style={{ fontSize: 16.5, fontWeight: 700, color: BRAND.ink }}>{m.title}</span>
+        {m.durationSeconds && <span style={{ fontSize: 12.5, color: BRAND.muted }}>{fmtDuration(m.durationSeconds)}</span>}
+        {m.completed && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11.5, fontWeight: 700, color: '#15803D' }}>
+            <Check size={12} /> Watched
+          </span>
+        )}
+        {onRestart && (
+          <button className="btn-ghost" onClick={onRestart} style={{ fontSize: 12, marginLeft: 'auto' }}>
+            <RotateCcw size={13} /> Start again
+          </button>
+        )}
+      </div>
+
+      {(m.subtitle || m.description) && (
+        <p style={{ margin: '8px 0 0', fontSize: 13.5, lineHeight: 1.6, color: BRAND.muted }}>
+          {m.description || m.subtitle}
+        </p>
+      )}
+      {onRestart && (
+        <div style={{ marginTop: 8, fontSize: 12, color: BRAND.muted }}>
+          Picking up from {fmtDuration(m.resumeSeconds)}.
+        </div>
+      )}
+    </>
+  );
+}
 
 /**
  * One guide video: the player, its heading, and the progress heartbeat.
@@ -86,6 +128,29 @@ export function GuidePlayer({ module: m, onProgress, showToast, autoPlay = false
     setResumed(true);
   };
 
+  // Demo mode intercepts the API, not mediaUrl — so a <video src> here would be
+  // a real request for a real file on behalf of a client who does not exist, and
+  // would fail. Everything around the player is real; the player says so.
+  if (isDemoMode()) {
+    return (
+      <>
+        <div style={{
+          borderRadius: 10, aspectRatio: '16 / 9', background: '#0B1E2B',
+          display: 'flex', flexDirection: 'column', alignItems: 'center',
+          justifyContent: 'center', gap: 12, textAlign: 'center', padding: 20,
+        }}>
+          <PlayCircle size={38} strokeWidth={1.5} color="#5B7A8C" />
+          <div style={{ fontSize: 13.5, color: '#9FB4C2', maxWidth: 330, lineHeight: 1.55 }}>
+            The videos don&rsquo;t play in the demo. Everything around this — which
+            question offered it, the numbering, that it opens over the brief
+            instead of navigating away — is exactly what a client gets.
+          </div>
+        </div>
+        <GuideMeta module={m} />
+      </>
+    );
+  }
+
   return (
     <>
       <div style={{ borderRadius: 10, overflow: 'hidden', background: '#000', aspectRatio: '16 / 9' }}>
@@ -104,34 +169,7 @@ export function GuidePlayer({ module: m, onProgress, showToast, autoPlay = false
         />
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
-        <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.8, textTransform: 'uppercase', color: BRAND.blue }}>
-          Video {m.moduleNumber}
-        </span>
-        <span style={{ fontSize: 16.5, fontWeight: 700, color: BRAND.ink }}>{m.title}</span>
-        {m.durationSeconds && <span style={{ fontSize: 12.5, color: BRAND.muted }}>{fmtDuration(m.durationSeconds)}</span>}
-        {m.completed && (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11.5, fontWeight: 700, color: '#15803D' }}>
-            <Check size={12} /> Watched
-          </span>
-        )}
-        {canResume && (
-          <button className="btn-ghost" onClick={restart} style={{ fontSize: 12, marginLeft: 'auto' }}>
-            <RotateCcw size={13} /> Start again
-          </button>
-        )}
-      </div>
-
-      {(m.subtitle || m.description) && (
-        <p style={{ margin: '8px 0 0', fontSize: 13.5, lineHeight: 1.6, color: BRAND.muted }}>
-          {m.description || m.subtitle}
-        </p>
-      )}
-      {canResume && (
-        <div style={{ marginTop: 8, fontSize: 12, color: BRAND.muted }}>
-          Picking up from {fmtDuration(m.resumeSeconds)}.
-        </div>
-      )}
+      <GuideMeta module={m} onRestart={canResume ? restart : null} />
     </>
   );
 }
@@ -160,7 +198,7 @@ export function GuideVideoModal({ moduleNumber, onClose }) {
         if (!live) return;
         const found = (data.modules || []).find((m) => m.moduleNumber === moduleNumber);
         if (found) setModule(found);
-        else setError("We couldn't find that video. It may have been renumbered — the full guide is under Guide in the menu.");
+        else setError(`We couldn't find that video — it may have been renumbered. All of them are under "${LEAD_MAGNET.navLabel}" in the menu.`);
       })
       .catch((err) => { if (live) setError(err.message); });
     return () => { live = false; };

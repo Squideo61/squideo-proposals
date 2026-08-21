@@ -117,6 +117,50 @@ const TOM = { id: 'demo-tom', name: 'Tom Ellery', email: 'tom@northwindcare.exam
 
 const DEAL_ID = 'demo-deal';
 
+// The guide, as api/portal.js's courseRoute returns it. Titles and numbers are
+// the real ones so that "Video 6 — metrics that matter" in a brief question
+// opens something that says the same thing; only the watch history is invented.
+//
+// There is no playable file here and there is not meant to be: mediaUrl() is not
+// intercepted by demo mode, so a src would be a real request for a real blob on
+// behalf of a client who does not exist. GuidePlayer shows a placeholder in demo
+// mode instead — see src/portal/GuideVideo.jsx.
+const COURSE_MODULES = [
+  { n: 1, slug: 'what-a-video-can-do', title: 'What a video can actually do', seconds: 52, watched: true },
+  { n: 2, slug: 'the-one-message-rule', title: 'The one-message rule', seconds: 61, watched: true },
+  { n: 3, slug: 'who-you-are-talking-to', title: 'Who you are talking to', seconds: 47, watched: true },
+  { n: 4, slug: 'look-and-feel', title: 'Look and feel, without the guesswork', seconds: 44, watched: false },
+  { n: 5, slug: 'where-it-gets-seen', title: 'Where it gets seen', seconds: 39, watched: false },
+  { n: 6, slug: 'metrics-that-matter', title: 'Metrics that matter', seconds: 55, watched: false },
+  { n: 7, slug: 'the-feedback-trap', title: 'The feedback trap', seconds: 58, watched: false },
+  { n: 8, slug: 'what-happens-next', title: 'What happens next', seconds: 32, watched: false },
+];
+
+const courseFixture = () => {
+  const modules = COURSE_MODULES.map((m) => ({
+    id: `demo-course-${m.n}`,
+    slug: m.slug,
+    moduleNumber: m.n,
+    title: m.title,
+    subtitle: null,
+    description: null,
+    durationSeconds: m.seconds,
+    posterUrl: null,
+    resumeSeconds: 0,
+    completed: m.watched,
+    started: m.watched,
+  }));
+  const completed = modules.filter((m) => m.completed).length;
+  return {
+    modules,
+    completedCount: completed,
+    totalCount: modules.length,
+    percentComplete: Math.round((completed / modules.length) * 100),
+    continueSlug: (modules.find((m) => !m.completed) || null)?.slug || null,
+    allComplete: completed === modules.length,
+  };
+};
+
 // EVERY KEY HERE MUST BE A REAL QUESTION KEY, and every chip value a real
 // option value — see api/_lib/brief/questions.js. An invented key is not an
 // error anywhere: the brief simply renders that question as unanswered, and the
@@ -441,6 +485,9 @@ function respond(state, method, action, query, body) {
           ? [{ id: 'demo-x1', description: 'Mobile-friendly 9:16 portrait version', amount: 360, status: 'paid' }]
           : [],
       };
+
+    case 'course':
+      return courseFixture();
 
     case 'team':
       return {
