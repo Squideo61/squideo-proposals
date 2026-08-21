@@ -76,7 +76,11 @@ function BriefPromo({ children }) {
           display: 'inline-block', fontSize: 11.5, fontWeight: 700, letterSpacing: 1.1,
           textTransform: 'uppercase', color: BRAND.blue, marginBottom: 12,
         }}>
-          Free planning tool
+          {/* Names the thing, because the button that sent them here names it
+              too. An eyebrow reading "Free planning tool" after a click on
+              "Free Online Brief Builder" leaves people checking they landed in
+              the right place. "Free" stays: it is the offer. */}
+          Free · Online Brief Builder
         </div>
         <h2 style={{
           margin: '0 0 14px', fontSize: 'clamp(25px, 3.4vw, 34px)', lineHeight: 1.15,
