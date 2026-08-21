@@ -150,12 +150,21 @@ const CARD_BODY = { padding: '34px 30px 26px' };
 // opens over him.
 const MASCOT_SIZE = 132;
 const MASCOT_RIGHT = 18;
+// How far above the card's top edge his box starts. Nearly all of him: his feet
+// land just below the edge so his legs hang over the front of it, which is what
+// makes him read as sat ON the card rather than sunk INTO it. He was 36px lower
+// and looked like he was wading.
+//
+// The quote form uses the same number — same artwork, same size, so the same
+// offset gives the same pose. If you nudge one, nudge .mascot-seat in
+// src/components/QuoteRequestForm.css with it.
+const MASCOT_LIFT = 112;
 // How much of the right-hand edge he occupies. The resume banner reserves
 // exactly this, so the two can't drift apart the next time he moves.
 const MASCOT_LANE = MASCOT_SIZE + MASCOT_RIGHT;
 
 const MASCOT_PERCH = {
-  position: 'absolute', top: -96, right: MASCOT_RIGHT, zIndex: 1,
+  position: 'absolute', top: -MASCOT_LIFT, right: MASCOT_RIGHT, zIndex: 1,
   pointerEvents: 'none',
 };
 
