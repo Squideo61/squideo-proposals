@@ -54,6 +54,7 @@ import { navigate } from '../PortalApp.jsx';
 import { GuideVideoModal } from '../GuideVideo.jsx';
 import Mascot from '../../components/Mascot.jsx';
 import { openBriefPrintWindow } from '../../utils/printBrief.js';
+import { fireConfetti, burstFrom } from '../../components/confetti.js';
 import {
   StepProgress, PartProgress, TimeBadge, ReassuranceBadge, ResumeBanner, StepTitle, greeting, EASE,
 } from '../ProgressChrome.jsx';
@@ -1138,10 +1139,15 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
     goTo(step - 1, lastPartOf(step - 1));
   }, [part, step, lastPartOf, goTo]);
 
-  const goNext = useCallback(() => {
+  // `from` is the button that was pressed, so the confetti comes out of it
+  // rather than out of the page. Skip passes nothing: not answering is a
+  // legitimate move and the form says so, but it is not an achievement, and
+  // congratulating someone for it is how a celebration stops meaning anything.
+  const goNext = useCallback((from) => {
     // Save on the way out of a part, not on the way in: leaving a question is
     // the clearest signal an answer is finished with.
     flush();
+    if (from) burstFrom(from);
     if (part < parts.length - 1) { setPart(part + 1); return; }
     goTo(step + 1, 0);
   }, [flush, part, parts.length, step, goTo]);
@@ -1285,6 +1291,11 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
     setSending(true);
     try {
       await portalApi.post('brief', { id: briefId });
+      // The full burst, and the only one in this form. Twenty small ones on the
+      // way here celebrate progress; this is the twenty-six-question document
+      // actually being finished, and it would be odd for the moment that
+      // matters to be the one moment nothing happens.
+      fireConfetti();
       showToast('Brief finalised — we\'ll come back to you shortly', 'success');
       // The mirror belonged to a brief that's now locked; leaving it would let
       // a stale local copy try to push itself back into a closed document.
@@ -1656,13 +1667,13 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
                     answering a legitimate move, which is most of the anxiety. */}
                 {canSkip && (
                   <button
-                    type="button" onClick={goNext}
+                    type="button" onClick={() => goNext()}
                     style={{
                       ...btnGhost, border: 'none', background: 'none', color: '#8A97A3',
                     }}
                   >Skip</button>
                 )}
-                <button type="button" onClick={goNext} style={btnPrimary}>
+                <button type="button" onClick={(e) => goNext(e.currentTarget)} style={btnPrimary}>
                   {isLastPartOfBrief ? 'Review' : 'Next'} <ArrowRight size={15} />
                 </button>
               </div>

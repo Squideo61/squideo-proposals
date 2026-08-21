@@ -7,8 +7,9 @@
  * landing page with two seconds to grab someone.
  *
  * It now matches the portal's brief builder instead — hairlines rather than
- * borders, one accent used sparingly, near-black headings with tight tracking,
- * badges tinted close enough to white to read as footnotes. The reason is that
+ * borders, near-black headings with tight tracking, badges tinted close enough
+ * to white to read as footnotes, and two colours only: the accent for where you
+ * are, green for what is behind you. The reason is that
  * they are the same product to the person filling both in: this one as a
  * prospect, the brief three weeks later as a client, and a jarring change of
  * character between them is a change of company as far as they can tell.
@@ -28,6 +29,12 @@
   --sq-muted: #5c6b77;
   --sq-hairline: rgba(15, 42, 61, 0.11);
   --sq-surface: #f7f9fb;
+  /* Done. The same green as the portal's "Finalised" pill and its "Finalise and
+     send" button, so a step you have finished looks the same in both places.
+     Steps you have BEEN through are green; the step you are ON stays blue —
+     that is the whole point of a second colour, and it stops working the moment
+     both states share one. */
+  --sq-done: #16a34a;
 }
 
 .quote-request-widget .optional-label {
@@ -285,8 +292,8 @@
   font-weight: 600;
 }
 .quote-request-widget .progress-step.completed .step-circle {
-  background: var(--sq-accent);
-  border-color: var(--sq-accent);
+  background: var(--sq-done);
+  border-color: var(--sq-done);
 }
 .quote-request-widget .progress-step.completed .step-circle .step-number {
   opacity: 0;
@@ -307,13 +314,15 @@
   margin: 0 8px 26px;
   position: relative;
 }
+/* Green, because a filled connector is by definition behind you — it only ever
+   joins two steps you have already been through. */
 .quote-request-widget .progress-connector .connector-fill {
   position: absolute;
   top: 0;
   left: 0;
   height: 100%;
   width: 0%;
-  background: var(--sq-accent);
+  background: var(--sq-done);
   border-radius: 2px;
   transition: width 0.55s cubic-bezier(0.22, 0.61, 0.36, 1);
 }

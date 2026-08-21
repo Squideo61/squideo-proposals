@@ -6,9 +6,9 @@ import {
   isValidEmail,
   suggestEmailFix,
   getFirstName,
-  fireConfetti,
   timeBasedGreeting,
 } from './QuoteRequestForm.jsx';
+import { fireConfetti, warmConfetti } from './confetti.js';
 import './QuoteRequestForm.css';
 import './ContactForm.css';
 
@@ -90,6 +90,9 @@ export function ContactForm(props = {}) {
 
   useEffect(() => {
     sessionIdRef.current = 'contact_' + Date.now() + '_' + Math.random().toString(36).slice(2, 11);
+    // Success fires the confetti and redirects 1.2s later — too tight to start
+    // fetching the library at that point. See warmConfetti.
+    warmConfetti();
   }, []);
 
   const userName = useMemo(() => getFirstName(form.name), [form.name]);

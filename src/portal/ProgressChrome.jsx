@@ -20,8 +20,21 @@
 // as a client, so restyle one and look at the other:
 // src/components/QuoteRequestForm.css.
 //
-// One accent, and it is the brand blue. The green said "done" loudly, but two
-// signal colours on one screen is one more than the content can carry.
+// ── TWO COLOURS, AND ONLY TWO ───────────────────────────────────────────────
+// This is a REVISION of what was here before, which said one accent only: the
+// green shouted "done" and two signal colours were judged one more than the
+// content could carry.
+//
+// That was right about the OLD green — a saturated #7ac943 filling every circle
+// you had walked past, on a form with eight of them. It was wrong about green
+// as such. Blue for both "you are here" and "you have done this" leaves the
+// stepper saying one thing in one colour, and the single most useful fact it
+// can give someone twenty questions into a brief is how much of it is already
+// behind them.
+//
+// So: blue is where you ARE, green is what you have FINISHED, and there is no
+// third. The green is the same one the Finalise button and the Finalised pill
+// already use, which is why it does not read as a new colour arriving.
 
 import React, { useEffect, useRef } from 'react';
 import { Check, Clock } from 'lucide-react';
@@ -29,6 +42,9 @@ import { BRAND } from '../theme.js';
 import { useIsMobile } from '../utils.js';
 
 const ACCENT = BRAND.blue;
+// Steps you have been through. Matches --sq-done in QuoteRequestForm.css and
+// the green already used for "Finalised" — change one, change all three.
+const DONE = '#16A34A';
 const INK = BRAND.ink;
 const MUTED = '#6E7B87';
 // A hairline, not a border: at 10% the line separates without drawing a box
@@ -98,7 +114,7 @@ export function StepProgress({ steps, current, onJump, markers = {} }) {
                 width: 16, height: 16, borderRadius: '50%', flexShrink: 0,
                 display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                 fontSize: 9.5, fontWeight: 700,
-                background: active ? 'rgba(255,255,255,.24)' : (done ? ACCENT : '#EDF1F5'),
+                background: active ? 'rgba(255,255,255,.24)' : (done ? DONE : '#EDF1F5'),
                 color: active || done ? '#fff' : MUTED,
               }}>
                 {done ? <Check size={10} strokeWidth={3.5} /> : i + 1}
@@ -138,8 +154,8 @@ export function StepProgress({ steps, current, onJump, markers = {} }) {
               <span style={{
                 width: 32, height: 32, borderRadius: '50%', position: 'relative',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: filled ? ACCENT : '#fff',
-                border: `1.5px solid ${filled ? ACCENT : HAIRLINE}`,
+                background: done ? DONE : (active ? ACCENT : '#fff'),
+                border: `1.5px solid ${done ? DONE : (active ? ACCENT : HAIRLINE)}`,
                 // A soft halo rather than a scale-up. Growing the active circle
                 // nudges its neighbours a pixel each time you move, which reads
                 // as the row twitching.
@@ -175,9 +191,11 @@ export function StepProgress({ steps, current, onJump, markers = {} }) {
                 marginBottom: 22, marginLeft: 8, marginRight: 8,
                 position: 'relative', overflow: 'hidden',
               }}>
+                {/* A filled connector only ever joins two screens you have
+                    already been through, so it is green by definition. */}
                 <span style={{
                   position: 'absolute', inset: 0, width: done ? '100%' : '0%',
-                  background: ACCENT, borderRadius: 2,
+                  background: DONE, borderRadius: 2,
                   transition: `width .55s ${EASE}`,
                 }} />
               </span>
@@ -218,7 +236,10 @@ export function PartProgress({ parts, current, answered = [], onJump }) {
             style={{
               flex: 1, height: 4, padding: 0, borderRadius: 2, border: 'none',
               cursor: 'pointer',
-              background: isNow ? ACCENT : (done ? `${ACCENT}66` : HAIRLINE),
+              // Answered parts take the same green as a finished screen, at 60%
+              // — solid green here would out-shout the stepper above it, which
+              // is the row that actually tells you where you are.
+              background: isNow ? ACCENT : (done ? `${DONE}99` : HAIRLINE),
               transition: `background .3s ${EASE}`,
             }}
           />

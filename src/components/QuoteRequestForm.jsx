@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { resolveRedirect } from '../lib/embedRedirect.js';
-import confetti from 'canvas-confetti';
+import { fireConfetti, burstFrom, warmConfetti } from './confetti.js';
 import './QuoteRequestForm.css';
 import Mascot from './Mascot.jsx';
 
@@ -200,23 +200,6 @@ function formatFileSize(bytes) {
   return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
 }
 
-export function fireConfetti() {
-  try {
-    const colors = ['#7ac943', '#6bb635', '#FFD700', '#FFA500', '#4ECDC4', '#FF6B6B'];
-    const defaults = {
-      zIndex: 2147483647,
-      disableForReducedMotion: false,
-      colors,
-      startVelocity: 45,
-      gravity: 0.9,
-      ticks: 200,
-    };
-    confetti({ ...defaults, particleCount: 60, spread: 60, angle: 60, origin: { x: 0, y: 0.7 } });
-    confetti({ ...defaults, particleCount: 60, spread: 60, angle: 120, origin: { x: 1, y: 0.7 } });
-    confetti({ ...defaults, particleCount: 100, spread: 90, origin: { x: 0.5, y: 0.6 } });
-  } catch { /* canvas-confetti not critical */ }
-}
-
 const emptyForm = () => ({
   name: '', email: '', phone: '', company: '',
   projectDetails: '', timeline: '', budget: '',
@@ -394,6 +377,10 @@ export function QuoteRequestForm(props = {}) {
     if (initialisedRef.current) return;
     initialisedRef.current = true;
 
+    // Success fires the confetti and redirects 1.2s later — too tight to start
+    // fetching the library at that point. See warmConfetti.
+    warmConfetti();
+
     const url = new URL(window.location.href);
     const resumeId = url.searchParams.get('resume');
     const stepParam = url.searchParams.get('step');
@@ -560,9 +547,13 @@ export function QuoteRequestForm(props = {}) {
   };
 
   // ===== Navigation =====
-  const goNext = () => {
+  // The small burst, thrown from the Next button, not the full-screen one that
+  // used to fire here — three cannons on every step meant the same celebration
+  // for answering your phone number as for finishing. That one is kept for the
+  // submit, where it means something.
+  const goNext = (e) => {
     if (!validateStep(step)) return;
-    fireConfetti();
+    burstFrom(e?.currentTarget);
     if (step < TOTAL_STEPS) {
       setStep(step + 1);
       setPulseNext(false);
