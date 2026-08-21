@@ -90,7 +90,12 @@ const NAV = [
   // squideo.com can't drift apart. "Free" is dropped in here: they've already
   // got it, and still selling it to someone who owns it reads badly.
   { view: 'course', label: LEAD_MAGNET.navLabel, shortLabel: LEAD_MAGNET.navShort, hash: '#/course', Icon: GraduationCap, mobilePrimary: true },
-  { view: 'brief', label: 'Brief Builder', shortLabel: 'Brief', hash: '#/brief', Icon: FileText, mobilePrimary: true },
+  // "Online Brief Builder", not "Brief Builder": this is the lead magnet now,
+  // so the rail has to read the same as the button on squideo.com that sent
+  // them here — a name that changes at the door makes people wonder whether
+  // they've landed on the right thing. shortLabel stays "Brief": the mobile tab
+  // bar fits one short word per tab.
+  { view: 'brief', label: 'Online Brief Builder', shortLabel: 'Brief', hash: '#/brief', Icon: FileText, mobilePrimary: true },
   // Shown to everyone, badged until they've opened it once. It was prospect-only
   // and buried in an empty state, which meant the best thing in the portal was
   // invisible to most of the people in it — including every client waiting on a
