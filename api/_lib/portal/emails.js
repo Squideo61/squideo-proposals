@@ -178,6 +178,40 @@ export function portalResetHtml({ resetUrl, logoUrl = null }) {
   return shell(inner, logoUrl);
 }
 
+// The receipt for a finished brief.
+//
+// It exists first because somebody who has just spent twenty minutes answering
+// twenty-six questions and pressed send should get something back that isn't a
+// toast they can't scroll to later. It says what we have and what happens next.
+//
+// `setupUrl` is the second job, and only for an account that has no password —
+// a self-serve signup who came in on a name and an email. Clicking it sets one
+// AND proves the address is theirs, which is the thing that actually hardens
+// the account. Deliberately not a demand: the paragraph above it already
+// promises we'll be in touch, so ignoring this costs them nothing.
+export function portalBriefReceivedHtml({ clientName, projectTitle, briefUrl, setupUrl = null, logoUrl = null }) {
+  const who = clientName ? `${escapeHtml(clientName)}, thanks` : 'Thanks';
+  const inner = `
+    <h2 style="margin:0 0 12px;font-size:19px;font-weight:700;">We've got your brief</h2>
+    <p style="margin:0 0 14px;">${who} — your brief${projectTitle ? ` for <strong>${escapeHtml(projectTitle)}</strong>` : ''} is with our team.</p>
+    <p style="margin:0 0 18px;">We'll read it properly and come back to you shortly. Nothing else is needed
+      from you right now; if anything in it needs to change, just reply and we'll reopen it.</p>
+    <p style="margin:0 0 18px;">${ctaButton(briefUrl, 'View your brief')}</p>
+    ${setupUrl ? `
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:22px 0 0;border-top:1px solid #E5E9EE;">
+        <tr><td style="padding:18px 0 0;">
+          <p style="margin:0 0 6px;font-weight:600;">Getting back in</p>
+          <p style="margin:0 0 14px;font-size:13px;color:#6B7785;">
+            Right now we email you a link every time you want to sign in. Set a password and you won't
+            have to wait for one — it also confirms this address is yours.
+          </p>
+          <p style="margin:0;">${ctaButton(setupUrl, 'Set a password', '#16A34A')}</p>
+        </td></tr>
+      </table>` : ''}
+  `;
+  return shell(inner, logoUrl);
+}
+
 const formatGBP = (n) =>
   '£' + (Number(n) || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 

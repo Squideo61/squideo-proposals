@@ -698,6 +698,10 @@ function Boot() {
   const inviteToken = params.get('invite');
   const magicToken = params.get('login');
   const resetToken = params.get('reset');
+  // ?new=1 marks a FIRST password rather than a reset — the link in the "we've
+  // got your brief" email, sent to a self-serve signup who has never had one.
+  // It changes the wording, and it changes precedence below.
+  const settingFirstPassword = resetToken && params.get('new') === '1';
   // A shared preview link: ?previewOf=<companyId>, carrying no credential of
   // its own. Whoever opens it gets a preview only if THEY are signed in to the
   // CRM with the right role.
@@ -769,6 +773,12 @@ function Boot() {
   // are read once at boot, so after accepting an invite (which signs you in)
   // this is what takes you into the portal instead of leaving you looking at
   // the consumed invite form.
+  // ...with ONE exception, and it is the reason for the `new=1` flag. The
+  // person clicking "set a password" in their brief confirmation almost
+  // certainly still has the session they finalised it in — the cookie lasts
+  // thirty days. Letting the session win would drop them on the dashboard with
+  // no password set and no idea why the link did nothing.
+  if (settingFirstPassword) return <ResetPassword token={resetToken} isNew onDone={clearQuery} />;
   if (user) return <AuthedApp />;
   if (inviteToken) return <AcceptInvite token={inviteToken} onDone={clearQuery} />;
   if (resetToken) return <ResetPassword token={resetToken} onDone={clearQuery} />;

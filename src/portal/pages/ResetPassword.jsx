@@ -4,7 +4,13 @@ import { portalApi } from '../api.js';
 import { usePortal, rememberedLogoUrl } from '../PortalContext.jsx';
 import AuthShell, { AuthField, AuthError } from './AuthShell.jsx';
 
-export default function ResetPassword({ token, onDone }) {
+// `isNew` is someone setting their FIRST password — a self-serve signup who has
+// been getting in by magic link, following the offer in their brief
+// confirmation email. Same token, same endpoint, same single-use consume; only
+// the words change, because "reset your password" to someone who has never had
+// one reads as though something has gone wrong with an account they don't
+// remember making.
+export default function ResetPassword({ token, onDone, isNew = false }) {
   const { refreshSession } = usePortal();
   const [logoUrl] = useState(rememberedLogoUrl);
   const [password, setPassword] = useState('');
@@ -32,18 +38,24 @@ export default function ResetPassword({ token, onDone }) {
 
   return (
     <AuthShell logoUrl={logoUrl}>
-      <h1 style={{ margin: '0 0 6px', fontSize: 20, fontWeight: 800, color: BRAND.ink }}>Choose a new password</h1>
-      <p style={{ margin: '0 0 18px', fontSize: 13.5, color: BRAND.muted }}>You'll be signed in straight after.</p>
+      <h1 style={{ margin: '0 0 6px', fontSize: 20, fontWeight: 800, color: BRAND.ink }}>
+        {isNew ? 'Set your password' : 'Choose a new password'}
+      </h1>
+      <p style={{ margin: '0 0 18px', fontSize: 13.5, color: BRAND.muted }}>
+        {isNew
+          ? "Last step — after this you can sign straight in instead of waiting for a link."
+          : "You'll be signed in straight after."}
+      </p>
       <AuthError>{error}</AuthError>
       <form onSubmit={submit}>
-        <AuthField label="New password (10+ characters)">
+        <AuthField label={isNew ? 'Password (10+ characters)' : 'New password (10+ characters)'}>
           <input className="input" type="password" autoComplete="new-password" required minLength={10} value={password} onChange={(e) => setPassword(e.target.value)} style={{ width: '100%' }} />
         </AuthField>
         <AuthField label="Confirm password">
           <input className="input" type="password" autoComplete="new-password" required value={confirm} onChange={(e) => setConfirm(e.target.value)} style={{ width: '100%' }} />
         </AuthField>
         <button className="btn" type="submit" disabled={busy} style={{ width: '100%', padding: '11px 0', fontSize: 14.5 }}>
-          {busy ? 'Saving…' : 'Save & sign in'}
+          {busy ? 'Saving…' : (isNew ? 'Save & continue' : 'Save & sign in')}
         </button>
       </form>
     </AuthShell>

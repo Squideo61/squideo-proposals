@@ -163,6 +163,18 @@ export function ensurePortalTables() {
     await sql`ALTER TABLE portal_library_items ADD COLUMN IF NOT EXISTS poster_updated_at TIMESTAMPTZ`;
     // Hand-set running order within a library group (NULL = newest-first).
     await sql`ALTER TABLE portal_library_items ADD COLUMN IF NOT EXISTS sort_order INTEGER`;
+    // When we last had proof this address reaches them: they clicked a link we
+    // sent to it. An invite or a magic link is that proof; a self-serve signup
+    // is not — anyone can type anyone's address into a public form.
+    //
+    // NULL is not "suspicious", it is "we have never checked" — which is true
+    // of every account created before this column existed. Nothing is gated on
+    // it yet; it is recorded so that it CAN be. The gate worth adding is in
+    // sendPortalWelcome (api/_lib/portal/onboarding.js), where an existing
+    // portal user is silently granted membership of a real client organisation
+    // — that is the one place an unverified address inherits someone else's
+    // data, and it should send an invite instead.
+    await sql`ALTER TABLE portal_users ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMPTZ`;
     await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS portal_extras_discount NUMERIC NOT NULL DEFAULT 0.10`;
     await sql`ALTER TABLE deal_extras ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'staff'`;
     await sql`ALTER TABLE deal_extras ADD COLUMN IF NOT EXISTS portal_user_id TEXT REFERENCES portal_users(id) ON DELETE SET NULL`;

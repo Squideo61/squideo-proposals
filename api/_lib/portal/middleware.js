@@ -92,7 +92,8 @@ export async function requirePortalAuth(req, res) {
   }
   await ensurePortalTables();
   const rows = await sql`
-    SELECT id, email, name, phone, job_title, token_version, disabled_at, contact_id
+    SELECT id, email, name, phone, job_title, token_version, disabled_at, contact_id,
+           (password_hash IS NOT NULL) AS has_password
       FROM portal_users WHERE id = ${payload.puid}
   `;
   const u = rows[0];

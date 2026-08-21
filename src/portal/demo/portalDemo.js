@@ -121,7 +121,9 @@ const COMPANY = { id: 'demo-co', name: 'Northwind Care Group', prospect: false, 
 const companyFor = (state) => (state === 'prospect'
   ? { ...COMPANY, prospect: true, creditVisible: false }
   : COMPANY);
-const ME = { id: 'demo-me', name: 'Alex Morgan', email: 'alex@northwindcare.example', jobTitle: 'Marketing Lead' };
+// hasPassword:false on purpose — the demo cast are self-serve signups, which
+// is what makes the 'set a password' offer on the finished brief visible here.
+const ME = { id: 'demo-me', name: 'Alex Morgan', email: 'alex@northwindcare.example', jobTitle: 'Marketing Lead', hasPassword: false };
 const PRIYA = { id: 'demo-priya', name: 'Priya Shah', email: 'priya@northwindcare.example' };
 const TOM = { id: 'demo-tom', name: 'Tom Ellery', email: 'tom@northwindcare.example' };
 

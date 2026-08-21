@@ -567,6 +567,104 @@ function Question({ q, value, onChange, onBlur, onFocus, answers, invalid, disab
   );
 }
 
+// ── "while you're here, set a password" ──────────────────────────────────────
+// Shown once, on the screen that says the brief has been sent, and only to
+// someone who hasn't got one — which means a self-serve signup, who came in on
+// a name and an email and has been getting back in by magic link ever since.
+//
+// It is worth being honest about what this is FOR. A password does not make the
+// account safer: the mailbox is still the way back in, so security is bounded
+// by their email either way. What it buys is not having to go and find an email
+// every time, and that is exactly how it is worded — a promise about their next
+// visit, not a warning about their security.
+//
+// Skippable, and skipping costs nothing: magic links keep working, and the
+// confirmation email carries the same offer for anyone who changes their mind.
+function SetPasswordCard({ onDone }) {
+  const { user, showToast, refreshSession } = usePortal();
+  const [value, setValue] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [done, setDone] = useState(false);
+
+  // Someone who already has one is not the audience. Checked here rather than
+  // at the call site so there is one place that can be wrong.
+  if (user?.hasPassword) return null;
+
+  const save = async (e) => {
+    e.preventDefault();
+    if (value.length < 10) {
+      showToast('Passwords need to be at least 10 characters', 'error');
+      return;
+    }
+    setSaving(true);
+    try {
+      await portalApi.patch('me', { newPassword: value });
+      // The session survives the token_version bump server-side, but the
+      // cached user still says hasPassword:false — without this the card
+      // would come back on the next render.
+      await refreshSession?.();
+      setDone(true);
+      showToast('Password set — you can sign straight in next time', 'success');
+    } catch (err) {
+      showToast(err.message || "Couldn't set your password", 'error');
+    } finally { setSaving(false); }
+  };
+
+  if (done) {
+    return (
+      <div style={{
+        display: 'flex', gap: 10, padding: '11px 13px', marginBottom: 18,
+        background: '#F3FAF6', border: '1px solid #DCEDE3', borderRadius: 9,
+        fontSize: 13, color: '#356B4C', lineHeight: 1.5,
+      }}>
+        <Check size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+        <div>You're all set — next time, sign in with {user?.email} and that password.</div>
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={save} style={{
+      padding: '15px 16px', marginBottom: 18, borderRadius: 12,
+      background: '#fff', border: `1px solid ${HAIRLINE}`,
+      boxShadow: '0 1px 2px rgba(15,42,61,.04), 0 10px 26px rgba(15,42,61,.05)',
+    }}>
+      <div style={{
+        fontSize: 14.5, fontWeight: 600, color: BRAND.ink,
+        letterSpacing: '-0.015em', marginBottom: 3,
+      }}>Want to skip the email next time?</div>
+      <div style={{ fontSize: 13, color: BRAND.muted, lineHeight: 1.5, marginBottom: 11 }}>
+        Set a password and you can sign straight back in to {user?.email}. Otherwise we'll keep
+        emailing you a link whenever you need one — that works too.
+      </div>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <input
+          type="password"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="At least 10 characters"
+          autoComplete="new-password"
+          className="brief-field"
+          style={{
+            flex: '1 1 220px', minWidth: 0, padding: '10px 13px', fontSize: 14,
+            fontFamily: 'inherit', color: BRAND.ink, background: '#fff',
+            border: `1px solid #DCE4EB`, borderRadius: 10,
+          }}
+        />
+        <button type="submit" disabled={saving} style={{
+          ...btnPrimary, padding: '10px 18px', fontSize: 14,
+          background: saving ? '#9AC9DE' : BRAND.blue,
+          cursor: saving ? 'default' : 'pointer',
+        }}>{saving ? 'Saving…' : 'Set password'}</button>
+        <button type="button" onClick={onDone} style={{
+          background: 'none', border: 'none', padding: '10px 6px', cursor: 'pointer',
+          color: '#8A97A3', fontSize: 13.5, fontFamily: 'inherit', letterSpacing: '-0.01em',
+        }}>Not now</button>
+      </div>
+    </form>
+  );
+}
+
 // ── who did what ─────────────────────────────────────────────────────────────
 function ActivityFeed({ events, open, onToggle }) {
   const shown = open ? events : events.slice(0, 4);
@@ -902,6 +1000,7 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
   const [activity, setActivity] = useState([]);
   const [activityOpen, setActivityOpen] = useState(false);
   const [linking, setLinking] = useState(false);
+  const [justFinalised, setJustFinalised] = useState(false);
 
   const [dirty, setDirty] = useState(false);
   const pending = useRef({});
@@ -1299,6 +1398,10 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
       // actually being finished, and it would be odd for the moment that
       // matters to be the one moment nothing happens.
       fireConfetti();
+      // Only on the way THROUGH finalising, never on a later visit to a
+      // finalised brief. A password offer that reappears every time they open
+      // their own document is a nag, and it is the same offer either way.
+      setJustFinalised(true);
       showToast('Brief finalised — we\'ll come back to you shortly', 'success');
       // The mirror belonged to a brief that's now locked; leaving it would let
       // a stale local copy try to push itself back into a closed document.
@@ -1450,6 +1553,12 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
               and we'll reopen it.
             </div>
           </div>
+          {/* The one moment in the whole product where asking for a password is
+              nearly free: they have just finished, the thing they came for is
+              done, and nothing is at stake if they ignore it. Asking any
+              earlier — at signup, or as a condition of sending — puts friction
+              in front of the value instead of after it. */}
+          {justFinalised && <SetPasswordCard onDone={() => setJustFinalised(false)} />}
           <BriefSummary answers={answers} />
           <div style={{ display: 'flex', gap: 10, marginTop: 18, flexWrap: 'wrap' }}>
             <button type="button" onClick={printDoc} style={btnGhost}>

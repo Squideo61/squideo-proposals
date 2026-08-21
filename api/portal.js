@@ -115,6 +115,7 @@ import {
   PORTAL_URL,
   portalMagicLinkHtml,
   portalResetHtml,
+  portalBriefReceivedHtml,
   portalExtraConfirmHtml,
   portalVoiceoverConfirmHtml,
   courseCrashCourseHtml,
@@ -272,6 +273,21 @@ async function issueLoginToken(portalUserId, purpose, ttlMinutes) {
   return raw;
 }
 
+// They clicked something we sent to their address, so it reaches them. Only
+// ever set, never cleared, and COALESCE keeps the FIRST time we knew — the
+// question this answers is "have we ever had proof", not "when did they last
+// sign in", which last_login_at already covers.
+//
+// Best-effort: never cost someone a sign-in because a bookkeeping write failed.
+async function markEmailVerified(portalUserId) {
+  if (!portalUserId) return;
+  await sql`
+    UPDATE portal_users
+       SET email_verified_at = COALESCE(email_verified_at, NOW())
+     WHERE id = ${portalUserId}
+  `.catch((err) => console.warn('[portal] markEmailVerified failed', err.message));
+}
+
 // Atomic single-use consume: stamps used_at in the same statement that checks
 // it, so a replayed token can never win a race.
 async function consumeLoginToken(rawToken, purpose) {
@@ -305,6 +321,12 @@ function publicPortalUser(user, memberships = null) {
     phone: user.phone || null,
     jobTitle: user.job_title || user.jobTitle || null,
     companies: memberships || user.companies || [],
+    // WHETHER there is a password, never anything about it. A self-serve signup
+    // has none — they came in on a name and an email — and the portal needs to
+    // know so it can offer to set one at the moment that costs least. Computed
+    // in SQL: a hash is not something to ship to a browser even to test it for
+    // truthiness.
+    hasPassword: user.has_password ?? user.hasPassword ?? !!user.password_hash,
   };
 }
 
@@ -1314,6 +1336,10 @@ async function authRoutes(req, res) {
   if (bodyOp === 'magic-consume') {
     const puid = await consumeLoginToken(body.token, 'magic_link');
     if (!puid) return res.status(400).json({ error: 'This sign-in link has expired or already been used. Request a new one.' });
+    // They opened something we sent to that address, so the address reaches
+    // them. COALESCE keeps the FIRST time we knew — that is the fact worth
+    // holding, not the most recent sign-in, which last_login_at already has.
+    await markEmailVerified(puid);
     const rows = await sql`SELECT id, email, name, phone, job_title, token_version, disabled_at FROM portal_users WHERE id = ${puid}`;
     const user = rows[0];
     if (!user || user.disabled_at) return res.status(403).json({ error: 'This account has been disabled. Contact Squideo to restore access.' });
@@ -1354,6 +1380,10 @@ async function authRoutes(req, res) {
     }
     const puid = await consumeLoginToken(body.token, 'password_reset');
     if (!puid) return res.status(400).json({ error: 'This reset link has expired or already been used. Request a new one.' });
+    // Same proof as a magic link: this one came out of their inbox too. It is
+    // also how a self-serve signup gets verified at all — the "set a password"
+    // button in the brief confirmation email lands here.
+    await markEmailVerified(puid);
     const passwordHash = await bcrypt.hash(password, BCRYPT_COST);
     // Bump token_version: a password reset is a security event, so every other
     // session dies; the fresh session below carries the new version.
@@ -3532,6 +3562,20 @@ async function briefRoute(req, res, user) {
       link: `#/brief/${row.id}`,
     }).catch(() => {});
 
+    // The receipt. Twenty minutes of work and twenty-six answers used to end in
+    // a toast that scrolls away — nothing in their inbox saying we have it.
+    //
+    // It carries the "set a password" offer for anyone who hasn't got one, so
+    // the ask exists in two places: on the success screen for whoever is still
+    // looking at it, and here for whoever closed the tab. Clicking it also
+    // verifies the address, which is the half that matters.
+    //
+    // Best-effort, and last: the brief is already saved and the team already
+    // told, so a mail outage must not turn a finalised brief into an error.
+    briefReceipt({ user, row, briefTitle }).catch((err) => {
+      console.warn('[brief] receipt email failed', err.message);
+    });
+
     // They've done the thing the brief series exists to nudge, so stop it now
     // rather than letting one more "your brief is still unfinished" go out
     // before the next sweep. Course nudges are left alone — sending us a brief
@@ -3548,6 +3592,41 @@ async function briefRoute(req, res, user) {
   }
 
   return res.status(405).json({ error: 'Method not allowed' });
+}
+
+// "We've got your brief" — the client's own receipt, plus, for an account with
+// no password yet, one link that sets one and verifies the address at once.
+//
+// The link is an ordinary password_reset token, reusing the reset screen and
+// its atomic single-use consume rather than growing a second way to do the same
+// thing. It gets SEVEN DAYS instead of the reset flow's sixty minutes: a reset
+// is something you asked for and are waiting on, this is an offer sitting in an
+// inbox that may not be opened until Monday. `?new=1` only changes the wording
+// on the screen it lands on — nothing about what the token can do.
+async function briefReceipt({ user, row, briefTitle }) {
+  if (!user?.puid || !user.email) return;
+  let setupUrl = null;
+  if (!user.has_password) {
+    const raw = await issueLoginToken(user.puid, 'password_reset', 7 * 24 * 60).catch(() => null);
+    if (raw) setupUrl = `${PORTAL_URL}?reset=${encodeURIComponent(raw)}&new=1`;
+  }
+  const logoUrl = await emailLogoUrl(await primaryCompanyId(user.puid)).catch(() => null);
+  await sendMail({
+    to: user.email,
+    subject: `We've got your brief${briefTitle ? ` — ${briefTitle}` : ''}`,
+    html: portalBriefReceivedHtml({
+      clientName: user.name || null,
+      projectTitle: briefTitle || null,
+      briefUrl: `${PORTAL_URL}#/brief/${row.id}`,
+      setupUrl,
+      logoUrl,
+    }),
+    text: [
+      `Thanks — your brief${briefTitle ? ` for ${briefTitle}` : ''} is with our team. We'll come back to you shortly.`,
+      `View it: ${PORTAL_URL}#/brief/${row.id}`,
+      setupUrl ? `Set a password so you don't have to wait for a sign-in link: ${setupUrl}` : null,
+    ].filter(Boolean).join('\n\n'),
+  });
 }
 
 // Start a brief. `dealId` is optional: without one this is a new enquiry, which
