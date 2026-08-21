@@ -1,51 +1,47 @@
-// The furniture that makes a long form feel short: a numbered stepper, a
-// time-remaining badge, a reassurance strip and a welcome-back banner.
+// The furniture that makes a long form feel short: a stepper, a time estimate,
+// a reassurance line and a welcome-back card.
 //
-// ── WHERE THIS DESIGN COMES FROM ────────────────────────────────────────────
-// src/components/QuoteRequestForm.css, which is the marketing quote form on
-// squideo.com. That form converts, the shapes below are lifted from it
-// deliberately, and the values here are its values: the green #7ac943 rail, the
-// pale-blue time pill, the 28px blue step title. If you restyle one, look at the
-// other — they are the same product to anyone who fills in both, first as a
-// prospect and then as a client.
+// ── THE LOOK ────────────────────────────────────────────────────────────────
+// Restrained. Hairlines rather than borders, one accent colour used sparingly,
+// near-black headings with tight tracking, generous space, and motion that is
+// short and never bounces. The rule of thumb: if an element is competing for
+// attention with the question being asked, it is wrong.
 //
-// The one number that differs is the circle: 42px here against the quote form's
-// 50px, because this form has eight steps to its four. The brief page widened to
-// 880 for the same reason (BRIEF_MAX in pages/Brief.jsx) and the circles still
-// had to come down — eight of them at 50px with connectors and labels crowds
-// even that.
+// This is the second pass. The first copied the marketing quote form's chrome
+// wholesale — saturated green circles, gradient pills, a bright banner — which
+// is right on a landing page that has to grab someone in two seconds, and wrong
+// on a document they will sit with for ten minutes across three sittings.
+// Twenty-five questions is already intimidating; chrome shouting alongside it
+// makes it worse. The quote form still owns the funnel look; this owns the
+// working look, and the two are allowed to differ now.
 //
-// ── WHY NOT JUST IMPORT THAT CSS ────────────────────────────────────────────
-// Two reasons. The portal is inline-styled from top to bottom, so a class-based
-// island in it would be the odd one out and would need its own scope class to
-// avoid leaking into the CRM. And that stylesheet belongs to the form that
-// brings the work in: reworking its selectors to be shareable puts a live
-// conversion path at risk for a cosmetic win. Copied on purpose, with this
-// comment as the link between them.
+// One accent, and it is the brand blue. The green said "done" loudly, but two
+// signal colours on one screen is one more than the content can carry.
 
 import React, { useEffect, useRef } from 'react';
 import { Check, Clock } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useIsMobile } from '../utils.js';
 
-// The quote form's palette for progress. Green rather than the Squideo blue:
-// blue is the brand and is already doing the work in titles, buttons and links,
-// so a blue rail reads as more chrome. Green reads as "done".
-const DONE = '#7ac943';
-const DONE_DEEP = '#6bb635';
-const IDLE_RING = '#e5e7eb';
-const IDLE_FILL = '#f3f4f6';
-const IDLE_TEXT = '#9ca3af';
+const ACCENT = BRAND.blue;
+const INK = BRAND.ink;
+const MUTED = '#6E7B87';
+// A hairline, not a border: at 10% the line separates without drawing a box
+// around everything. Borrowed straight from how Apple's own tables read.
+const HAIRLINE = 'rgba(15, 42, 61, 0.11)';
+const SURFACE = '#F7F9FB';
+
+// Short, ease-out, no overshoot. Motion here is meant to explain that something
+// moved, not to perform.
+export const EASE = 'cubic-bezier(.22,.61,.36,1)';
 
 /**
- * The numbered stepper.
+ * The stepper.
  *
- * Circles on desktop, exactly as the quote form draws them. On a phone they are
- * replaced by a single swipeable row of pills, because eight 40px circles with
- * seven connectors need roughly 600px and a phone has 360 — the quote form gets
- * away with circles only because it has four steps. Shrinking them to fit would
- * produce eight grey dots with unreadable labels, which is decoration rather
- * than navigation.
+ * Circles on desktop; on a phone a single swipeable row of pills, because eight
+ * circles with connectors and labels need roughly 600px and a phone has 360.
+ * Shrinking them to fit gives eight grey dots nobody can read, which is
+ * decoration rather than navigation.
  *
  * Every step is clickable. This is a document people fill in over days, not a
  * checkout: jumping to "Style" because that is the bit you finally have an
@@ -71,7 +67,7 @@ export function StepProgress({ steps, current, onJump, markers = {} }) {
         ref={rowRef}
         className="hide-scrollbar"
         style={{
-          display: 'flex', gap: 6, overflowX: 'auto', margin: '0 -16px 22px',
+          display: 'flex', gap: 7, overflowX: 'auto', margin: '0 -16px',
           padding: '0 16px', scrollSnapType: 'x proximity',
         }}
       >
@@ -82,27 +78,32 @@ export function StepProgress({ steps, current, onJump, markers = {} }) {
             <button
               key={s.key} type="button" onClick={() => onJump(i)}
               style={{
-                padding: '6px 12px', borderRadius: 999, cursor: 'pointer',
+                padding: '7px 13px', borderRadius: 999, cursor: 'pointer',
                 fontSize: 12.5, fontFamily: 'inherit', flexShrink: 0,
-                scrollSnapAlign: 'start', display: 'inline-flex', alignItems: 'center', gap: 6,
-                fontWeight: active ? 700 : 500,
-                border: `1px solid ${active ? BRAND.blue : (done ? DONE : '#E0E7ED')}`,
-                background: active ? '#EAF7FD' : '#fff',
-                color: active ? BRAND.ink : (done ? '#4B7A1F' : '#7E8B96'),
+                letterSpacing: '-0.01em', scrollSnapAlign: 'start',
+                display: 'inline-flex', alignItems: 'center', gap: 7,
+                fontWeight: active ? 600 : 500,
+                border: `1px solid ${active ? 'transparent' : HAIRLINE}`,
+                background: active ? ACCENT : '#fff',
+                color: active ? '#fff' : (done ? INK : MUTED),
+                transition: `background .25s ${EASE}, color .25s ${EASE}`,
               }}
             >
               <span style={{
-                width: 17, height: 17, borderRadius: '50%', flexShrink: 0,
+                width: 16, height: 16, borderRadius: '50%', flexShrink: 0,
                 display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 10, fontWeight: 800,
-                background: done ? DONE : (active ? BRAND.blue : '#EEF3F7'),
-                color: done || active ? '#fff' : IDLE_TEXT,
+                fontSize: 9.5, fontWeight: 700,
+                background: active ? 'rgba(255,255,255,.24)' : (done ? ACCENT : '#EDF1F5'),
+                color: active || done ? '#fff' : MUTED,
               }}>
-                {done ? <Check size={11} strokeWidth={3.5} /> : i + 1}
+                {done ? <Check size={10} strokeWidth={3.5} /> : i + 1}
               </span>
               {s.label}
               {markers[s.key] && (
-                <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#F59E0B' }} />
+                <span style={{
+                  width: 5, height: 5, borderRadius: '50%',
+                  background: active ? 'rgba(255,255,255,.8)' : '#E9A23B',
+                }} />
               )}
             </button>
           );
@@ -112,10 +113,11 @@ export function StepProgress({ steps, current, onJump, markers = {} }) {
   }
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 40 }}>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
       {steps.map((s, i) => {
         const done = i < current;
         const active = i === current;
+        const filled = done || active;
         return (
           <React.Fragment key={s.key}>
             <button
@@ -123,52 +125,55 @@ export function StepProgress({ steps, current, onJump, markers = {} }) {
               onClick={() => onJump(i)}
               title={s.title || s.label}
               style={{
-                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
+                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 9,
                 background: 'none', border: 'none', padding: 0, cursor: 'pointer',
                 fontFamily: 'inherit', position: 'relative', zIndex: 2, flexShrink: 0,
               }}
             >
               <span style={{
-                width: 42, height: 42, borderRadius: '50%', position: 'relative',
+                width: 32, height: 32, borderRadius: '50%', position: 'relative',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: done || active ? DONE : IDLE_FILL,
-                border: `3px solid ${done || active ? DONE : IDLE_RING}`,
-                // The active circle is the one thing on the row that should be
-                // findable without reading, so it gets size as well as colour.
-                transform: active ? 'scale(1.1)' : 'none',
-                boxShadow: active ? `0 0 0 4px ${DONE}33` : 'none',
-                transition: 'all .4s cubic-bezier(.4,0,.2,1)',
+                background: filled ? ACCENT : '#fff',
+                border: `1.5px solid ${filled ? ACCENT : HAIRLINE}`,
+                // A soft halo rather than a scale-up. Growing the active circle
+                // nudges its neighbours a pixel each time you move, which reads
+                // as the row twitching.
+                boxShadow: active ? `0 0 0 5px ${ACCENT}22` : 'none',
+                transition: `background .3s ${EASE}, border-color .3s ${EASE}, box-shadow .3s ${EASE}`,
               }}>
                 {done
-                  ? <Check size={20} strokeWidth={3} color="#fff" />
+                  ? <Check size={15} strokeWidth={3} color="#fff" />
                   : (
                     <span style={{
-                      fontSize: 16, fontWeight: 700,
-                      color: active ? '#fff' : IDLE_TEXT,
+                      fontSize: 13, fontWeight: 600, letterSpacing: '-0.01em',
+                      color: active ? '#fff' : MUTED,
                     }}>{i + 1}</span>
                   )}
                 {/* Someone else is typing in this screen right now. */}
                 {markers[s.key] && (
                   <span style={{
-                    position: 'absolute', top: -2, right: -2, width: 10, height: 10,
-                    borderRadius: '50%', background: '#F59E0B', border: '2px solid #fff',
+                    position: 'absolute', top: -1, right: -1, width: 9, height: 9,
+                    borderRadius: '50%', background: '#E9A23B', border: '2px solid #fff',
                   }} />
                 )}
               </span>
               <span style={{
-                fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
-                color: done || active ? DONE : IDLE_TEXT,
+                fontSize: 11.5, fontWeight: active ? 600 : 500, whiteSpace: 'nowrap',
+                letterSpacing: '-0.01em',
+                color: filled ? INK : MUTED,
+                transition: `color .3s ${EASE}`,
               }}>{s.label}</span>
             </button>
             {i < steps.length - 1 && (
               <span style={{
-                flex: 1, height: 3, background: IDLE_RING, marginBottom: 26,
-                marginLeft: 6, marginRight: 6, position: 'relative', overflow: 'hidden',
+                flex: 1, height: 2, borderRadius: 2, background: HAIRLINE,
+                marginBottom: 22, marginLeft: 8, marginRight: 8,
+                position: 'relative', overflow: 'hidden',
               }}>
                 <span style={{
                   position: 'absolute', inset: 0, width: done ? '100%' : '0%',
-                  background: `linear-gradient(90deg, ${DONE} 0%, ${DONE_DEEP} 100%)`,
-                  transition: 'width .8s cubic-bezier(.4,0,.2,1)',
+                  background: ACCENT, borderRadius: 2,
+                  transition: `width .55s ${EASE}`,
                 }} />
               </span>
             )}
@@ -179,59 +184,46 @@ export function StepProgress({ steps, current, onJump, markers = {} }) {
   );
 }
 
-/** "About 6 minutes left" — the quote form's pale-blue pill. */
+/** "About 6 minutes left", said quietly. */
 export function TimeBadge({ minutes }) {
   if (!minutes) return null;
   return (
-    <div style={{
-      display: 'inline-flex', alignItems: 'center', gap: 8, padding: '9px 17px',
-      background: 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)',
-      border: '2px solid #bae6fd', borderRadius: 30, marginBottom: 20,
-      fontSize: 13.5, fontWeight: 600, color: '#0369a1',
-      boxShadow: '0 2px 8px rgba(3,105,161,.1)',
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 12px 5px 10px',
+      background: SURFACE, border: `1px solid ${HAIRLINE}`, borderRadius: 999,
+      fontSize: 12.5, fontWeight: 500, color: MUTED, letterSpacing: '-0.01em',
     }}>
-      <Clock size={17} color="#0284c7" />
-      {/* "About", because unlike the quote form this is not a five-minute job
+      <Clock size={13} strokeWidth={2} />
+      {/* "About", because unlike a two-minute quote form this is a real sit-down
           and a flat number reads as a promise. */}
-      <span>About {minutes === 1 ? '1 minute' : `${minutes} minutes`} left</span>
-    </div>
+      About {minutes === 1 ? '1 minute' : `${minutes} minutes`} left
+    </span>
   );
 }
 
 /**
- * The green reassurance strip.
+ * The one-line reassurance under the heading, which doubles as the save state.
  *
- * On the quote form this says "your details are private". Here the anxiety is a
- * different one — twenty-five questions is enough to make anyone wonder what
- * happens if they stop — so it answers that instead. Same shape, same place, the
- * worry that actually belongs to this form.
+ * The worry this form raises is not "who sees my phone number" — it is "what
+ * happens if I stop". So it answers that, and it earns the answer by showing
+ * the actual save: "Saved at 14:32", not "we save your work".
  */
 export function ReassuranceBadge({ children, tone = 'good' }) {
-  // It changes colour because it doubles as the save indicator, and a green tick
-  // sitting over the words "unsaved changes" is worse than no indicator at all —
-  // it teaches people to stop reading it.
+  // It changes colour because it is a status, and a green tick sitting over the
+  // words "unsaved changes" teaches people to stop reading it. The tints are
+  // deliberately close to white — this is a footnote, not an alert.
   const skin = {
-    good: {
-      background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
-      rail: DONE, text: '#166534', icon: <Check size={18} strokeWidth={3} color={DONE} />,
-    },
-    busy: {
-      background: 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)',
-      rail: '#38bdf8', text: '#075985', icon: <Clock size={18} color="#0284c7" />,
-    },
-    warn: {
-      background: 'linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)',
-      rail: '#f59e0b', text: '#92400e', icon: <Clock size={18} color="#d97706" />,
-    },
+    good: { bg: '#F3FAF6', border: '#DCEDE3', fg: '#356B4C', icon: <Check size={14} strokeWidth={2.6} /> },
+    busy: { bg: '#F4F8FB', border: '#DEE9F1', fg: '#4A6B80', icon: <Clock size={14} strokeWidth={2.2} /> },
+    warn: { bg: '#FDF8F0', border: '#F0E3CA', fg: '#8A6320', icon: <Clock size={14} strokeWidth={2.2} /> },
   }[tone];
 
   return (
     <div style={{
-      display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px',
-      background: skin.background,
-      borderLeft: `4px solid ${skin.rail}`, borderRadius: 8, marginBottom: 24,
-      fontSize: 13, fontWeight: 500, color: skin.text, lineHeight: 1.5,
-      boxShadow: '0 1px 3px rgba(0,0,0,.05)',
+      display: 'inline-flex', alignItems: 'center', gap: 8, padding: '7px 14px 7px 11px',
+      background: skin.bg, border: `1px solid ${skin.border}`, borderRadius: 999,
+      fontSize: 12.5, fontWeight: 500, color: skin.fg, lineHeight: 1.45,
+      letterSpacing: '-0.01em',
     }}>
       <span style={{ flexShrink: 0, display: 'inline-flex' }}>{skin.icon}</span>
       <span>{children}</span>
@@ -242,85 +234,102 @@ export function ReassuranceBadge({ children, tone = 'good' }) {
 /**
  * "Welcome back — you're 12 of 25 in."
  *
- * The quote form's version is a fixed bar over the whole page because it is one
- * form on an otherwise empty marketing page. This one sits in the flow: the
- * portal already has a header, a rail and a bell, and a fifth fixed thing on
- * top of those is a page nobody can see past.
+ * A quiet card, not a coloured banner. Someone returning to a half-finished
+ * brief does not need to be congratulated; they need one sentence and one
+ * button, and then to be left alone with the form.
  *
- * One action, not two. The quote form offers "start fresh" because its draft is
- * a local one nobody else can see; a brief is a shared server document that
- * colleagues may have contributed to, and a button that reads as "discard it"
- * has no business being one tap from a document that isn't only yours.
+ * One real action. A "start fresh" alongside it would read as "discard", and a
+ * brief is a shared document colleagues may have contributed to — that button
+ * has no business being one tap away.
  */
 export function ResumeBanner({ name, done, total, onResume, onDismiss }) {
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
-      padding: '14px 18px', marginBottom: 20, borderRadius: 12,
-      background: `linear-gradient(135deg, ${DONE} 0%, ${DONE_DEEP} 100%)`,
-      boxShadow: '0 4px 16px rgba(107,182,53,.25)', color: '#fff',
+      padding: '15px 18px', marginBottom: 22, borderRadius: 14,
+      background: '#fff', border: `1px solid ${HAIRLINE}`,
+      boxShadow: '0 1px 2px rgba(15,42,61,.04), 0 10px 26px rgba(15,42,61,.05)',
     }}>
       <div style={{ flex: '1 1 240px', minWidth: 0 }}>
-        <div style={{ fontSize: 15.5, fontWeight: 700, marginBottom: 2 }}>
-          {name ? `Welcome back, ${name}!` : 'Welcome back!'}
+        <div style={{
+          fontSize: 15, fontWeight: 600, color: INK, letterSpacing: '-0.015em', marginBottom: 2,
+        }}>
+          {name ? `Welcome back, ${name}` : 'Welcome back'}
         </div>
-        <div style={{ fontSize: 13, opacity: 0.95 }}>
+        <div style={{ fontSize: 13.5, color: MUTED, letterSpacing: '-0.01em' }}>
           You've answered {done} of {total}. Pick up where you left off?
         </div>
       </div>
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <button
-          type="button" onClick={onResume}
-          style={{
-            background: '#fff', color: '#4B7A1F', border: 'none', borderRadius: 8,
-            padding: '9px 16px', fontSize: 13.5, fontWeight: 700,
-            fontFamily: 'inherit', cursor: 'pointer',
-          }}
-        >Continue where I left off</button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
         <button
           type="button" onClick={onDismiss}
           style={{
-            background: 'rgba(255,255,255,.18)', color: '#fff',
-            border: '1px solid rgba(255,255,255,.45)', borderRadius: 8,
-            padding: '9px 16px', fontSize: 13.5, fontWeight: 600,
-            fontFamily: 'inherit', cursor: 'pointer',
+            background: 'none', color: MUTED, border: 'none', borderRadius: 10,
+            padding: '9px 12px', fontSize: 13.5, fontWeight: 500,
+            fontFamily: 'inherit', cursor: 'pointer', letterSpacing: '-0.01em',
           }}
         >Start at the top</button>
+        <button
+          type="button" onClick={onResume}
+          style={{
+            background: ACCENT, color: '#fff', border: 'none', borderRadius: 10,
+            padding: '9px 16px', fontSize: 13.5, fontWeight: 600,
+            fontFamily: 'inherit', cursor: 'pointer', letterSpacing: '-0.01em',
+          }}
+        >Continue</button>
       </div>
     </div>
   );
 }
 
-/** The quote form's big blue step heading and its grey subtitle. */
-export function StepTitle({ title, children }) {
+/**
+ * The heading block: where you are, what this screen is, and why.
+ *
+ * Centred, and the title is near-black rather than the accent. A coloured
+ * heading on every screen makes the accent meaningless by the third one, and
+ * the thing that should be loudest on this page is the question.
+ *
+ * "Step 3 of 8" is not decoration. Being told the count is the single cheapest
+ * way to make a long form feel finite, and finite is the whole battle here.
+ */
+export function StepTitle({ step, total, title, children, meta = null }) {
   return (
-    <>
+    <div style={{ textAlign: 'center', maxWidth: 640, margin: '0 auto 30px' }}>
+      {step != null && total != null && (
+        <div style={{
+          fontSize: 12, fontWeight: 600, color: MUTED,
+          letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 10,
+        }}>
+          Step {step} of {total}
+        </div>
+      )}
       <h2 style={{
-        margin: '0 0 8px', fontSize: 'clamp(21px, 3.2vw, 28px)', fontWeight: 700,
-        color: BRAND.blue, lineHeight: 1.3,
+        margin: '0 0 10px', fontSize: 'clamp(23px, 3vw, 31px)', fontWeight: 600,
+        color: INK, lineHeight: 1.18, letterSpacing: '-0.025em',
       }}>{title}</h2>
-      {/* The paragraph is capped independently of the card. The page got wider
-          so the stepper could breathe; body copy following it out to 880px
-          would just be harder to read. */}
       {children && (
-        <p style={{ margin: '0 0 28px', maxWidth: '68ch', fontSize: 15, lineHeight: 1.6, color: '#6b7280' }}>
+        <p style={{
+          margin: '0 auto', maxWidth: '58ch', fontSize: 15, lineHeight: 1.6,
+          color: MUTED, letterSpacing: '-0.005em',
+        }}>
           {children}
         </p>
       )}
-    </>
+      {meta && <div style={{ marginTop: 16 }}>{meta}</div>}
+    </div>
   );
 }
 
 /**
  * "Good morning" / "Good afternoon" / "Good evening".
  *
- * Same three windows as the quote form's timeBasedGreeting(), which cannot be
- * imported here: it lives in QuoteRequestForm.jsx alongside 1,100 lines of
- * marketing form, and the portal bundle should not carry that to say hello.
+ * Same three windows as timeBasedGreeting() in QuoteRequestForm.jsx, which
+ * cannot be imported here: it sits alongside 1,100 lines of marketing form, and
+ * the portal bundle should not carry that to say hello.
  */
 export function greeting() {
   const h = new Date().getHours();
-  if (h < 12) return 'Good morning!';
-  if (h < 18) return 'Good afternoon!';
-  return 'Good evening!';
+  if (h < 12) return 'Good morning';
+  if (h < 18) return 'Good afternoon';
+  return 'Good evening';
 }

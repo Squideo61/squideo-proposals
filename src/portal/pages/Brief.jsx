@@ -41,7 +41,7 @@ import { Card, EmptyState } from '../components.jsx';
 import { navigate } from '../PortalApp.jsx';
 import { GuideVideoModal } from '../GuideVideo.jsx';
 import {
-  StepProgress, TimeBadge, ReassuranceBadge, ResumeBanner, StepTitle, greeting,
+  StepProgress, TimeBadge, ReassuranceBadge, ResumeBanner, StepTitle, greeting, EASE,
 } from '../ProgressChrome.jsx';
 import {
   SCREENS, briefProgress, missingRequired, suggestedLength,
@@ -104,6 +104,27 @@ const TICK_MS = 8000;
 // there is for it.
 const BRIEF_MAX = 880;
 
+// A hairline rather than a border. At 11% it separates without drawing a box
+// round everything, which is most of why the page reads calm now.
+const HAIRLINE = 'rgba(15, 42, 61, 0.11)';
+
+// One object, not three stacked ones: the stepper sits on the card, the body
+// hangs off it. Softer and larger than the portal's default card — this is the
+// only thing on the page, so it can afford the room.
+const CARD_SHELL = {
+  padding: 0,
+  overflow: 'hidden',
+  borderRadius: 18,
+  border: `1px solid ${HAIRLINE}`,
+  boxShadow: '0 1px 2px rgba(15,42,61,.04), 0 12px 32px rgba(15,42,61,.05)',
+};
+const STEP_BAND = {
+  padding: '22px 28px 20px',
+  background: '#F8FAFC',
+  borderBottom: `1px solid ${HAIRLINE}`,
+};
+const CARD_BODY = { padding: '34px 30px 26px' };
+
 // Must agree with isEmpty() in api/_lib/brief/questions.js — if the client
 // thinks a question is answered and the server doesn't, "Send" bounces with no
 // visible reason.
@@ -142,9 +163,14 @@ const relTime = (at) => {
 // brief. Mirrors the .input rule in src/styles.css, which this page can't use
 // because its fields are styled inline.
 const inputStyle = (isMobile) => ({
-  width: '100%', boxSizing: 'border-box', padding: '11px 13px',
-  border: '1px solid #D8E0E8', borderRadius: 9, fontSize: isMobile ? 16 : 14.5,
+  width: '100%', boxSizing: 'border-box', padding: '12px 15px',
+  border: '1px solid #DCE4EB', borderRadius: 12, fontSize: isMobile ? 16 : 15,
   fontFamily: 'inherit', color: BRAND.ink, background: '#fff', lineHeight: 1.5,
+  letterSpacing: '-0.01em',
+  // The focus ring is in the page's <style> block (.brief-field:focus) because
+  // inline styles cannot carry a pseudo-class. Transitioning both here means the
+  // ring grows into place instead of snapping on.
+  transition: 'border-color .18s ease, box-shadow .18s ease',
 });
 
 function Avatar({ name, size = 24 }) {
@@ -315,15 +341,26 @@ function Question({ q, value, onChange, onBlur, onFocus, answers, invalid, disab
   // A field someone else is in is dimmed, not locked: two people typing in one
   // box is rare and recoverable (every version is in the activity feed), while
   // being locked out of your own brief is neither.
-  const border = editors.length ? '#FDBA74' : (invalid ? '#E9A0A0' : '#D8E0E8');
+  const border = editors.length ? '#FDBA74' : (invalid ? '#E9A0A0' : '#DCE4EB');
+  // One-line answers pair up two to a row; anything you have to think in
+  // sentences about gets the full width. A name and a deadline side by side is
+  // a form you can fill in fast — an audience description squeezed into half a
+  // column is one you avoid starting.
+  const wide = q.type !== 'text';
   return (
-    <div style={{ marginBottom: 26 }}>
+    <div className={wide ? 'brief-wide' : undefined} style={{ marginBottom: 28 }}>
       <label style={{
         display: 'block', fontSize: 14.5, fontWeight: 600, color: BRAND.ink,
-        marginBottom: q.type === 'chips' || q.type === 'multi' ? 10 : 7, lineHeight: 1.4,
+        letterSpacing: '-0.015em',
+        marginBottom: q.type === 'chips' || q.type === 'multi' ? 11 : 8, lineHeight: 1.4,
       }}>
         {q.label}
-        {q.required && <span style={{ color: '#D14343', marginLeft: 4 }}>*</span>}
+        {/* A muted dot, not a red asterisk. Twenty-five red marks down a page is
+            a page that looks like it has already been marked wrong; what is
+            actually required is enforced at Finalise, in words. */}
+        {q.required && (
+          <span title="Needed before you can finalise" style={{ color: '#B9C4CE', marginLeft: 5 }}>•</span>
+        )}
         <EditingHere people={editors} />
       </label>
 
@@ -331,6 +368,7 @@ function Question({ q, value, onChange, onBlur, onFocus, answers, invalid, disab
           to the next question is the clearest signal that an answer is done. */}
       {q.type === 'text' && (
         <input
+          className="brief-field"
           type="text" value={value || ''} placeholder={q.placeholder || ''} disabled={disabled}
           onChange={(e) => onChange(e.target.value)} onBlur={onBlur} onFocus={onFocus}
           style={{ ...inp, borderColor: border }}
@@ -338,6 +376,7 @@ function Question({ q, value, onChange, onBlur, onFocus, answers, invalid, disab
       )}
       {q.type === 'textarea' && (
         <textarea
+          className="brief-field"
           value={value || ''} rows={q.rows || 3} placeholder={q.placeholder || ''} disabled={disabled}
           onChange={(e) => onChange(e.target.value)} onBlur={onBlur} onFocus={onFocus}
           style={{ ...inp, resize: 'vertical', borderColor: border }}
@@ -443,7 +482,7 @@ function BriefList({ data, onOpen, onCreate, onDelete, busy, manageMode }) {
     <div style={{ maxWidth: BRIEF_MAX, margin: '0 auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
         <FileText size={20} style={{ color: BRAND.blue }} />
-        <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: BRAND.ink }}>
+        <h1 style={{ margin: 0, fontSize: 22, fontWeight: 600, letterSpacing: '-0.02em', color: BRAND.ink }}>
           {data.readOnly ? 'Their video briefs' : 'Video briefs'}
         </h1>
       </div>
@@ -942,11 +981,13 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
 
   const screenTitle = useMemo(() => {
     if (!screen) return '';
-    if (step === 0) return `${greeting()} ${screen.title}`;
+    // greeting() carries no punctuation of its own, so the join has to supply
+    // it — "Good morning The video" was the first version of this line.
+    if (step === 0) return `${greeting()} — let's start with ${screen.title.toLowerCase()}`;
     if (!firstName) return screen.title;
     // Only the two mid-form screens get the name. Every screen would be a
     // mail-merge, and by the last one it stops reading as friendly.
-    if (step === 2) return `Thanks ${firstName} — ${screen.title.toLowerCase()}`;
+    if (step === 2) return `${firstName}, let's talk about ${screen.title.toLowerCase()}`;
     if (step === screens.length - 1) return `Almost done, ${firstName}`;
     return screen.title;
   }, [screen, step, firstName, screens.length]);
@@ -1025,7 +1066,7 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
       )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6, flexWrap: 'wrap' }}>
         <FileText size={20} style={{ color: BRAND.blue }} />
-        <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: BRAND.ink }}>
+        <h1 style={{ margin: 0, fontSize: 22, fontWeight: 600, letterSpacing: '-0.02em', color: BRAND.ink }}>
           {readOnly ? 'Their video brief' : (brief.title || 'Your video brief')}
         </h1>
         {locked && (
@@ -1182,15 +1223,45 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
           .brief-print   { display: block !important; }
         }
         .brief-print { display: none; }
+
+        /* Each screen arrives rather than appearing. 10px and 320ms: enough to
+           read as a step forward, short enough that someone moving quickly
+           through the form never waits for it. Keyed on the step index, so it
+           replays on every move including jumps from the stepper. */
+        @keyframes briefStepIn {
+          from { opacity: 0; transform: translateY(10px); }
+          to   { opacity: 1; transform: none; }
+        }
+        .brief-step { animation: briefStepIn .32s ${EASE} both; }
+
+        /* Two columns for the short answers, one for anything you have to think
+           in sentences about. Below 720 everything is one column — side-by-side
+           fields on a phone are how you get two half-legible labels. */
+        .brief-grid { display: grid; gap: 0 26px; grid-template-columns: 1fr; }
+        @media (min-width: 720px) {
+          .brief-grid { grid-template-columns: 1fr 1fr; }
+        }
+        .brief-grid > .brief-wide { grid-column: 1 / -1; }
+
+        /* The focus ring is the one place the accent is allowed to be loud. */
+        .brief-field:focus {
+          outline: none;
+          border-color: ${BRAND.blue};
+          box-shadow: 0 0 0 4px ${BRAND.blue}1F;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .brief-step { animation: none; }
+        }
       `}</style>
 
       {header}
 
-      <div className="brief-noprint">
-        {/* Only for someone coming back to work already in progress. On a brief
-            they have just started there is nothing to resume and the banner is
-            a bright green box announcing that they have done nothing. */}
-        {resumeOffer !== null && (
+      {/* Only for someone coming back to work already in progress. On a brief
+          they have just started there is nothing to resume, and a card
+          announcing that they have done nothing is worse than no card. */}
+      {resumeOffer !== null && (
+        <div className="brief-noprint">
           <ResumeBanner
             name={firstName}
             done={progress.done}
@@ -1198,82 +1269,111 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
             onResume={() => { setStep(resumeOffer); setResumeOffer(null); }}
             onDismiss={() => setResumeOffer(null)}
           />
-        )}
-
-        <StepProgress
-          steps={stepperSteps}
-          current={step}
-          onJump={setStep}
-          markers={busyScreens}
-        />
-      </div>
+        </div>
+      )}
 
       {/* ── the current screen ──────────────────────────────────────────── */}
       {!isReview && screen && (
-        <Card>
-          <TimeBadge minutes={minutesLeft} />
+        <Card style={CARD_SHELL}>
+          {/* The stepper rides on the card rather than floating above it, so
+              the page reads as one object instead of three stacked ones. */}
+          <div className="brief-noprint" style={STEP_BAND}>
+            <StepProgress
+              steps={stepperSteps}
+              current={step}
+              onJump={setStep}
+              markers={busyScreens}
+            />
+          </div>
 
-          <StepTitle title={screenTitle}>
-            {screen.blurb}
-            {screen.optional && (
-              <span style={{ display: 'block', marginTop: 6, fontSize: 13.5, color: '#9AA5B1' }}>
-                Optional — most people skip this.
-              </span>
+          <div key={step} className="brief-step" style={CARD_BODY}>
+            <StepTitle
+              step={step + 1}
+              total={stepperSteps.length}
+              title={screenTitle}
+              meta={(
+                <div style={{
+                  display: 'flex', justifyContent: 'center', gap: 8, flexWrap: 'wrap',
+                }}>
+                  <TimeBadge minutes={minutesLeft} />
+                  {/* The quote form puts a privacy line here, because "who sees
+                      my phone number" is what stops people finishing that one.
+                      Twenty-five questions raises a different worry — what
+                      happens if I stop — so this answers that instead, and
+                      earns it by showing the actual save time. */}
+                  <ReassuranceBadge tone={save.kind}>{save.text}</ReassuranceBadge>
+                </div>
+              )}
+            >
+              {screen.blurb}
+              {screen.optional && (
+                <span style={{ display: 'block', marginTop: 8, color: '#95A2AD' }}>
+                  Optional — most people skip this.
+                </span>
+              )}
+            </StepTitle>
+
+            {screen.optional && !scriptOpen ? (
+              <button
+                type="button" onClick={() => setScriptOpen(true)}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 7,
+                  background: '#fff', border: '1px dashed #CBD8E2', borderRadius: 12,
+                  padding: '13px 18px', cursor: 'pointer', color: '#5A7382',
+                  fontSize: 14, fontFamily: 'inherit', letterSpacing: '-0.01em',
+                }}
+              ><ChevronDown size={15} /> I've got some wording in mind</button>
+            ) : (
+              <div className="brief-grid">
+                {screen.questions.map((q) => (
+                  <Question
+                    key={q.key} q={q} answers={answers} onWatch={setWatching}
+                    value={answers[q.key]}
+                    editors={editorsByKey.get(q.key) || []}
+                    onChange={(v) => setAnswer(q.key, v)}
+                    onFocus={() => { editingKey.current = q.key; }}
+                    onBlur={() => { if (editingKey.current === q.key) editingKey.current = null; flush(); }}
+                    invalid={showInvalid && q.required && isBlank(answers[q.key])}
+                  />
+                ))}
+              </div>
             )}
-          </StepTitle>
 
-          {/* The quote form puts a privacy line here because "who sees my phone
-              number" is the worry that stops people finishing it. Twenty-five
-              questions raises a different one — what happens if I stop — so
-              this answers that instead, in the same place, in the same shape.
-              It doubles as the save indicator, which is the honest way to make
-              the promise: it says "saved at 14:32", not just "we save". */}
-          <ReassuranceBadge tone={save.kind}>{save.text}</ReassuranceBadge>
-
-          {screen.optional && !scriptOpen ? (
-            <button
-              type="button" onClick={() => setScriptOpen(true)}
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: 7,
-                background: '#fff', border: '1px dashed #C4D2DC', borderRadius: 9,
-                padding: '11px 16px', cursor: 'pointer', color: '#5A7382',
-                fontSize: 13.5, fontFamily: 'inherit',
-              }}
-            ><ChevronDown size={15} /> I've got some wording in mind</button>
-          ) : (
-            screen.questions.map((q) => (
-              <Question
-                key={q.key} q={q} answers={answers} onWatch={setWatching}
-                value={answers[q.key]}
-                editors={editorsByKey.get(q.key) || []}
-                onChange={(v) => setAnswer(q.key, v)}
-                onFocus={() => { editingKey.current = q.key; }}
-                onBlur={() => { if (editingKey.current === q.key) editingKey.current = null; flush(); }}
-                invalid={showInvalid && q.required && isBlank(answers[q.key])}
-              />
-            ))
-          )}
-
-          <div style={{
-            display: 'flex', gap: 10, marginTop: 8, paddingTop: 18,
-            borderTop: '1px solid #EEF2F5', flexWrap: 'wrap',
-          }}>
-            {step > 0 && (
-              <button type="button" onClick={() => setStep(step - 1)} style={btnGhost}>
-                <ArrowLeft size={15} /> Back
+            <div style={{
+              display: 'flex', gap: 10, marginTop: 10, paddingTop: 22,
+              borderTop: `1px solid ${HAIRLINE}`, flexWrap: 'wrap',
+              justifyContent: step > 0 ? 'space-between' : 'flex-end',
+            }}>
+              {step > 0 && (
+                <button type="button" onClick={() => setStep(step - 1)} style={btnGhost}>
+                  <ArrowLeft size={15} /> Back
+                </button>
+              )}
+              <button type="button" onClick={() => { flush(); setStep(step + 1); }} style={btnPrimary}>
+                {step === screens.length - 1 ? 'Review' : 'Next'} <ArrowRight size={15} />
               </button>
-            )}
-            <button type="button" onClick={() => { flush(); setStep(step + 1); }} style={btnPrimary}>
-              {step === screens.length - 1 ? 'Review' : 'Next'} <ArrowRight size={15} />
-            </button>
+            </div>
           </div>
         </Card>
       )}
 
       {/* ── review + finalise ───────────────────────────────────────────── */}
       {isReview && (
-        <Card>
-          <StepTitle title={firstName ? `Ready when you are, ${firstName}` : 'Ready to finalise'}>
+        <Card style={CARD_SHELL}>
+          <div className="brief-noprint" style={STEP_BAND}>
+            <StepProgress
+              steps={stepperSteps}
+              current={step}
+              onJump={setStep}
+              markers={busyScreens}
+            />
+          </div>
+          <div key="review" className="brief-step" style={CARD_BODY}>
+          <StepTitle
+            step={stepperSteps.length}
+            total={stepperSteps.length}
+            title={firstName ? `Ready when you are, ${firstName}` : 'Ready to finalise'}
+          >
             Have a read through — and check whoever else needs to has had their say, because
             <strong> finalising locks it</strong>. Our team works from this exact version, so it
             can't move underneath them afterwards. We can always reopen it for you if it needs to.
@@ -1297,11 +1397,12 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
             </button>
           </div>
           {missing.length > 0 && (
-            <p style={{ margin: '12px 0 0', fontSize: 13, color: '#B45309' }}>
+            <p style={{ margin: '14px 0 0', fontSize: 13, lineHeight: 1.6, color: '#8A6320' }}>
               {missing.length} question{missing.length === 1 ? '' : 's'} still to answer:{' '}
               {missing.map((m) => m.label).join(' · ')}
             </p>
           )}
+          </div>
         </Card>
       )}
 
@@ -1378,9 +1479,12 @@ function displayValue(q, v) {
 }
 
 const btnBase = {
-  display: 'inline-flex', alignItems: 'center', gap: 7, padding: '11px 18px',
-  borderRadius: 9, fontSize: 14, fontWeight: 600, fontFamily: 'inherit',
-  cursor: 'pointer', border: '1px solid transparent',
+  display: 'inline-flex', alignItems: 'center', gap: 7, padding: '12px 20px',
+  borderRadius: 11, fontSize: 14.5, fontWeight: 600, fontFamily: 'inherit',
+  letterSpacing: '-0.015em', cursor: 'pointer', border: '1px solid transparent',
+  transition: 'background .18s ease, border-color .18s ease',
 };
 const btnPrimary = { ...btnBase, background: BRAND.blue, color: '#fff' };
-const btnGhost = { ...btnBase, background: '#fff', color: '#5A7382', borderColor: '#D8E0E8' };
+// No box, just a hairline. Back is not a decision anyone needs help finding,
+// and a second bordered button beside the primary reads as a second choice.
+const btnGhost = { ...btnBase, background: '#fff', color: '#5A7382', borderColor: HAIRLINE };
