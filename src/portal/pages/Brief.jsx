@@ -40,7 +40,7 @@
 // with a quiet status line; if one fails the answer stays in local state and
 // goes up with the next keystroke.
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   FileText, ArrowRight, ArrowLeft, Check, Printer, Send, Plus, Trash2,
   Info, GraduationCap, ChevronDown, ChevronRight, Lock, Users, History, Link2, Briefcase,
@@ -189,6 +189,74 @@ const inputStyle = (isMobile) => ({
   transition: 'border-color .18s ease, box-shadow .18s ease',
 });
 
+// Every answer box in the brief. It grows downwards instead of scrolling
+// sideways, which is what people expect of a box they are writing prose into
+// and what a single-line <input> never does: past the right-hand edge an input
+// silently scrolls, so the sentence you just wrote disappears off the left and
+// you cannot see what you have said without dragging through it.
+//
+// SINGLE-LINE QUESTIONS ARE STILL SINGLE-LINE. `singleLine` renders a textarea
+// for the wrapping, then blocks Enter from putting a newline in it — a project
+// name with a line break in the middle is a name that renders wrong in the CRM,
+// in the alert email and on the brief itself. It wraps visually; it stays one
+// line of data.
+//
+// Height is set from scrollHeight rather than by counting characters, because
+// only the browser knows where the text actually wrapped at this width in this
+// font. Re-measured on the value AND on width, since a narrower window rewraps
+// everything.
+function AutoGrowField({ value, minRows = 1, singleLine = false, style, ...rest }) {
+  const ref = useRef(null);
+
+  const fit = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    // Collapse first: without this the box can only ever get taller, because
+    // the scrollHeight of an already-tall box is its current height.
+    el.style.height = 'auto';
+    // Measured off the element, not read from the style prop. The prop is a new
+    // object every render, which would rebuild this callback every keystroke —
+    // and computed styles are the truth anyway once a media query or a browser
+    // default has had its say.
+    const cs = window.getComputedStyle(el);
+    const line = parseFloat(cs.lineHeight) || 22;
+    const padding = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+    const border = parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
+    // box-sizing is border-box, so the height we set has to include the border.
+    // scrollHeight counts padding but not border, hence the + border on one side
+    // and not the other.
+    const floor = Math.round(minRows * line) + padding + border;
+    el.style.height = `${Math.max(el.scrollHeight + border, floor)}px`;
+  }, [minRows]);
+
+  useLayoutEffect(fit, [fit, value]);
+
+  useEffect(() => {
+    window.addEventListener('resize', fit);
+    return () => window.removeEventListener('resize', fit);
+  }, [fit]);
+
+  return (
+    <textarea
+      ref={ref}
+      value={value || ''}
+      rows={minRows}
+      onKeyDown={singleLine
+        ? (e) => { if (e.key === 'Enter') e.preventDefault(); }
+        : undefined}
+      style={{
+        ...style,
+        // The height is ours now, so a drag handle would fight the next
+        // keystroke, and there is nothing to scroll to because the box is
+        // always exactly as tall as its contents.
+        resize: 'none',
+        overflow: 'hidden',
+      }}
+      {...rest}
+    />
+  );
+}
+
 function Avatar({ name, size = 24 }) {
   return (
     <span
@@ -290,17 +358,19 @@ function ScriptTable({ value, onChange, disabled = false }) {
               on every row is just noise. Stacked on a phone they don't: row
               three would be two identical boxes with no way to tell which is
               the script and which is the visual. */}
-          <textarea
-            value={r.script || ''} rows={3} disabled={disabled}
+          <AutoGrowField
+            className="brief-field"
+            value={r.script} minRows={3} disabled={disabled}
             onChange={(e) => set(i, 'script', e.target.value)}
             placeholder={isMobile || i === 0 ? 'What is said…' : ''}
-            style={{ ...inp, flex: '1 1 240px', resize: 'vertical' }}
+            style={{ ...inp, flex: '1 1 240px' }}
           />
-          <textarea
-            value={r.visual || ''} rows={3} disabled={disabled}
+          <AutoGrowField
+            className="brief-field"
+            value={r.visual} minRows={3} disabled={disabled}
             onChange={(e) => set(i, 'visual', e.target.value)}
             placeholder={isMobile || i === 0 ? 'What is on screen…' : ''}
-            style={{ ...inp, flex: '1 1 240px', resize: 'vertical' }}
+            style={{ ...inp, flex: '1 1 240px' }}
           />
           {rows.length > 1 && !disabled && (
             <button
@@ -422,20 +492,14 @@ function Question({ q, value, onChange, onBlur, onFocus, answers, invalid, disab
 
       {/* onBlur saves immediately rather than waiting out the debounce — moving
           to the next question is the clearest signal that an answer is done. */}
-      {q.type === 'text' && (
-        <input
+      {(q.type === 'text' || q.type === 'textarea') && (
+        <AutoGrowField
           className="brief-field"
-          type="text" value={value || ''} placeholder={q.placeholder || ''} disabled={disabled}
+          singleLine={q.type === 'text'}
+          minRows={q.type === 'text' ? 1 : (q.rows || 3)}
+          value={value} placeholder={q.placeholder || ''} disabled={disabled}
           onChange={(e) => onChange(e.target.value)} onBlur={onBlur} onFocus={onFocus}
           style={{ ...inp, borderColor: border }}
-        />
-      )}
-      {q.type === 'textarea' && (
-        <textarea
-          className="brief-field"
-          value={value || ''} rows={q.rows || 3} placeholder={q.placeholder || ''} disabled={disabled}
-          onChange={(e) => onChange(e.target.value)} onBlur={onBlur} onFocus={onFocus}
-          style={{ ...inp, resize: 'vertical', borderColor: border }}
         />
       )}
       {(q.type === 'chips' || q.type === 'multi') && (
