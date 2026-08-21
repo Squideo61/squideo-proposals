@@ -130,7 +130,7 @@ import { ensureClientBriefs } from './_lib/brief/db.js';
 import { missingRequired, renderBriefText, briefProgress, answerLabel } from './_lib/brief/questions.js';
 import {
   diffAnswers, recordBriefEvents, loadBriefActivity, loadPresence, touchPresence,
-  refreshContributorCount, serialiseEvent,
+  refreshContributorCount, serialiseEvent, colleagueEvents,
 } from './_lib/brief/collab.js';
 import { anyDriveAccessToken, listSignedOffFiles, streamDriveFile } from './_lib/portal/drive.js';
 import {
@@ -3361,7 +3361,13 @@ async function briefRoute(req, res, user) {
       ]);
       return res.status(200).json({
         brief: serialiseBrief(row),
-        activity,
+        // Colleagues only for a client; everything for a staff preview.
+        activity: colleagueEvents(activity, user.puid),
+        // The polling cursor, taken BEFORE that filter. A solo brief shows an
+        // empty feed, and if the cursor came from the feed it would be null
+        // for ever — so the first colleague to answer anything would never
+        // appear. See colleagueEvents.
+        activityCursor: activity[0]?.id || null,
         presence,
         // Manage mode does NOT make this editable. Writes are refused for every
         // preview session (see below), so offering an editable form would be a
@@ -3670,9 +3676,13 @@ async function briefTickRoute(req, res, user) {
          ORDER BY created_at DESC LIMIT 60`.catch(() => [])
     : [];
 
+  const freshEvents = fresh.map(serialiseEvent);
   return res.status(200).json({
     presence,
-    events: fresh.map(serialiseEvent),
+    events: colleagueEvents(freshEvents, user.puid),
+    // Again the unfiltered head, so the cursor keeps advancing past events the
+    // client is not shown. Without it every poll re-reads the same window.
+    activityCursor: freshEvents[0]?.id || null,
     // The current document, so a colleague's answers appear without a reload.
     // Small enough to send every tick; the alternative is a second request the
     // moment anything changes, which is the same bytes with more latency.

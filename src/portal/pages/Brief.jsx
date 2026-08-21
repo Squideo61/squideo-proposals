@@ -683,7 +683,7 @@ function BriefList({ data, onOpen, onCreate, onDelete, busy, manageMode }) {
               <div style={{ fontSize: 12.5, color: '#6B7785', marginTop: 3 }}>
                 {b.dealTitle
                   ? <><Briefcase size={11} style={{ verticalAlign: -1 }} /> {b.dealTitle}</>
-                  : 'New enquiry'}
+                  : 'New project'}
                 {' · '}
                 {b.locked
                   ? `sent ${relTime(b.submittedAt)}`
@@ -927,7 +927,7 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
         setData(d);
         setActivity(d.activity || []);
         setPresence(d.presence || []);
-        lastEventId.current = d.activity?.[0]?.id || null;
+        lastEventId.current = d.activityCursor ?? d.activity?.[0]?.id ?? null;
         const fromServer = d.brief?.answers || {};
 
         // Previewing staff have no draft of their own to recover, and must not
@@ -1037,8 +1037,11 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
             const seen = new Set(prev.map((e) => e.id));
             return [...r.events.filter((e) => !seen.has(e.id)), ...prev];
           });
-          lastEventId.current = r.events[0].id;
         }
+        // Advance past events this session is not SHOWN as well as the ones it
+        // is — a client's own edits come back filtered out, and a cursor that
+        // ignored them would re-read the same window on every tick.
+        if (r.activityCursor) lastEventId.current = r.activityCursor;
         if (r.locked) {
           setData((d) => (d ? { ...d, brief: { ...d.brief, locked: true } } : d));
           return;
@@ -1377,7 +1380,7 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
             {brief.dealReference && <span style={{ opacity: 0.7 }}>· {brief.dealReference}</span>}
           </span>
         ) : (
-          <span style={{ fontSize: 12.5, color: BRAND.muted }}>New enquiry</span>
+          <span style={{ fontSize: 12.5, color: BRAND.muted }}>New project</span>
         )}
         {canFile && projects.length > 0 && (
           <select

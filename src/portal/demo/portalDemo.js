@@ -437,7 +437,11 @@ function respond(state, method, action, query, body) {
       if (query.get('id')) {
         return {
           brief: { ...brief, answers: DEMO_BRIEF_ANSWERS },
-          activity: BRIEF_ACTIVITY,
+          // Colleagues only, exactly as the real route filters it — the demo is
+          // no use for judging a screen if it shows a feed the client cannot
+          // actually see. The cursor stays off the unfiltered list.
+          activity: BRIEF_ACTIVITY.filter((e) => e.portalUserId && e.portalUserId !== ME.id),
+          activityCursor: BRIEF_ACTIVITY[0]?.id || null,
           presence: brief.locked ? [] : BRIEF_PRESENCE,
           readOnly: false,
           canReopen: false,

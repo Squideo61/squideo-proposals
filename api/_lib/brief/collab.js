@@ -174,6 +174,30 @@ export async function touchPresence({ briefId, portalUserId, name, questionKey }
   return loadPresence(briefId, portalUserId);
 }
 
+// What a CLIENT is shown of the feed: what their COLLEAGUES did, and nothing
+// else. Same idea as loadPresence's excludeUserId, for the same reason.
+//
+// The full history is ours. It is how we see who inside an organisation
+// actually shaped a brief, and it stays in the database and in the staff
+// preview, which is where it is useful. But on the client's own page it was
+// mostly the software narrating them back at themselves — "you started this
+// brief" under a brief they had just started — and on a solo brief that is the
+// ENTIRE feed, so the panel existed to tell one person what they already knew.
+//
+// Staff events go too (they carry staff_email and no portal_user_id):
+// "Squideo reopened this" is worth an email, not a permanent log on their page.
+//
+// A viewer with no id is a staff preview session, and gets the lot.
+//
+// NOTE the caller must keep its polling cursor off the UNFILTERED list — see
+// activityCursor in briefRoute. Taking it from what survives this filter would
+// leave a solo brief with no cursor at all, and the first colleague to touch it
+// would never show up.
+export function colleagueEvents(events = [], viewerId = null) {
+  if (!viewerId) return events;
+  return events.filter((e) => e.portalUserId && e.portalUserId !== viewerId);
+}
+
 // Who else is on this brief right now. `excludeUserId` keeps the caller out of
 // their own "also editing" list.
 export async function loadPresence(briefId, excludeUserId = null) {

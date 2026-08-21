@@ -289,7 +289,7 @@ export function buildBriefHTML({ answers = {}, brief = {}, company = null, progr
         ${company?.name ? `<div><dt>Prepared by</dt><dd>${esc(company.name)}</dd></div>` : ''}
         <div><dt>Project</dt><dd>${brief.dealTitle
           ? `${esc(brief.dealTitle)}${brief.dealReference ? ` · ${esc(brief.dealReference)}` : ''}`
-          : 'New enquiry'}</dd></div>
+          : 'New project'}</dd></div>
         <div><dt>Status</dt><dd>${status}</dd></div>
         <div><dt>${finalised ? 'Printed' : 'As at'}</dt><dd>${esc(today)}</dd></div>
       </dl>
