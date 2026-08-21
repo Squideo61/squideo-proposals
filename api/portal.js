@@ -107,7 +107,7 @@ import {
 } from './_lib/voiceover.js';
 import { ensureIntroCallTables } from './_lib/crm/introCallSlots.js';
 import { ensureLeadAttribution } from './_lib/leadAttribution.js';
-import { bookSlot, computeBookingSlots } from './_lib/introCallBooking.js';
+import { bookSlot, computeBookingSlots, loadIntroCallRules } from './_lib/introCallBooking.js';
 import {
   companyHasLogo, portalLogoPath, emailLogoUrl, decodeLogo, ensureCompanyLogoColumns,
 } from './_lib/portal/logo.js';
@@ -632,6 +632,7 @@ export default async function handler(req, res) {
       case 'brief-attach': return briefAttachRoute(req, res, user);
       case 'brief-tick': return briefTickRoute(req, res, user);
       case 'brief-reopen': return briefReopenRoute(req, res, user);
+      case 'brief-next-step': return briefNextStepRoute(req, res, user);
       case 'brief-delete': return briefDeleteRoute(req, res, user);
       case 'demo-project': return demoProjectRoute(req, res, user);
       case 'demo-event': return demoEventRoute(req, res, user);
@@ -3273,7 +3274,7 @@ async function loadCompanyBriefs(companyId) {
 async function loadBriefRow(id, companyId) {
   if (!id) return null;
   const [row] = await sql`
-    SELECT b.*, d.title AS deal_title, d.reference AS deal_reference,
+    SELECT b.*, d.title AS deal_title, d.reference AS deal_reference, d.stage AS deal_stage,
            pu.name AS submitted_by_name, pu.email AS submitted_by_email
       FROM client_briefs b
       LEFT JOIN deals d ON d.id = b.deal_id
@@ -3294,11 +3295,19 @@ function serialiseBrief(r, { withAnswers = true } = {}) {
     dealId: r.deal_id || null,
     dealTitle: r.deal_title || null,
     dealReference: r.deal_reference || null,
+    // Whether the linked job is actually SIGNED, which is not the same as
+    // whether the brief is linked to one — briefProjects offers proposal_sent
+    // and viewed deals too. It decides what a finalised brief says it is: work
+    // we are about to start, or the document a quote gets built from. Getting
+    // that wrong promises production off the back of an unsigned brief.
+    dealSigned: r.deal_stage === 'signed' || r.deal_stage === 'paid',
     answers: withAnswers ? answers : undefined,
     completedAt: r.completed_at || null,
     submittedAt: r.submitted_at || null,
     submittedBy: r.submitted_by_name || r.submitted_by_email || null,
     reopenedAt: r.reopened_at || null,
+    // 'call' | 'quote' | null — what they asked for after finalising.
+    nextStep: r.next_step || null,
     locked: !!r.submitted_at,
     contributors: Math.max(1, Number(r.contributor_count) || 1),
     createdAt: r.created_at || null,
@@ -3592,6 +3601,131 @@ async function briefRoute(req, res, user) {
   }
 
   return res.status(405).json({ error: 'Method not allowed' });
+}
+
+// ═════════════════════════ what happens after a brief ═══════════════════════
+// A finished brief used to end at "we'll come back to you shortly", which is a
+// promise with nothing for the client to do. Now they choose: talk it through
+// first, or just get a number. Both are real answers, and which one somebody
+// picks is the single most useful thing to know before you call them.
+//
+// The DISCOVERY call has no deal behind it — that is the whole point, it comes
+// before one — so it books against an explicit host list (intro_call_rules
+// .discoveryHosts) and identifies itself by client_key = the brief id, the same
+// way partner-client bookings do. Everything else is the ordinary booking
+// engine: the same lock, the same Google Meet, the same notification.
+//
+// If no hosts are configured, or none of them has a connected calendar, the
+// engine returns no slots and says why. The portal then offers "ask us to call
+// you", which is a worse experience than a live calendar and a much better one
+// than an empty one.
+const NEXT_STEPS = new Set(['call', 'quote']);
+
+async function briefNextStepRoute(req, res, user) {
+  await ensureClientBriefs();
+  await ensureIntroCallTables();
+  const companyId = resolveCompanyId(req, res, user);
+  if (!companyId) return;
+
+  const id = trimOrNull(req.method === 'GET' ? req.query.id : null);
+
+  if (req.method === 'GET') {
+    const row = await loadBriefRow(id, companyId);
+    if (!row) return res.status(404).json({ error: 'Brief not found' });
+    const rules = await loadIntroCallRules();
+    const hosts = Array.isArray(rules.discoveryHosts) ? rules.discoveryHosts.filter(Boolean) : [];
+    const [booking] = await sql`
+      SELECT starts_at, ends_at, meet_url FROM intro_call_bookings
+       WHERE client_key = ${row.id} AND kind = 'intro' AND status = 'confirmed'
+       ORDER BY starts_at DESC LIMIT 1`.catch(() => []);
+
+    // Slots are only worth computing when there is somebody to book with, and
+    // only while nothing is booked — it is several Google round trips.
+    let slots = [];
+    if (hosts.length && !booking) {
+      const { result } = await computeBookingSlots({ hostEmails: hosts }).catch(() => ({ result: { slots: [] } }));
+      slots = result.slots || [];
+    }
+    return res.status(200).json({
+      choice: row.next_step || null,
+      durationMinutes: rules.durationMinutes,
+      timezone: rules.timezone,
+      canBook: slots.length > 0,
+      slots,
+      booking: booking
+        ? { startsAt: booking.starts_at, endsAt: booking.ends_at, meetUrl: booking.meet_url }
+        : null,
+    });
+  }
+
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  if (!user.puid) return res.status(403).json({ error: 'Only the client can do this.' });
+
+  const body = await readJsonBody(req);
+  const row = await loadBriefRow(trimOrNull(body.id), companyId);
+  if (!row) return res.status(404).json({ error: 'Brief not found' });
+  // Only after it has been sent. Before that the answer to "what next" is
+  // "finish the brief", and the panel isn't shown.
+  if (!row.submitted_at) return res.status(409).json({ error: 'Finalise the brief first.' });
+
+  const choice = trimOrNull(body.choice);
+  if (!NEXT_STEPS.has(choice)) return res.status(400).json({ error: 'Unknown next step' });
+
+  const briefTitle = row.title || row.answers?.projectName || 'their video brief';
+  let booking = null;
+
+  if (choice === 'call') {
+    const rules = await loadIntroCallRules();
+    const hosts = Array.isArray(rules.discoveryHosts) ? rules.discoveryHosts.filter(Boolean) : [];
+    const startsAt = trimOrNull(body.startsAt);
+    // No time picked (or nothing bookable) is a REQUEST, not a failure. It is
+    // recorded and the team is told; somebody rings them.
+    if (startsAt && hosts.length) {
+      const out = await bookSlot({
+        clientKey: row.id,
+        hostEmails: hosts,
+        projectName: briefTitle,
+        name: user.name || user.email,
+        email: user.email,
+        startISO: startsAt,
+        timezone: trimOrNull(body.timezone),
+        kind: 'intro',
+      });
+      if (!out.ok) {
+        const payload = { error: out.error };
+        if (out.slots) payload.slots = out.slots;
+        return res.status(out.status).json(payload);
+      }
+      booking = { startsAt: out.start, endsAt: out.end, meetUrl: out.meetUrl };
+    }
+  }
+
+  await sql`
+    UPDATE client_briefs
+       SET next_step = ${choice}, next_step_at = NOW(), updated_at = NOW()
+     WHERE id = ${row.id}`;
+
+  // Same key as the finalise notification rather than one of its own: the
+  // audience is identical — whoever wants to know a lead just moved — and a new
+  // key would need its own default and its own subscription before anybody
+  // heard about it. bookSlot has already sent its own booking notification, so
+  // a booked call is not announced twice.
+  if (!booking) {
+    const wants = choice === 'call'
+      ? 'would like a discovery call'
+      : 'has asked for a quote';
+    await sendNotification('portal.brief_finalised', {
+      subject: `${choice === 'call' ? '📞' : '💬'} ${user.name || user.email} ${wants} — ${briefTitle}`,
+      text: `${user.name || user.email} finished their brief and ${wants}.\n\nEmail: ${user.email}`,
+      inApp: {
+        title: `${user.name || user.email} ${wants}`,
+        body: briefTitle,
+        link: row.deal_id ? `#/deal/${row.deal_id}` : '#/quotes',
+      },
+    }).catch((err) => console.warn('[brief] next-step notify failed', err.message));
+  }
+
+  return res.status(200).json({ ok: true, choice, booking });
 }
 
 // "We've got your brief" — the client's own receipt, plus, for an account with

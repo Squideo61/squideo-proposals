@@ -34,6 +34,17 @@ export function ensureClientBriefs() {
       await sql`ALTER TABLE client_briefs ADD COLUMN IF NOT EXISTS reopened_by TEXT`;
       await sql`ALTER TABLE client_briefs ADD COLUMN IF NOT EXISTS contributor_count INTEGER NOT NULL DEFAULT 1`;
 
+      // What they asked for after finalising: 'call' or 'quote'. NULL means
+      // they haven't said, which is the state most briefs sit in — the panel
+      // offering the choice is an offer, not a gate.
+      //
+      // Worth storing rather than inferring from a booking, because "just send
+      // me a number" is a real answer and leaves no other trace. It is also the
+      // most useful line in the whole record for whoever picks the lead up: it
+      // says how this person wants to be sold to.
+      await sql`ALTER TABLE client_briefs ADD COLUMN IF NOT EXISTS next_step TEXT`;
+      await sql`ALTER TABLE client_briefs ADD COLUMN IF NOT EXISTS next_step_at TIMESTAMPTZ`;
+
       // A brief belongs to the ORGANISATION now, so the old "one open draft per
       // person" rule is wrong — and dropping it is safe in a way that replacing
       // it wouldn't be: an org whose people each started a draft has several

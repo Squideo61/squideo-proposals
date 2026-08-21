@@ -67,6 +67,33 @@ export function IntroCallRulesTab() {
         <NumberRow label="Look-ahead (days)" hint="How far into the future clients can book."
           value={rules.lookaheadDays} onChange={(v) => set('lookaheadDays', v)} min={1} max={60} />
 
+        {/* Every other booking takes its attendees from the deal's production
+            team. A discovery call happens BEFORE there is a deal, so somebody
+            has to say who takes it. Empty is a working state — the portal then
+            offers "ask us to call you" instead of an empty calendar. */}
+        <div style={{ borderTop: '1px solid ' + BRAND.border, paddingTop: 16 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: BRAND.ink }}>Discovery call hosts</div>
+          <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2, lineHeight: 1.5 }}>
+            Who takes the discovery call a prospect books after finishing their brief. One email per
+            line. They need a connected Google Calendar, and a slot is only offered when everyone
+            listed is free. Leave blank and the portal asks them to request a call instead.
+          </div>
+          <textarea
+            rows={3}
+            value={(rules.discoveryHosts || []).join('\n')}
+            onChange={(e) => set(
+              'discoveryHosts',
+              e.target.value.split('\n').map((x) => x.trim().toLowerCase()).filter(Boolean),
+            )}
+            placeholder="ben@squideo.co.uk"
+            style={{
+              width: '100%', marginTop: 10, padding: '8px 10px', borderRadius: 6,
+              border: '1px solid ' + BRAND.border, fontSize: 14, fontFamily: 'inherit',
+              resize: 'vertical',
+            }}
+          />
+        </div>
+
         <button onClick={save} disabled={saving} className="btn" style={{ alignSelf: 'flex-start', marginTop: 4 }}>
           {saving ? 'Saving…' : 'Save rules'}
         </button>

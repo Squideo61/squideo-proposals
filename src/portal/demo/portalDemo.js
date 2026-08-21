@@ -212,6 +212,14 @@ const BRIEF_ACTIVITY = [
   { id: 'd-e1', actorName: 'Alex Morgan', portalUserId: ME.id, eventKey: 'brief.created', questionKey: null, questionLabel: null, summary: null, text: 'Alex Morgan started this brief', at: ago(240) },
 ];
 
+// A day or two of bookable slots for the discovery-call picker. Built off the
+// same frozen `now` as everything else here, so the demo never drifts into
+// offering times that have already been and gone.
+const DEMO_SLOTS = [26, 27, 28, 50, 51, 74].map((h) => ({
+  start: soon(h * 60),
+  end: soon(h * 60 + 30),
+}));
+
 // Someone else mid-sentence, so the presence indicator has something to show.
 const BRIEF_PRESENCE = [
   { portalUserId: PRIYA.id, name: 'Priya Shah', questionKey: 'problem', at: ago(0) },
@@ -458,6 +466,19 @@ function respond(state, method, action, query, body) {
         readOnly: false,
       };
     }
+
+    // The post-brief choice. Live availability so the picker has something in
+    // it — the demo is where anyone at Squideo judges this screen, and an empty
+    // calendar would look like the feature is broken rather than unconfigured.
+    case 'brief-next-step':
+      return {
+        choice: null,
+        durationMinutes: 30,
+        timezone: 'Europe/London',
+        canBook: true,
+        slots: DEMO_SLOTS,
+        booking: null,
+      };
 
     case 'brief-tick':
       return {

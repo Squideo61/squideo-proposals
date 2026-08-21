@@ -43,7 +43,8 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   FileText, ArrowRight, ArrowLeft, Check, Printer, Send, Plus, Trash2,
-  Info, GraduationCap, ChevronDown, ChevronRight, Lock, Users, History, Link2, Briefcase,
+  Info, GraduationCap, ChevronDown, ChevronRight, Lock, Users, History, Link2, Briefcase, Hand,
+  CalendarClock, Video,
 } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useIsMobile } from '../../utils.js';
@@ -143,6 +144,35 @@ const STEP_BAND = {
   borderBottom: `1px solid ${HAIRLINE}`,
 };
 const CARD_BODY = { padding: '34px 30px 26px' };
+
+// Under the card on every screen of the brief, and under the finished one.
+//
+// It is here rather than in the step band because the band already carries the
+// stepper, and it is on EVERY screen rather than the first because the question
+// it answers — "am I about to be handed something a machine wrote?" — is one
+// people ask themselves halfway through describing their audience, not at the
+// start. A trust mark that only appears on step one is a trust mark nobody
+// reads.
+//
+// Deliberately quiet. Stated once, in passing, the way a fact is stated; sold
+// hard it starts to sound defensive, which is the opposite of reassuring.
+function HumanMade() {
+  return (
+    <div style={{
+      display: 'flex', justifyContent: 'center', margin: '14px 0 0',
+    }}>
+      <span style={{
+        display: 'inline-flex', alignItems: 'center', gap: 7,
+        padding: '6px 14px 6px 11px', borderRadius: 999,
+        background: '#fff', border: `1px solid ${HAIRLINE}`,
+        fontSize: 12.5, fontWeight: 500, color: '#5A7382', letterSpacing: '-0.01em',
+      }}>
+        <Hand size={13} strokeWidth={2} style={{ color: BRAND.blue, flexShrink: 0 }} />
+        Our videos are always hand-made by humans
+      </span>
+    </div>
+  );
+}
 
 // Where he sits. Pulled up by most of his own height so his feet land on the
 // card's top edge and the rest of him is above it — a character standing beside
@@ -564,6 +594,171 @@ function Question({ q, value, onChange, onBlur, onFocus, answers, invalid, disab
 
       <WhyWeAsk text={q.why} videoRef={q.videoRef} onWatch={onWatch} />
     </div>
+  );
+}
+
+// ── what happens next ────────────────────────────────────────────────────────
+// A finished brief used to end at "we'll come back to you shortly" — a promise
+// with nothing in it for the client to do, on the screen where they are most
+// engaged they will ever be with us.
+//
+// Two ways forward, because there are genuinely two kinds of person here: one
+// wants to talk it through before seeing a number, the other wants the number.
+// Offering only the call loses the second; offering only the quote loses the
+// conversation where most of the scope actually gets settled.
+//
+// The call books live against the discovery hosts (Admin → Intro calls). With
+// none configured, or none with a connected calendar, it degrades to a request
+// — worse than a calendar, much better than an empty one.
+const browserTz = () => {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return 'Europe/London'; }
+};
+const fmtSlot = (iso, tz, opts) => {
+  try { return new Date(iso).toLocaleString('en-GB', { timeZone: tz, ...opts }); }
+  catch { return new Date(iso).toLocaleString('en-GB', opts); }
+};
+
+function NextSteps({ briefId, initialChoice }) {
+  const { showToast } = usePortal();
+  const [data, setData] = useState(null);
+  const [choice, setChoice] = useState(initialChoice || null);
+  const [picking, setPicking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const tz = useMemo(browserTz, []);
+
+  useEffect(() => {
+    let stopped = false;
+    portalApi.get(`brief-next-step?id=${encodeURIComponent(briefId)}`)
+      .then((d) => { if (!stopped) { setData(d); setChoice((c) => c || d.choice || null); } })
+      // A failure here must not break the page the brief is on. No panel is a
+      // fine outcome; a red error under a finished brief is not.
+      .catch(() => { if (!stopped) setData({ slots: [], booking: null, canBook: false }); });
+    return () => { stopped = true; };
+  }, [briefId]);
+
+  const send = async (which, startsAt = null) => {
+    setBusy(true);
+    try {
+      const r = await portalApi.post('brief-next-step', { id: briefId, choice: which, startsAt, timezone: tz });
+      setChoice(which);
+      setPicking(false);
+      if (r.booking) {
+        setData((d) => ({ ...(d || {}), booking: r.booking }));
+        showToast('Call booked — the invite is on its way', 'success');
+      } else {
+        showToast(which === 'call' ? "We'll be in touch to arrange it" : "We're on it — your quote is being prepared", 'success');
+      }
+    } catch (err) {
+      showToast(err.message || "Couldn't do that just now", 'error');
+    } finally { setBusy(false); }
+  };
+
+  if (!data) return null;
+
+  // Booked, or already chosen. Says what is happening rather than asking again.
+  if (data.booking || choice) {
+    return (
+      <Card style={{ marginTop: 18 }}>
+        <div style={{ display: 'flex', gap: 11, alignItems: 'flex-start' }}>
+          <span style={{
+            width: 30, height: 30, borderRadius: '50%', flexShrink: 0, background: '#F0FDF4',
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#16A34A',
+          }}><Check size={16} strokeWidth={2.6} /></span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14.5, fontWeight: 600, color: BRAND.ink, letterSpacing: '-0.015em' }}>
+              {data.booking
+                ? 'Your discovery call is booked'
+                : choice === 'call' ? "We'll call you to talk it through" : 'Your quote is on its way'}
+            </div>
+            <div style={{ fontSize: 13, color: BRAND.muted, lineHeight: 1.55, marginTop: 3 }}>
+              {data.booking ? (
+                <>
+                  {fmtSlot(data.booking.startsAt, tz, { weekday: 'long', day: 'numeric', month: 'long' })}
+                  {' at '}
+                  {fmtSlot(data.booking.startsAt, tz, { hour: '2-digit', minute: '2-digit' })}
+                  {'. The calendar invite has the video link in it.'}
+                </>
+              ) : choice === 'call'
+                ? "One of us will be in touch shortly to find a time that works."
+                : "We'll read the brief properly and send you a price. If anything needs clarifying we'll ask before quoting."}
+            </div>
+            {data.booking?.meetUrl && (
+              <a href={data.booking.meetUrl} target="_blank" rel="noreferrer" style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 9,
+                fontSize: 13, fontWeight: 600, color: BRAND.blue, textDecoration: 'none',
+              }}><Video size={14} /> Join the call</a>
+            )}
+          </div>
+        </div>
+      </Card>
+    );
+  }
+
+  // The slot picker, opened by "Book a discovery call" when there is live
+  // availability. Kept to the next handful of slots: a wall of thirty times is
+  // a decision, and the point of this screen is momentum.
+  if (picking) {
+    return (
+      <Card style={{ marginTop: 18 }}>
+        <div style={{ fontSize: 14.5, fontWeight: 600, color: BRAND.ink, letterSpacing: '-0.015em', marginBottom: 3 }}>
+          Pick a time
+        </div>
+        <div style={{ fontSize: 13, color: BRAND.muted, marginBottom: 13 }}>
+          {data.durationMinutes || 30} minutes, on video. Times are shown in your own timezone.
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {data.slots.slice(0, 12).map((s) => (
+            <button
+              key={s.start} type="button" disabled={busy}
+              onClick={() => send('call', s.start)}
+              style={{
+                padding: '9px 13px', borderRadius: 10, cursor: busy ? 'default' : 'pointer',
+                background: '#fff', border: `1px solid ${HAIRLINE}`, fontFamily: 'inherit',
+                fontSize: 13, color: BRAND.ink, letterSpacing: '-0.01em', textAlign: 'left',
+              }}
+            >
+              <div style={{ fontWeight: 600 }}>
+                {fmtSlot(s.start, tz, { weekday: 'short', day: 'numeric', month: 'short' })}
+              </div>
+              <div style={{ color: BRAND.muted, marginTop: 1 }}>
+                {fmtSlot(s.start, tz, { hour: '2-digit', minute: '2-digit' })}
+              </div>
+            </button>
+          ))}
+        </div>
+        <div style={{ display: 'flex', gap: 10, marginTop: 14, flexWrap: 'wrap' }}>
+          <button type="button" onClick={() => setPicking(false)} style={btnGhost}>
+            <ArrowLeft size={15} /> Back
+          </button>
+          <button type="button" disabled={busy} onClick={() => send('call')} style={{
+            ...btnGhost, border: 'none', background: 'none', color: '#8A97A3',
+          }}>None of these work — call me instead</button>
+        </div>
+      </Card>
+    );
+  }
+
+  return (
+    <Card style={{ marginTop: 18 }}>
+      <div style={{ fontSize: 15, fontWeight: 600, color: BRAND.ink, letterSpacing: '-0.015em', marginBottom: 3 }}>
+        What would you like to do next?
+      </div>
+      <div style={{ fontSize: 13, color: BRAND.muted, lineHeight: 1.55, marginBottom: 14 }}>
+        Either way we've got the brief — this is just about how you'd rather hear back.
+      </div>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <button
+          type="button" disabled={busy}
+          onClick={() => (data.canBook ? setPicking(true) : send('call'))}
+          style={{ ...btnPrimary, background: busy ? '#9AC9DE' : BRAND.blue }}
+        >
+          <CalendarClock size={15} /> Arrange a discovery call
+        </button>
+        <button type="button" disabled={busy} onClick={() => send('quote')} style={btnGhost}>
+          <Send size={15} /> Send me a quote
+        </button>
+      </div>
+    </Card>
   );
 }
 
@@ -1558,8 +1753,15 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
               <strong>This brief is final.</strong>{' '}
               {brief.submittedBy ? `${brief.submittedBy} finalised it` : 'It was finalised'}
               {brief.submittedAt ? ` ${relTime(brief.submittedAt)}` : ''} and it can't be changed —
-              our team is working from this exact version. If something needs to move, just tell us
-              and we'll reopen it.
+              {/* Two different promises, and saying the wrong one is worse than
+                  saying nothing. On SIGNED work this document is what
+                  production builds from. On anything else nothing starts until
+                  a proposal is signed, so the honest claim is narrower: it is
+                  what the quote gets priced from. */}
+              {brief.dealSigned
+                ? ' our team is working from this exact version.'
+                : ' this version forms the basis of your quote.'}
+              {' '}If something needs to move, just tell us and we'll reopen it.
             </div>
           </div>
           {/* The one moment in the whole product where asking for a password is
@@ -1580,6 +1782,11 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
             )}
           </div>
         </Card>
+        {/* Only where there is still something to sell. On signed work the next
+            step is production, not a quote, and offering one would suggest we
+            had forgotten they were already a client. */}
+        {!brief.dealSigned && <NextSteps briefId={briefId} initialChoice={brief.nextStep} />}
+        <HumanMade />
         <ActivityFeed events={activity} open={activityOpen} onToggle={() => setActivityOpen((v) => !v)} />
       </div>
     );
@@ -1828,8 +2035,11 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
             title={firstName ? `Ready when you are, ${firstName}` : 'Ready to finalise'}
           >
             Have a read through — and check whoever else needs to has had their say, because
-            <strong> finalising locks it</strong>. Our team works from this exact version, so it
-            can't move underneath them afterwards. We can always reopen it for you if it needs to.
+            <strong> finalising locks it</strong>.{' '}
+            {brief.dealSigned
+              ? 'Our team works from this exact version, so it can\'t move underneath them afterwards.'
+              : 'This version forms the basis of your quote.'}
+            {' '}We can always reopen it for you if it needs to.
           </StepTitle>
           <BriefSummary answers={answers} onEdit={jumpToQuestion} />
 
@@ -1896,6 +2106,11 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
           </div>
         </Card>
       )}
+
+      {/* One instance covers both the form and the review screen — they are
+          alternatives inside the same return, so this sits under whichever is
+          showing. */}
+      <HumanMade />
 
       <ActivityFeed events={activity} open={activityOpen} onToggle={() => setActivityOpen((v) => !v)} />
 

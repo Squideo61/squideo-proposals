@@ -308,7 +308,9 @@ export function buildBriefHTML({ answers = {}, brief = {}, company = null, progr
       <div class="close">
         <div class="rule"></div>
         ${finalised
-          ? `<strong>This is the final version.</strong> Our production team is working from this exact document${brief.submittedBy ? `, finalised by ${esc(brief.submittedBy)}` : ''}. If something needs to change, tell us and we'll reopen it.`
+          ? `<strong>This is the final version${brief.submittedBy ? `, finalised by ${esc(brief.submittedBy)}` : ''}.</strong> ${brief.dealSigned
+              ? 'Our production team is working from this exact document.'
+              : 'This version forms the basis of your quote — nothing goes into production until a proposal is signed.'} If something needs to change, tell us and we'll reopen it.`
           : '<strong>This is a working draft.</strong> It\'s still being filled in, so it may change before it reaches our production team.'}
       </div>
     </div>

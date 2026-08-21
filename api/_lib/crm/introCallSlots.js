@@ -27,10 +27,33 @@ export const DEFAULT_RULES = {
   slotGranularityMinutes: 30,
   lookaheadDays: 14,
   timezone: TZ,
+  // Who hosts a call that has no deal behind it yet — the discovery call a
+  // prospect books off the back of finishing their brief. Every other booking
+  // takes its attendees from the deal's production team; this one has no deal,
+  // so somebody has to say.
+  //
+  // Empty by default, and empty is a working state: computeSlotsForAttendees
+  // already returns no slots and blocked:[{reason:'no_team'}] for an empty
+  // list, so the portal offers "ask us to call you" instead of an empty
+  // calendar. Set it in Admin → Intro calls.
+  discoveryHosts: [],
 };
 
 export function mergeRules(stored) {
-  return { ...DEFAULT_RULES, ...(stored && typeof stored === 'object' ? stored : {}) };
+  const merged = { ...DEFAULT_RULES, ...(stored && typeof stored === 'object' ? stored : {}) };
+  // Coerced rather than trusted. These become calendar attendees on a booking
+  // and are compared against connected accounts, so a string, a null or a
+  // stray object in the list would take out slot computation for everyone —
+  // and this comes in over a PUT that stores whatever shape it is given.
+  merged.discoveryHosts = Array.isArray(merged.discoveryHosts)
+    ? Array.from(new Set(
+      merged.discoveryHosts
+        .filter((e) => typeof e === 'string')
+        .map((e) => e.trim().toLowerCase())
+        .filter((e) => e.includes('@')),
+    ))
+    : [];
+  return merged;
 }
 
 // ── Self-heal (db/migrations/20260612_intro_call_booking.sql) ────────────────
