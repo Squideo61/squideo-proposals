@@ -52,6 +52,7 @@ import { usePortal } from '../PortalContext.jsx';
 import { Card, EmptyState } from '../components.jsx';
 import { navigate } from '../PortalApp.jsx';
 import { GuideVideoModal } from '../GuideVideo.jsx';
+import Mascot from '../Mascot.jsx';
 import {
   StepProgress, PartProgress, TimeBadge, ReassuranceBadge, ResumeBanner, StepTitle, greeting, EASE,
 } from '../ProgressChrome.jsx';
@@ -140,6 +141,17 @@ const STEP_BAND = {
   borderBottom: `1px solid ${HAIRLINE}`,
 };
 const CARD_BODY = { padding: '34px 30px 26px' };
+
+// Where he sits. Pulled up by most of his own height so his feet land on the
+// card's top edge and the rest of him is above it — a character standing beside
+// a card is a sticker; one overlapping its edge is sitting on it.
+//
+// z-index below the modal (2000) and above the card, so a guide video still
+// opens over him.
+const MASCOT_PERCH = {
+  position: 'absolute', top: -96, right: 18, zIndex: 1,
+  pointerEvents: 'none',
+};
 
 // Must agree with isEmpty() in api/_lib/brief/questions.js — if the client
 // thinks a question is answered and the server doesn't, "Send" bounces with no
@@ -1187,6 +1199,22 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
     return new Set(singles.length >= 2 ? singles.map((q) => q.key) : []);
   }, [liveQuestions]);
 
+  // What the mascot reacts to. Counting MOVES rather than watching `part`
+  // means a jump from the stepper or a click on an answered row counts too —
+  // from his side they are all "they got somewhere".
+  //
+  // In an effect, not during render: incrementing a ref while rendering is a
+  // side effect in the one place React reserves the right to run twice, and
+  // under StrictMode it does.
+  const [moves, setMoves] = useState(0);
+  const movedOnce = useRef(false);
+  useEffect(() => {
+    // Skip the mount pass. He already performs on arrival; two performances at
+    // once reads as a glitch rather than as enthusiasm.
+    if (!movedOnce.current) { movedOnce.current = true; return; }
+    setMoves((n) => n + 1);
+  }, [step, part]);
+
   const canGoBack = step > 0 || part > 0;
   const canSkip = !!livePart && !livePart.questions.some((q) => q.required);
   const isLastPartOfBrief = step === screens.length - 1 && part === parts.length - 1;
@@ -1496,6 +1524,10 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
 
       {/* ── the current screen ──────────────────────────────────────────── */}
       {!isReview && screen && (
+        <div style={{ position: 'relative' }}>
+        <div className="brief-noprint" style={MASCOT_PERCH}>
+          <Mascot trigger={moves} />
+        </div>
         <Card style={CARD_SHELL}>
           {/* The stepper rides on the card rather than floating above it, so
               the page reads as one object instead of three stacked ones. */}
@@ -1615,6 +1647,7 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
             </div>
           </div>
         </Card>
+        </div>
       )}
 
       {/* ── review + finalise ───────────────────────────────────────────── */}

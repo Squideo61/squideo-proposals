@@ -17,6 +17,7 @@
     "canvas-confetti": "^1.9.4",
     "dompurify": "^3.4.13",
     "jose": "^6.2.9",
+    "lottie-web": "^5.13.0",
     "lucide-react": "^0.577.0",
     "otpauth": "^9.5.1",
     "pdfjs-dist": "^6.2.108",
