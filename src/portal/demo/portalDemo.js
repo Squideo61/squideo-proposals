@@ -98,6 +98,18 @@ export const isDemoMode = () => !!getDemoState();
 // ── the cast ─────────────────────────────────────────────────────────────────
 // Named people, not "User 1". Presence, activity feeds and comment threads are
 // only legible when the names read like colleagues.
+// EVERY NAME IN HERE MUST BE UNMISTAKABLY INVENTED, and must not collide with
+// a real client or a real project. The first version called the project
+// "CareConnect launch film", which is the name of an actual live project for
+// an actual care client — so the demo looked exactly like their portal, and
+// the one thing a demo must never do is leave someone unsure whose data they
+// are reading. The banner saying "nothing here is real" cannot outshout a
+// name they recognise.
+//
+// Hence Northwind: a sample-data name for as long as sample data has existed,
+// with .example addresses (a reserved TLD that can never be registered) and a
+// product named after the invented company, so it cannot drift onto a real
+// one later.
 const COMPANY = { id: 'demo-co', name: 'Northwind Care Group', prospect: false, creditVisible: true, logoUrl: null };
 const ME = { id: 'demo-me', name: 'Alex Morgan', email: 'alex@northwindcare.example', jobTitle: 'Marketing Lead' };
 const PRIYA = { id: 'demo-priya', name: 'Priya Shah', email: 'priya@northwindcare.example' };
@@ -106,9 +118,9 @@ const TOM = { id: 'demo-tom', name: 'Tom Ellery', email: 'tom@northwindcare.exam
 const DEAL_ID = 'demo-deal';
 
 const BRIEF_ANSWERS = {
-  projectName: 'CareConnect launch film',
+  projectName: 'Northwind Ordering launch film',
   goal: 'onboard',
-  goalDetail: 'Introduce the CareConnect ordering portal and show care homes how it simplifies purchasing, manages budgets and keeps spend visible in one place.',
+  goalDetail: 'Introduce the Northwind Ordering portal and show care homes how it simplifies purchasing, manages budgets and keeps spend visible in one place.',
   action: 'Contact their account manager to book a demonstration.',
   metric: 'Demo bookings',
   audience: 'The people responsible for purchasing, budgets and operational efficiency in care homes — owners, group directors, home managers, finance teams and senior administrators.',
@@ -129,7 +141,7 @@ const BRIEF_ACTIVITY = [
   { id: 'd-e5', actorName: 'Tom Ellery', portalUserId: TOM.id, eventKey: 'answer.changed', questionKey: 'budget', questionLabel: 'Roughly what budget do you have in mind?', summary: '£5,000 – £10,000', text: 'Tom Ellery updated “Roughly what budget do you have in mind?”', at: ago(52) },
   { id: 'd-e4', actorName: 'Alex Morgan', portalUserId: ME.id, eventKey: 'answer.changed', questionKey: 'audience', questionLabel: 'Describe the person you want watching this', summary: 'The people responsible for purchasing, budgets and operational…', text: 'Alex Morgan updated “Describe the person you want watching this”', at: ago(96) },
   { id: 'd-e3', actorName: 'Priya Shah', portalUserId: PRIYA.id, eventKey: 'answer.changed', questionKey: 'tone', questionLabel: 'How should it feel?', summary: 'Warm and human', text: 'Priya Shah answered “How should it feel?”', at: ago(140) },
-  { id: 'd-e2', actorName: 'Alex Morgan', portalUserId: ME.id, eventKey: 'brief.attached', questionKey: null, questionLabel: null, summary: null, text: 'Alex Morgan linked this brief to CareConnect launch film', at: ago(190) },
+  { id: 'd-e2', actorName: 'Alex Morgan', portalUserId: ME.id, eventKey: 'brief.attached', questionKey: null, questionLabel: null, summary: null, text: 'Alex Morgan linked this brief to Northwind Ordering launch film', at: ago(190) },
   { id: 'd-e1', actorName: 'Alex Morgan', portalUserId: ME.id, eventKey: 'brief.created', questionKey: null, questionLabel: null, summary: null, text: 'Alex Morgan started this brief', at: ago(240) },
 ];
 
@@ -228,7 +240,7 @@ const STAGE_LABEL = {
 function project(s) {
   return {
     id: DEAL_ID,
-    title: 'CareConnect launch film',
+    title: 'Northwind Ordering launch film',
     companyId: COMPANY.id,
     companyName: COMPANY.name,
     stage: s.stage,
@@ -250,7 +262,7 @@ function project(s) {
     extrasAvailable: s.extras,
     videos: s.videos.map((v, i) => ({
       id: `demo-v${i + 1}`,
-      title: 'CareConnect launch film',
+      title: 'Northwind Ordering launch film',
       reference: '2607-014-01',
       production: {
         phase: v.phase,
@@ -266,9 +278,9 @@ function briefSummary(s) {
   const answered = s.briefLocked ? 25 : 18;
   return {
     id: 'demo-brief',
-    title: 'CareConnect launch film',
+    title: 'Northwind Ordering launch film',
     dealId: s.hasProject ? DEAL_ID : null,
-    dealTitle: s.hasProject ? 'CareConnect launch film' : null,
+    dealTitle: s.hasProject ? 'Northwind Ordering launch film' : null,
     dealReference: s.hasProject ? '2607-014' : null,
     completedAt: s.briefLocked ? ago(200) : null,
     submittedAt: s.briefLocked ? ago(198) : null,
@@ -326,9 +338,9 @@ function respond(state, method, action, query, body) {
           schedule: null,
           proposal: { id: 'demo-prop', signed: true },
           reviews: state === 'revisions' || state === 'delivered'
-            ? [{ token: 'demo-sample-project', label: 'CareConnect launch film' }] : [],
+            ? [{ token: 'demo-sample-project', label: 'Northwind Ordering launch film' }] : [],
           storyboards: state === 'production'
-            ? [{ token: 'demo-sample-storyboard', label: 'CareConnect storyboard' }] : [],
+            ? [{ token: 'demo-sample-storyboard', label: 'Northwind Ordering storyboard' }] : [],
           files: s.hasProject && state !== 'signed' ? [
             { id: 'demo-f1', filename: 'Northwind-brand-guidelines.pdf', mimeType: 'application/pdf', sizeBytes: 2_400_000, createdAt: ago(60 * 24 * 12) },
             { id: 'demo-f2', filename: 'northwind-logo-pack.zip', mimeType: 'application/zip', sizeBytes: 880_000, createdAt: ago(60 * 24 * 12) },
@@ -344,13 +356,13 @@ function respond(state, method, action, query, body) {
     case 'notifications':
       return {
         notifications: s.hasProject ? [
-          { id: 'demo-n1', key: 'brief.changed', title: 'Priya Shah updated CareConnect launch film', body: '3 changes — open the brief to see what moved.', link: '#/brief/demo-brief', createdAt: ago(9), readAt: null },
-          { id: 'demo-n2', key: 'project.stage', title: 'Your storyboard is ready', body: 'CareConnect launch film', link: `#/project/${DEAL_ID}`, createdAt: ago(60 * 20), readAt: ago(60 * 19) },
+          { id: 'demo-n1', key: 'brief.changed', title: 'Priya Shah updated Northwind Ordering launch film', body: '3 changes — open the brief to see what moved.', link: '#/brief/demo-brief', createdAt: ago(9), readAt: null },
+          { id: 'demo-n2', key: 'project.stage', title: 'Your storyboard is ready', body: 'Northwind Ordering launch film', link: `#/project/${DEAL_ID}`, createdAt: ago(60 * 20), readAt: ago(60 * 19) },
         ] : [],
         unreadCount: s.hasProject ? 1 : 0,
         tasks: s.tasks.filter((t) => t.status !== 'done').map((t) => ({
           key: `${DEAL_ID}:${t.key}`, title: t.title, detail: t.detail || null,
-          dealId: DEAL_ID, dealTitle: 'CareConnect launch film',
+          dealId: DEAL_ID, dealTitle: 'Northwind Ordering launch film',
         })),
       };
 
@@ -370,7 +382,7 @@ function respond(state, method, action, query, body) {
         briefs: [brief],
         activeId: brief.id,
         projects: s.hasProject
-          ? [{ id: DEAL_ID, title: 'CareConnect launch film', reference: '2607-014', signed: true }]
+          ? [{ id: DEAL_ID, title: 'Northwind Ordering launch film', reference: '2607-014', signed: true }]
           : [],
         readOnly: false,
       };
@@ -388,8 +400,8 @@ function respond(state, method, action, query, body) {
     case 'library':
       return {
         items: s.libraryCount ? [
-          { id: 'demo-l1', title: 'CareConnect launch film', kind: 'delivered', createdAt: ago(60 * 24 * 2), thumbnailUrl: null, downloadUrl: null },
-          { id: 'demo-l2', title: 'CareConnect launch film — 9:16', kind: 'delivered', createdAt: ago(60 * 24 * 2), thumbnailUrl: null, downloadUrl: null },
+          { id: 'demo-l1', title: 'Northwind Ordering launch film', kind: 'delivered', createdAt: ago(60 * 24 * 2), thumbnailUrl: null, downloadUrl: null },
+          { id: 'demo-l2', title: 'Northwind Ordering launch film — 9:16', kind: 'delivered', createdAt: ago(60 * 24 * 2), thumbnailUrl: null, downloadUrl: null },
           { id: 'demo-l3', title: 'Northwind recruitment film (2025)', kind: 'past', createdAt: ago(60 * 24 * 400), thumbnailUrl: null, downloadUrl: null },
         ] : [],
       };
@@ -405,7 +417,7 @@ function respond(state, method, action, query, body) {
     case 'extras':
       return {
         dealId: DEAL_ID,
-        dealTitle: 'CareConnect launch film',
+        dealTitle: 'Northwind Ordering launch film',
         windowOpen: s.hasProject && state !== 'delivered',
         discount: 0.1,
         offers: s.extras ? [

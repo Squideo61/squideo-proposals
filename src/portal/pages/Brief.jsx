@@ -96,6 +96,14 @@ const clearMirror = (briefId) => {
 // someone blink out of the "editing now" list.
 const TICK_MS = 8000;
 
+// How wide the brief runs on desktop. The portal's content column is 1080; this
+// stops short of it so the page still reads as a document rather than filling
+// the monitor, and so the eight-circle stepper has room to space out instead of
+// crowding its labels into each other. Prose inside is capped tighter still —
+// see StepTitle — because a 90-character line is hard to read however much room
+// there is for it.
+const BRIEF_MAX = 880;
+
 // Must agree with isEmpty() in api/_lib/brief/questions.js — if the client
 // thinks a question is answered and the server doesn't, "Send" bounces with no
 // visible reason.
@@ -432,7 +440,7 @@ function BriefList({ data, onOpen, onCreate, onDelete, busy, manageMode }) {
   const canCreate = !data.readOnly;
 
   return (
-    <div style={{ maxWidth: 720, margin: '0 auto' }}>
+    <div style={{ maxWidth: BRIEF_MAX, margin: '0 auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
         <FileText size={20} style={{ color: BRAND.blue }} />
         <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: BRAND.ink }}>
@@ -1096,7 +1104,7 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
   // ── finalised: the document, and nothing that pretends to change it ───────
   if (locked) {
     return (
-      <div style={{ maxWidth: 720, margin: '0 auto' }}>
+      <div style={{ maxWidth: BRIEF_MAX, margin: '0 auto' }}>
         {header}
         <Card>
           <div style={{
@@ -1140,7 +1148,7 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
   // keystroke would 403.
   if (readOnly) {
     return (
-      <div style={{ maxWidth: 720, margin: '0 auto' }}>
+      <div style={{ maxWidth: BRIEF_MAX, margin: '0 auto' }}>
         {header}
         <p style={{ margin: '0 0 16px', fontSize: 13.5, lineHeight: 1.6, color: '#6B7785' }}>
           {progress.done} of {progress.total} answered · still a draft, so this may still change.
@@ -1167,7 +1175,7 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
         : { text: 'Saves automatically as you type. Stop halfway and come back whenever.', kind: 'good' };
 
   return (
-    <div style={{ maxWidth: 720, margin: '0 auto' }}>
+    <div style={{ maxWidth: BRIEF_MAX, margin: '0 auto' }}>
       <style>{`
         @media print {
           .brief-noprint { display: none !important; }

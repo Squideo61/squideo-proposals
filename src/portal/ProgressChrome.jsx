@@ -10,8 +10,10 @@
 // prospect and then as a client.
 //
 // The one number that differs is the circle: 42px here against the quote form's
-// 50px, because this form has eight steps to its four and eight 50px circles
-// with connectors do not fit 720px.
+// 50px, because this form has eight steps to its four. The brief page widened to
+// 880 for the same reason (BRIEF_MAX in pages/Brief.jsx) and the circles still
+// had to come down — eight of them at 50px with connectors and labels crowds
+// even that.
 //
 // ── WHY NOT JUST IMPORT THAT CSS ────────────────────────────────────────────
 // Two reasons. The portal is inline-styled from top to bottom, so a class-based
@@ -297,8 +299,11 @@ export function StepTitle({ title, children }) {
         margin: '0 0 8px', fontSize: 'clamp(21px, 3.2vw, 28px)', fontWeight: 700,
         color: BRAND.blue, lineHeight: 1.3,
       }}>{title}</h2>
+      {/* The paragraph is capped independently of the card. The page got wider
+          so the stepper could breathe; body copy following it out to 880px
+          would just be harder to read. */}
       {children && (
-        <p style={{ margin: '0 0 28px', fontSize: 15, lineHeight: 1.6, color: '#6b7280' }}>
+        <p style={{ margin: '0 0 28px', maxWidth: '68ch', fontSize: 15, lineHeight: 1.6, color: '#6b7280' }}>
           {children}
         </p>
       )}
