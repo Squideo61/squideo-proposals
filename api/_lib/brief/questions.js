@@ -34,9 +34,18 @@ export const LENGTH_BY_PLACEMENT = {
   internal: '120-plus',
 };
 
+// `short` is the word under the numbered circle in the portal's stepper. The
+// full title runs two circles into each other at eight steps, and a stepper you
+// cannot read at a glance is decoration. `minutes` feeds the "N minutes left"
+// badge, summed over the screens still ahead of you.
+//
+// Both are estimates from watching real briefs rather than aspirations. A badge
+// promising two minutes on something that takes ten does more damage than no
+// badge at all — it is the promise people remember when they abandon.
 export const SCREENS = [
   {
     key: 'video',
+    short: 'Video', minutes: 2,
     title: 'The video',
     blurb: "Five questions. If you're not sure on any of them, say so — \"not sure\" is a useful answer and we'd rather have it than a guess.",
     questions: [
@@ -88,6 +97,7 @@ export const SCREENS = [
 
   {
     key: 'audience',
+    short: 'Audience', minutes: 1.5,
     title: "Who it's for",
     blurb: 'The more specific you can be, the better the script. "Everyone" is the hardest audience to write for.',
     questions: [
@@ -144,6 +154,7 @@ export const SCREENS = [
 
   {
     key: 'message',
+    short: 'Message', minutes: 2,
     title: 'The message',
     questions: [
       {
@@ -174,6 +185,7 @@ export const SCREENS = [
 
   {
     key: 'style',
+    short: 'Style', minutes: 1.5,
     title: 'Look and feel',
     blurb: '"Not sure — recommend one" is a completely legitimate answer to all of these. Recommending is most of what we do.',
     questions: [
@@ -235,6 +247,7 @@ export const SCREENS = [
 
   {
     key: 'practical',
+    short: 'Practical', minutes: 1.5,
     title: 'Practicalities',
     questions: [
       {
@@ -295,6 +308,7 @@ export const SCREENS = [
 
   {
     key: 'script',
+    short: 'Script', minutes: 1,
     title: 'Script and visuals',
     optional: true,
     blurb: 'Most people skip this, and that is completely fine — writing the script is our job. It only helps if you already have specific wording in mind.',
@@ -309,6 +323,7 @@ export const SCREENS = [
 
   {
     key: 'closing',
+    short: 'Finish', minutes: 0.5,
     title: 'One last thing',
     questions: [
       {

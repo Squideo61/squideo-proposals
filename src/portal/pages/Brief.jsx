@@ -39,6 +39,10 @@ import { portalApi } from '../api.js';
 import { usePortal } from '../PortalContext.jsx';
 import { Card, EmptyState } from '../components.jsx';
 import { navigate } from '../PortalApp.jsx';
+import { GuideVideoModal } from '../GuideVideo.jsx';
+import {
+  StepProgress, TimeBadge, ReassuranceBadge, ResumeBanner, StepTitle, greeting,
+} from '../ProgressChrome.jsx';
 import {
   SCREENS, briefProgress, missingRequired, suggestedLength,
 } from '../../../api/_lib/brief/questions.js';
@@ -149,7 +153,7 @@ function Avatar({ name, size = 24 }) {
   );
 }
 
-function WhyWeAsk({ text, videoRef }) {
+function WhyWeAsk({ text, videoRef, onWatch }) {
   if (!text && !videoRef) return null;
   return (
     <div style={{
@@ -165,7 +169,11 @@ function WhyWeAsk({ text, videoRef }) {
             {' '}
             <button
               type="button"
-              onClick={() => navigate('#/course')}
+              /* Opens over the brief rather than navigating to #/course. Someone
+                 mid-answer who gets taken to another page loses the question
+                 they were thinking about, and coming back means finding their
+                 place again. */
+              onClick={() => onWatch?.(videoRef)}
               style={{
                 background: 'none', border: 'none', padding: 0, cursor: 'pointer',
                 color: BRAND.blue, fontWeight: 600, fontSize: 12.8, fontFamily: 'inherit',
@@ -292,7 +300,7 @@ function EditingHere({ people }) {
   );
 }
 
-function Question({ q, value, onChange, onBlur, onFocus, answers, invalid, disabled, editors = [] }) {
+function Question({ q, value, onChange, onBlur, onFocus, answers, invalid, disabled, editors = [], onWatch }) {
   const isMobile = useIsMobile();
   const inp = inputStyle(isMobile);
   const suggestion = q.suggestFrom ? suggestedLength(answers) : null;
@@ -351,7 +359,7 @@ function Question({ q, value, onChange, onBlur, onFocus, answers, invalid, disab
         </div>
       )}
 
-      <WhyWeAsk text={q.why} videoRef={q.videoRef} />
+      <WhyWeAsk text={q.why} videoRef={q.videoRef} onWatch={onWatch} />
     </div>
   );
 }
@@ -674,8 +682,7 @@ export default function Brief({ briefId: routeId = null }) {
 }
 
 function BriefEditor({ briefId, projects, showBack, onChanged }) {
-  const { showToast, manageMode } = usePortal();
-  const isMobile = useIsMobile();
+  const { showToast, manageMode, user } = usePortal();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [answers, setAnswers] = useState({});
@@ -693,7 +700,6 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
   const [dirty, setDirty] = useState(false);
   const pending = useRef({});
   const timer = useRef(null);
-  const stepsRef = useRef(null);
   // Which question this tab is in, reported on each tick so colleagues see it.
   const editingKey = useRef(null);
   const lastEventId = useRef(null);
@@ -707,15 +713,6 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
   // because a brief filed under the wrong project is precisely what you
   // discover after it has been finalised.
   const canFile = readOnly ? manageMode : !locked;
-
-  // With the screen pills on one scrollable row, moving on with Next would
-  // otherwise leave the highlighted pill off-screen — so the one cue telling
-  // you how far through you are disappears exactly when you use it.
-  useEffect(() => {
-    if (!isMobile || !stepsRef.current) return;
-    const el = stepsRef.current.children[step];
-    el?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
-  }, [step, isMobile]);
 
   useEffect(() => {
     (async () => {
@@ -747,6 +744,22 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
       } catch (err) { setError(err.message); }
     })();
   }, [briefId]);
+
+  // Where to offer to pick up, decided ONCE per brief on open.
+  //
+  // Deliberately not derived from `answers` on every render: it would move as
+  // they type, and a banner offering to send you somewhere that keeps changing
+  // is a banner nobody trusts. Null means don't offer — either they have not
+  // started, or the first gap is the screen they are already on.
+  const resumeDecided = useRef(false);
+  useEffect(() => {
+    if (resumeDecided.current || !data || data.readOnly || data.brief?.locked) return;
+    resumeDecided.current = true;
+    const loaded = data.brief?.answers || {};
+    if (!Object.keys(loaded).some((k) => !isBlank(loaded[k]))) return;
+    const gap = SCREENS.findIndex((s) => s.questions.some((q) => !q.optional && isBlank(loaded[q.key])));
+    if (gap > 0) setResumeOffer(gap);
+  }, [data]);
 
   // Debounced autosave. Only the changed keys go up, so two people editing
   // different questions merge rather than clobber (the server does `||`).
@@ -863,6 +876,12 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
     };
   }, [flush]);
 
+  // Which screen the welcome-back banner offers, or null for no banner.
+  const [resumeOffer, setResumeOffer] = useState(null);
+
+  // Which guide video is open over the brief, by module number, or null.
+  const [watching, setWatching] = useState(null);
+
   const progress = useMemo(() => briefProgress(answers), [answers]);
   const missing = useMemo(() => missingRequired(answers), [answers]);
   const editorsByKey = useMemo(() => {
@@ -877,6 +896,52 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
   const screens = SCREENS;
   const isReview = step >= screens.length;
   const screen = screens[step] || null;
+
+  // Review is a step of the stepper, not a thing that happens after it. It is
+  // the last circle for the same reason the quote form's is "Finish": people
+  // pace themselves against the number of circles left, and a review stage that
+  // appears out of nowhere at the end reads as one more form to fill in.
+  const stepperSteps = useMemo(
+    () => [
+      ...screens.map((s) => ({ key: s.key, label: s.short || s.title, title: s.title })),
+      { key: '__review', label: 'Review', title: 'Review and finalise' },
+    ],
+    [screens],
+  );
+
+  // A dot on any screen a colleague is typing in, so you can go somewhere
+  // useful instead of finding out on arrival.
+  const busyScreens = useMemo(() => {
+    const out = {};
+    for (const s of screens) {
+      if (s.questions.some((q) => editorsByKey.has(q.key))) out[s.key] = true;
+    }
+    return out;
+  }, [screens, editorsByKey]);
+
+  const minutesLeft = useMemo(() => {
+    if (isReview) return 0;
+    return Math.ceil(screens.slice(step).reduce((t, s) => t + (s.minutes || 0), 0));
+  }, [screens, step, isReview]);
+
+  // First name only, and only where it reads as a person talking. The quote
+  // form does the same: a greeting on the first screen, then the name on the
+  // ones after it, because by then it has been earned rather than assumed.
+  const firstName = useMemo(() => {
+    const n = String(user?.name || '').trim();
+    return n ? n.split(/\s+/)[0] : null;
+  }, [user]);
+
+  const screenTitle = useMemo(() => {
+    if (!screen) return '';
+    if (step === 0) return `${greeting()} ${screen.title}`;
+    if (!firstName) return screen.title;
+    // Only the two mid-form screens get the name. Every screen would be a
+    // mail-merge, and by the last one it stops reading as friendly.
+    if (step === 2) return `Thanks ${firstName} — ${screen.title.toLowerCase()}`;
+    if (step === screens.length - 1) return `Almost done, ${firstName}`;
+    return screen.title;
+  }, [screen, step, firstName, screens.length]);
 
   const attach = async (dealId) => {
     setLinking(true);
@@ -1091,15 +1156,15 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
   // and finish this tomorrow needs to be told they can, in words — a timestamp
   // alone doesn't answer the question they're actually asking.
   const save = saving
-    ? { text: 'Saving…', tone: '#5A7382', icon: null }
+    ? { text: 'Saving…', kind: 'busy' }
     : dirty
-      ? { text: 'Unsaved changes — keep typing, we\'ll save them', tone: '#B45309', icon: null }
+      ? { text: 'Unsaved changes — keep typing, we\'ll save them', kind: 'warn' }
       : savedAt
         ? {
-            text: `Saved at ${savedAt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} — your team can see it`,
-            tone: '#15803D', icon: <Check size={13} />,
+            text: `Saved at ${savedAt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}. Close the tab whenever — your team can see it too.`,
+            kind: 'good',
           }
-        : { text: 'Saves automatically as you type', tone: '#9AA5B1', icon: null };
+        : { text: 'Saves automatically as you type. Stop halfway and come back whenever.', kind: 'good' };
 
   return (
     <div style={{ maxWidth: 720, margin: '0 auto' }}>
@@ -1113,86 +1178,49 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
 
       {header}
 
-      <div className="brief-noprint" style={{ marginBottom: 20 }}>
-        <p style={{ margin: '0 0 16px', fontSize: 14, lineHeight: 1.6, color: '#6B7785' }}>
-          Answer what you can — we can work from as little as a list of key points.
-          It saves as you go, and anyone on your team can pick it up.
-        </p>
+      <div className="brief-noprint">
+        {/* Only for someone coming back to work already in progress. On a brief
+            they have just started there is nothing to resume and the banner is
+            a bright green box announcing that they have done nothing. */}
+        {resumeOffer !== null && (
+          <ResumeBanner
+            name={firstName}
+            done={progress.done}
+            total={progress.total}
+            onResume={() => { setStep(resumeOffer); setResumeOffer(null); }}
+            onDismiss={() => setResumeOffer(null)}
+          />
+        )}
 
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
-          fontSize: 12.5, color: '#6B7785', marginBottom: 8,
-        }}>
-          <div style={{ flex: '1 1 180px', height: 6, background: '#E8EEF3', borderRadius: 999, overflow: 'hidden' }}>
-            <div style={{
-              width: `${progress.pct}%`, height: '100%', background: BRAND.blue,
-              borderRadius: 999, transition: 'width .3s ease',
-            }} />
-          </div>
-          <span style={{ whiteSpace: 'nowrap' }}>{progress.done} of {progress.total}</span>
-        </div>
-
-        <div style={{
-          display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 12,
-          fontSize: 12.5, color: save.tone, fontWeight: save.icon ? 600 : 500,
-        }}>
-          {save.icon}{save.text}
-        </div>
-
-        {/* Seven pills wrap to three rows at phone width, pushing the actual
-            question below the fold before anyone has answered anything. One
-            swipeable row instead — the same trick the CRM boards use. */}
-        <div
-          ref={stepsRef}
-          className={isMobile ? 'hide-scrollbar' : undefined}
-          style={isMobile
-            ? { display: 'flex', gap: 6, overflowX: 'auto', margin: '0 -16px', padding: '0 16px', scrollSnapType: 'x proximity' }
-            : { display: 'flex', flexWrap: 'wrap', gap: 6 }}
-        >
-          {screens.map((s, i) => {
-            // A dot on the screen someone else is working in, so you can go
-            // somewhere useful instead of finding out on arrival.
-            const busyHere = s.questions.some((q) => editorsByKey.has(q.key));
-            return (
-              <button
-                key={s.key} type="button" onClick={() => setStep(i)}
-                style={{
-                  padding: '5px 11px', borderRadius: 999, cursor: 'pointer',
-                  fontSize: 12, fontFamily: 'inherit',
-                  flexShrink: 0, scrollSnapAlign: 'start',
-                  fontWeight: i === step ? 700 : 500,
-                  border: `1px solid ${i === step ? BRAND.blue : '#E0E7ED'}`,
-                  background: i === step ? '#EAF7FD' : '#fff',
-                  color: i === step ? BRAND.ink : '#7E8B96',
-                  display: 'inline-flex', alignItems: 'center', gap: 5,
-                }}
-              >
-                {s.title}{s.optional ? ' ·' : ''}
-                {busyHere && (
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#F59E0B' }} />
-                )}
-              </button>
-            );
-          })}
-        </div>
+        <StepProgress
+          steps={stepperSteps}
+          current={step}
+          onJump={setStep}
+          markers={busyScreens}
+        />
       </div>
 
       {/* ── the current screen ──────────────────────────────────────────── */}
       {!isReview && screen && (
         <Card>
-          <h2 style={{ margin: '0 0 6px', fontSize: 17.5, fontWeight: 700, color: BRAND.ink }}>
-            {screen.title}
+          <TimeBadge minutes={minutesLeft} />
+
+          <StepTitle title={screenTitle}>
+            {screen.blurb}
             {screen.optional && (
-              <span style={{ marginLeft: 9, fontSize: 12.5, fontWeight: 500, color: '#9AA5B1' }}>
-                optional — most people skip this
+              <span style={{ display: 'block', marginTop: 6, fontSize: 13.5, color: '#9AA5B1' }}>
+                Optional — most people skip this.
               </span>
             )}
-          </h2>
-          {screen.blurb && (
-            <p style={{ margin: '0 0 20px', fontSize: 13.5, lineHeight: 1.6, color: '#6B7785' }}>
-              {screen.blurb}
-            </p>
-          )}
+          </StepTitle>
+
+          {/* The quote form puts a privacy line here because "who sees my phone
+              number" is the worry that stops people finishing it. Twenty-five
+              questions raises a different one — what happens if I stop — so
+              this answers that instead, in the same place, in the same shape.
+              It doubles as the save indicator, which is the honest way to make
+              the promise: it says "saved at 14:32", not just "we save". */}
+          <ReassuranceBadge tone={save.kind}>{save.text}</ReassuranceBadge>
 
           {screen.optional && !scriptOpen ? (
             <button
@@ -1207,7 +1235,7 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
           ) : (
             screen.questions.map((q) => (
               <Question
-                key={q.key} q={q} answers={answers}
+                key={q.key} q={q} answers={answers} onWatch={setWatching}
                 value={answers[q.key]}
                 editors={editorsByKey.get(q.key) || []}
                 onChange={(v) => setAnswer(q.key, v)}
@@ -1237,14 +1265,11 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
       {/* ── review + finalise ───────────────────────────────────────────── */}
       {isReview && (
         <Card>
-          <h2 style={{ margin: '0 0 6px', fontSize: 17.5, fontWeight: 700, color: BRAND.ink }}>
-            Ready to finalise
-          </h2>
-          <p style={{ margin: '0 0 20px', fontSize: 13.5, lineHeight: 1.6, color: '#6B7785' }}>
+          <StepTitle title={firstName ? `Ready when you are, ${firstName}` : 'Ready to finalise'}>
             Have a read through — and check whoever else needs to has had their say, because
             <strong> finalising locks it</strong>. Our team works from this exact version, so it
             can't move underneath them afterwards. We can always reopen it for you if it needs to.
-          </p>
+          </StepTitle>
           <BriefSummary answers={answers} onEdit={(k) => {
             const i = screens.findIndex((s) => s.questions.some((q) => q.key === k));
             if (i >= 0) setStep(i);
@@ -1273,6 +1298,12 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
       )}
 
       <ActivityFeed events={activity} open={activityOpen} onToggle={() => setActivityOpen((v) => !v)} />
+
+      {/* Over the brief, never instead of it: the page stays mounted, so closing
+          the video puts them back on the exact question that prompted it. */}
+      {watching !== null && (
+        <GuideVideoModal moduleNumber={watching} onClose={() => setWatching(null)} />
+      )}
 
       {/* Print-only: the whole brief on one page, no chrome. */}
       <div className="brief-print">
