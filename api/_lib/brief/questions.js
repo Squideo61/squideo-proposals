@@ -70,6 +70,7 @@ export const SCREENS = [
       },
       {
         key: 'goalDetail', type: 'text',
+        follows: 'goal',
         label: 'Anything to add to that?',
         placeholder: 'Optional — one line is plenty',
       },
@@ -89,6 +90,7 @@ export const SCREENS = [
       },
       {
         key: 'successBaseline', type: 'text',
+        follows: 'successMetric',
         label: 'And roughly what is that number today?',
         placeholder: 'Optional — a rough figure is fine',
       },
@@ -171,11 +173,13 @@ export const SCREENS = [
       },
       {
         key: 'mustInclude', type: 'textarea', rows: 3,
+        part: 'guardrails',
         label: 'Anything that has to be in it?',
         placeholder: 'Legal wording, a disclaimer, a specific product name, a stat you need to land.',
       },
       {
         key: 'mustAvoid', type: 'textarea', rows: 3,
+        part: 'guardrails',
         label: 'Anything that must not be?',
         placeholder: 'Claims you can\'t make, a competitor you\'d rather not name, jargon your audience hates.',
         why: 'Genuinely useful — this is usually the stuff that causes a re-edit when nobody mentioned it up front.',
@@ -191,6 +195,7 @@ export const SCREENS = [
     questions: [
       {
         key: 'characters', type: 'chips',
+        part: 'feel',
         label: 'Should it have characters or people in it?',
         options: [
           { value: 'yes', label: 'Yes' },
@@ -206,6 +211,7 @@ export const SCREENS = [
         // their nerve. Saying "an upgrade" in the why-we-ask is enough to stop
         // the quote being a surprise without anchoring the choice.
         key: 'voiceover', type: 'chips',
+        part: 'feel',
         label: 'Voiceover?',
         options: [
           { value: 'ai', label: 'AI voice — your standard' },
@@ -218,6 +224,7 @@ export const SCREENS = [
       },
       {
         key: 'music', type: 'chips',
+        part: 'feel',
         label: 'Music?',
         options: [
           { value: 'yes', label: 'Yes' },
@@ -257,6 +264,7 @@ export const SCREENS = [
       },
       {
         key: 'deadlineDriver', type: 'text',
+        follows: 'deadline',
         label: "What's driving that date?",
         placeholder: 'e.g. A launch, an event, a board meeting, the start of the quarter',
         why: "If a date is tied to something real we'll plan back from it. If it's a guess, we'll tell you honestly what's comfortable.",
@@ -335,6 +343,69 @@ export const SCREENS = [
     ],
   },
 ];
+
+// ── PARTS ────────────────────────────────────────────────────────────────────
+// A screen is asked a part at a time: one question on screen, occasionally a
+// pair that genuinely belong together, and never a page of empty boxes.
+//
+// Parts are PRESENTATION ONLY. Everything below this block — ALL_QUESTIONS,
+// progress, missingRequired, renderBriefText — still works off the flat
+// `screen.questions` array, so a submitted brief reads in the CRM exactly as it
+// always has. Regrouping the form must never change the document.
+//
+// Two optional fields on a question drive it:
+//
+//   part: '<slug>'      consecutive questions sharing a slug share a card.
+//                       Used sparingly: "must include" and "must avoid" are one
+//                       thought, and the three look-and-feel taps are three
+//                       seconds of work that would be silly to spread over three
+//                       clicks. Everything else gets a part to itself.
+//
+//   follows: '<key>'    a follow-up. It joins its parent's part and is only
+//                       shown once the parent has an answer, because it reads as
+//                       nonsense before then — "And roughly what is that number
+//                       today?" with no number named above it is a question
+//                       about nothing.
+//
+// A question with neither field is its own part, in the order it is declared.
+export function screenParts(screen) {
+  const out = [];
+  const byKey = new Map();
+  for (const q of screen.questions || []) {
+    // A follow-up rides with its parent wherever that ended up. Falls through to
+    // a part of its own if the parent is not on this screen, which would be a
+    // mistake in the data — better a stray question than a lost one.
+    if (q.follows && byKey.has(q.follows)) {
+      byKey.get(q.follows).questions.push(q);
+      byKey.set(q.key, byKey.get(q.follows));
+      continue;
+    }
+    const last = out[out.length - 1];
+    if (q.part && last && last.key === q.part) {
+      last.questions.push(q);
+      byKey.set(q.key, last);
+      continue;
+    }
+    const created = { key: q.part || q.key, questions: [q] };
+    out.push(created);
+    byKey.set(q.key, created);
+  }
+  return out;
+}
+
+// Where a question lives, for jumping straight to it — from the review summary's
+// edit links and from a Finalise that bounced on a missing answer. Landing
+// someone on the right screen but the wrong part would leave them looking at a
+// question they have already answered, wondering what we wanted.
+export function locateQuestion(key) {
+  for (let screenIndex = 0; screenIndex < SCREENS.length; screenIndex += 1) {
+    const parts = screenParts(SCREENS[screenIndex]);
+    for (let partIndex = 0; partIndex < parts.length; partIndex += 1) {
+      if (parts[partIndex].questions.some((q) => q.key === key)) return { screenIndex, partIndex };
+    }
+  }
+  return null;
+}
 
 // Flat list, for progress counting and for rendering a submitted brief.
 export const ALL_QUESTIONS = SCREENS.flatMap((s) =>

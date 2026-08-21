@@ -117,21 +117,32 @@ const TOM = { id: 'demo-tom', name: 'Tom Ellery', email: 'tom@northwindcare.exam
 
 const DEAL_ID = 'demo-deal';
 
-const BRIEF_ANSWERS = {
+// EVERY KEY HERE MUST BE A REAL QUESTION KEY, and every chip value a real
+// option value — see api/_lib/brief/questions.js. An invented key is not an
+// error anywhere: the brief simply renders that question as unanswered, and the
+// demo quietly shows a less complete brief than it claims to. This set used to
+// carry `action`, `metric`, `problem`, `message` and `tone`, none of which
+// exist, plus volume: '1' where the option is 'one'.
+//
+// Deliberately stops part-way through the message screen, so the demo opens on
+// the welcome-back banner with answered rows behind it — the state most people
+// are in when they come back to a brief, and the one worth looking at.
+export const DEMO_BRIEF_ANSWERS = {
   projectName: 'Northwind Ordering launch film',
   goal: 'onboard',
-  goalDetail: 'Introduce the Northwind Ordering portal and show care homes how it simplifies purchasing, manages budgets and keeps spend visible in one place.',
-  action: 'Contact their account manager to book a demonstration.',
-  metric: 'Demo bookings',
+  goalDetail: 'Introducing the ordering portal to existing care-home customers.',
+  oneAction: 'Contact their account manager to book a demonstration.',
+  successMetric: 'Demo bookings',
+  successBaseline: 'About four a month',
   audience: 'The people responsible for purchasing, budgets and operational efficiency in care homes — owners, group directors, home managers, finance teams and senior administrators.',
-  problem: 'They are managing stock, spend and staff at once, and purchasing is the part that eats a morning.',
-  message: 'Ordering, budgets and approvals in one place, so nothing is chased twice.',
-  tone: 'warm',
+  awareness: 'problem',
   placements: ['homepage', 'sales'],
   length: '60-90',
+  oneMessage: 'Ordering, budgets and approvals in one place, so nothing is chased twice.',
   deadline: 'Mid-October, ahead of the regional conference',
+  deadlineDriver: 'The regional care conference — we exhibit and want it on the stand.',
   budget: '5-10k',
-  volume: '1',
+  volume: 'one',
 };
 
 // A brief three people have been through, which is the whole point of the
@@ -324,7 +335,7 @@ function respond(state, method, action, query, body) {
         briefDraft: s.briefLocked ? null : {
           id: 'demo-brief',
           updatedAt: ago(9),
-          projectName: BRIEF_ANSWERS.projectName,
+          projectName: DEMO_BRIEF_ANSWERS.projectName,
           ...briefSummary(s),
         },
       };
@@ -371,7 +382,7 @@ function respond(state, method, action, query, body) {
       const brief = briefSummary(s);
       if (query.get('id')) {
         return {
-          brief: { ...brief, answers: BRIEF_ANSWERS },
+          brief: { ...brief, answers: DEMO_BRIEF_ANSWERS },
           activity: BRIEF_ACTIVITY,
           presence: brief.locked ? [] : BRIEF_PRESENCE,
           readOnly: false,
@@ -392,7 +403,7 @@ function respond(state, method, action, query, body) {
       return {
         presence: s.briefLocked ? [] : BRIEF_PRESENCE,
         events: [],
-        answers: BRIEF_ANSWERS,
+        answers: DEMO_BRIEF_ANSWERS,
         updatedAt: ago(9),
         locked: s.briefLocked,
       };

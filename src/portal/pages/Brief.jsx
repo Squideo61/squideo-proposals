@@ -17,12 +17,24 @@
 // names one of their projects or is a new enquiry, and finalising does the
 // right thing for each.
 //
-// GROUPED SCREENS, NOT ONE QUESTION AT A TIME. The plan called for a Typeform-
-// style one-per-screen flow; that works for eight consumer questions and is
-// punishing across twenty-five B2B ones. Grouping into seven themed screens
-// lets people scan ahead, skip what doesn't apply and answer the easy ones
-// fast — and it makes the thing feel finite, which is what stops people
-// bailing at question nine.
+// ONE QUESTION AT A TIME, INSIDE SEVEN SCREENS. This has been both things.
+//
+// It started as a Typeform-style one-question-per-SCREEN flow, and that was
+// rejected: twenty-six full page transitions with no way to see the shape of
+// the thing is punishing on a B2B brief, however well it works on eight
+// consumer questions. It became seven themed screens instead.
+//
+// But a screen of six labelled empty boxes is the other failure. Now that the
+// brief is the lead magnet, most people opening it have never spoken to us, and
+// a wall of empty boxes is what makes someone close the tab.
+//
+// So: the seven screens stay, and each is asked a PART at a time — usually one
+// question, occasionally a pair that belong together (see screenParts in
+// api/_lib/brief/questions.js). What you have already answered stays on screen
+// above as one-line rows you can click back into, which is the thing the
+// Typeform version threw away and the reason it was rejected. You are never
+// facing more than one unanswered question, and you can always see where you
+// are and what you have said.
 //
 // Nothing here blocks on the network. Saves are debounced and fire-and-forget
 // with a quiet status line; if one fails the answer stays in local state and
@@ -31,7 +43,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FileText, ArrowRight, ArrowLeft, Check, Printer, Send, Plus, Trash2,
-  Info, GraduationCap, ChevronDown, Lock, Users, History, Link2, Briefcase,
+  Info, GraduationCap, ChevronDown, ChevronRight, Lock, Users, History, Link2, Briefcase,
 } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useIsMobile } from '../../utils.js';
@@ -41,10 +53,11 @@ import { Card, EmptyState } from '../components.jsx';
 import { navigate } from '../PortalApp.jsx';
 import { GuideVideoModal } from '../GuideVideo.jsx';
 import {
-  StepProgress, TimeBadge, ReassuranceBadge, ResumeBanner, StepTitle, greeting, EASE,
+  StepProgress, PartProgress, TimeBadge, ReassuranceBadge, ResumeBanner, StepTitle, greeting, EASE,
 } from '../ProgressChrome.jsx';
 import {
   SCREENS, briefProgress, missingRequired, suggestedLength,
+  screenParts, locateQuestion, answerLabel,
 } from '../../../api/_lib/brief/questions.js';
 
 // ═══ NOTHING THE CLIENT TYPES IS EVER LOST ═══════════════════════════════════
@@ -334,7 +347,45 @@ function EditingHere({ people }) {
   );
 }
 
-function Question({ q, value, onChange, onBlur, onFocus, answers, invalid, disabled, editors = [], onWatch }) {
+// One answered part, folded to a line. Click to open it again where it stands —
+// no navigation, no losing your place, which is what makes it safe to move on
+// from a question you are only half sure about.
+function AnsweredRow({ label, value, busy, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 11, width: '100%',
+        textAlign: 'left', background: 'none', border: 'none',
+        borderBottom: `1px solid ${HAIRLINE}`, padding: '11px 2px',
+        cursor: 'pointer', fontFamily: 'inherit',
+      }}
+    >
+      <span style={{
+        width: 18, height: 18, borderRadius: '50%', flexShrink: 0,
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        background: busy ? '#E9A23B' : '#DFF0E7', color: busy ? '#fff' : '#3C7A56',
+      }}><Check size={11} strokeWidth={3.5} /></span>
+      <span style={{
+        fontSize: 13, color: '#7B8894', flexShrink: 0, maxWidth: '38%',
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        letterSpacing: '-0.01em',
+      }}>{label}</span>
+      {/* One line, always. A three-line answer here would push the question
+          being asked off the screen, which is the thing this page exists to
+          avoid — the full text is one click away. */}
+      <span style={{
+        flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 500, color: BRAND.ink,
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        letterSpacing: '-0.01em',
+      }}>{value}</span>
+      <ChevronRight size={15} style={{ color: '#B7C2CC', flexShrink: 0 }} />
+    </button>
+  );
+}
+
+function Question({ q, value, onChange, onBlur, onFocus, answers, invalid, disabled, editors = [], onWatch, revealed = false, half = false }) {
   const isMobile = useIsMobile();
   const inp = inputStyle(isMobile);
   const suggestion = q.suggestFrom ? suggestedLength(answers) : null;
@@ -342,13 +393,15 @@ function Question({ q, value, onChange, onBlur, onFocus, answers, invalid, disab
   // box is rare and recoverable (every version is in the activity feed), while
   // being locked out of your own brief is neither.
   const border = editors.length ? '#FDBA74' : (invalid ? '#E9A0A0' : '#DCE4EB');
-  // One-line answers pair up two to a row; anything you have to think in
-  // sentences about gets the full width. A name and a deadline side by side is
-  // a form you can fill in fast — an audience description squeezed into half a
-  // column is one you avoid starting.
-  const wide = q.type !== 'text';
+  // Half width is decided by the caller, not by type. A pair of one-line
+  // answers side by side is quick to fill in; a SINGLE one-line answer in half a
+  // column is a field with a hole next to it, and now that most parts hold one
+  // question that is the common case.
   return (
-    <div className={wide ? 'brief-wide' : undefined} style={{ marginBottom: 28 }}>
+    <div
+      className={[half ? null : 'brief-wide', revealed ? 'brief-reveal' : null].filter(Boolean).join(' ') || undefined}
+      style={{ marginBottom: 28 }}
+    >
       <label style={{
         display: 'block', fontSize: 14.5, fontWeight: 600, color: BRAND.ink,
         letterSpacing: '-0.015em',
@@ -797,15 +850,20 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
   // Deliberately not derived from `answers` on every render: it would move as
   // they type, and a banner offering to send you somewhere that keeps changing
   // is a banner nobody trusts. Null means don't offer — either they have not
-  // started, or the first gap is the screen they are already on.
+  // started, or the first gap is where they already are.
   const resumeDecided = useRef(false);
   useEffect(() => {
     if (resumeDecided.current || !data || data.readOnly || data.brief?.locked) return;
     resumeDecided.current = true;
     const loaded = data.brief?.answers || {};
     if (!Object.keys(loaded).some((k) => !isBlank(loaded[k]))) return;
-    const gap = SCREENS.findIndex((s) => s.questions.some((q) => !q.optional && isBlank(loaded[q.key])));
-    if (gap > 0) setResumeOffer(gap);
+    const firstGap = SCREENS
+      .flatMap((s) => s.questions)
+      .find((q) => !q.follows && isBlank(loaded[q.key]));
+    const at = firstGap ? locateQuestion(firstGap.key) : null;
+    // A gap on the very first part is not worth a banner: that is just an
+    // unfinished brief opened at the top, which is where it opens anyway.
+    if (at && (at.screenIndex > 0 || at.partIndex > 0)) setResumeOffer(at);
   }, [data]);
 
   // Debounced autosave. Only the changed keys go up, so two people editing
@@ -923,6 +981,10 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
     };
   }, [flush]);
 
+  // Which part of the current screen is being asked. Screen and part move
+  // together and are always set together — see goTo.
+  const [part, setPart] = useState(0);
+
   // Which screen the welcome-back banner offers, or null for no banner.
   const [resumeOffer, setResumeOffer] = useState(null);
 
@@ -943,6 +1005,41 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
   const screens = SCREENS;
   const isReview = step >= screens.length;
   const screen = screens[step] || null;
+
+  // The parts of the screen you are on, and the one being asked.
+  const parts = useMemo(() => (screen ? screenParts(screen) : []), [screen]);
+  const livePart = parts[part] || parts[0] || null;
+
+  // The ONLY way to move. Screen and part are one position, and setting the
+  // screen without the part is how you land on step 4 showing step 3's last
+  // question — every jump into this form (resume, stepper, edit-from-review, a
+  // bounced Finalise) has to say where in the screen it means.
+  const goTo = useCallback((screenIndex, partIndex = 0) => {
+    setStep(screenIndex);
+    setPart(Math.max(0, partIndex));
+  }, []);
+
+  // Back and Next cross screen boundaries so that Next always means the same
+  // thing. Back lands on the LAST part of the previous screen — the one you
+  // were actually looking at — rather than dumping you at its top.
+  const lastPartOf = useCallback(
+    (screenIndex) => Math.max(0, screenParts(screens[screenIndex] || { questions: [] }).length - 1),
+    [screens],
+  );
+
+  const goBack = useCallback(() => {
+    if (part > 0) { setPart(part - 1); return; }
+    if (step === 0) return;
+    goTo(step - 1, lastPartOf(step - 1));
+  }, [part, step, lastPartOf, goTo]);
+
+  const goNext = useCallback(() => {
+    // Save on the way out of a part, not on the way in: leaving a question is
+    // the clearest signal an answer is finished with.
+    flush();
+    if (part < parts.length - 1) { setPart(part + 1); return; }
+    goTo(step + 1, 0);
+  }, [flush, part, parts.length, step, goTo]);
 
   // Review is a step of the stepper, not a thing that happens after it. It is
   // the last circle for the same reason the quote form's is "Finish": people
@@ -966,10 +1063,15 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
     return out;
   }, [screens, editorsByKey]);
 
+  // Counts down through the screen you are in as well as the ones after it.
+  // A number that only moves when the screen turns sits still for four parts and
+  // then jumps, which reads as broken rather than reassuring.
   const minutesLeft = useMemo(() => {
     if (isReview) return 0;
-    return Math.ceil(screens.slice(step).reduce((t, s) => t + (s.minutes || 0), 0));
-  }, [screens, step, isReview]);
+    const ahead = screens.slice(step).reduce((t, s) => t + (s.minutes || 0), 0);
+    const spent = parts.length ? (screen?.minutes || 0) * (part / parts.length) : 0;
+    return Math.max(1, Math.ceil(ahead - spent));
+  }, [screens, step, isReview, screen, part, parts.length]);
 
   // First name only, and only where it reads as a person talking. The quote
   // form does the same: a greeting on the first screen, then the name on the
@@ -978,6 +1080,49 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
     const n = String(user?.name || '').trim();
     return n ? n.split(/\s+/)[0] : null;
   }, [user]);
+
+  // A part counts as answered once anything in it has an answer. Its follow-up
+  // does not have to be filled in for the part to be done — that is the whole
+  // point of a follow-up.
+  const partAnswered = useMemo(
+    () => parts.map((pt) => pt.questions.some((q) => !isBlank(answers[q.key]))),
+    [parts, answers],
+  );
+
+  // The questions on screen right now: the live part, minus any follow-up whose
+  // parent has not been answered yet.
+  const liveQuestions = useMemo(() => {
+    if (!livePart) return [];
+    return livePart.questions.filter((q) => !q.follows || !isBlank(answers[q.follows]));
+  }, [livePart, answers]);
+
+  // Everything already answered on this screen, as one-line rows. Unanswered
+  // parts behind you are left out rather than shown empty — a row saying you
+  // skipped something is a row nagging you about it.
+  const answeredRows = useMemo(() => parts.slice(0, part).flatMap((pt, index) => {
+    if (!partAnswered[index]) return [];
+    const shown = pt.questions.filter((q) => !isBlank(answers[q.key]));
+    return [{
+      key: pt.key,
+      index,
+      label: shown[0].label,
+      // Both halves of a pair on one row: "Line one · Line two" beats a row that
+      // silently drops the second answer.
+      value: shown.map((q) => answerLabel(q.key, answers)).filter(Boolean).join(' · '),
+      busy: pt.questions.some((q) => editorsByKey.has(q.key)),
+    }];
+  }), [parts, part, partAnswered, answers, editorsByKey]);
+
+  // Two one-line answers on one card sit side by side. One on its own does
+  // not — see Question.
+  const pairedKeys = useMemo(() => {
+    const singles = liveQuestions.filter((q) => q.type === 'text');
+    return new Set(singles.length >= 2 ? singles.map((q) => q.key) : []);
+  }, [liveQuestions]);
+
+  const canGoBack = step > 0 || part > 0;
+  const canSkip = !!livePart && !livePart.questions.some((q) => q.required);
+  const isLastPartOfBrief = step === screens.length - 1 && part === parts.length - 1;
 
   const screenTitle = useMemo(() => {
     if (!screen) return '';
@@ -1011,8 +1156,8 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
     await flush();
     if (missing.length) {
       setShowInvalid(true);
-      const first = screens.findIndex((s) => s.key === missing[0].screenKey);
-      setStep(first >= 0 ? first : 0);
+      const at = locateQuestion(missing[0].key);
+      goTo(at ? at.screenIndex : 0, at ? at.partIndex : 0);
       showToast(`${missing.length} question${missing.length === 1 ? '' : 's'} still needs an answer`, 'error');
       return;
     }
@@ -1028,7 +1173,7 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
       setActivity(d.activity || []);
       setAnswers(d.brief?.answers || {});
       onChanged?.();
-      setStep(0);
+      goTo(0, 0);
     } catch (err) {
       showToast(err.message || "Couldn't finalise the brief", 'error');
     } finally { setSending(false); }
@@ -1250,8 +1395,18 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
           box-shadow: 0 0 0 4px ${BRAND.blue}1F;
         }
 
+        /* A follow-up appearing under the answer that unlocked it. Slower and
+           gentler than the step change: this one is a response to something
+           they just did, not a page turn, so it should feel like the form
+           noticing rather than the form moving. */
+        @keyframes briefReveal {
+          from { opacity: 0; transform: translateY(-4px); }
+          to   { opacity: 1; transform: none; }
+        }
+        .brief-reveal { animation: briefReveal .38s ${EASE} both; }
+
         @media (prefers-reduced-motion: reduce) {
-          .brief-step { animation: none; }
+          .brief-step, .brief-reveal { animation: none; }
         }
       `}</style>
 
@@ -1266,7 +1421,7 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
             name={firstName}
             done={progress.done}
             total={progress.total}
-            onResume={() => { setStep(resumeOffer); setResumeOffer(null); }}
+            onResume={() => { goTo(resumeOffer.screenIndex, resumeOffer.partIndex); setResumeOffer(null); }}
             onDismiss={() => setResumeOffer(null)}
           />
         </div>
@@ -1281,12 +1436,17 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
             <StepProgress
               steps={stepperSteps}
               current={step}
-              onJump={setStep}
+              onJump={(i) => goTo(i, 0)}
               markers={busyScreens}
             />
+            {parts.length > 1 && (
+              <PartProgress parts={parts} current={part} answered={partAnswered} onJump={setPart} />
+            )}
           </div>
 
-          <div key={step} className="brief-step" style={CARD_BODY}>
+          {/* Keyed on the position, not the screen, so the arrival animation
+              replays for every part rather than only when the screen turns. */}
+          <div key={`${step}:${part}`} className="brief-step" style={CARD_BODY}>
             <StepTitle
               step={step + 1}
               total={stepperSteps.length}
@@ -1305,13 +1465,31 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
                 </div>
               )}
             >
-              {screen.blurb}
+              {part === 0 && screen.blurb}
               {screen.optional && (
                 <span style={{ display: 'block', marginTop: 8, color: '#95A2AD' }}>
                   Optional — most people skip this.
                 </span>
               )}
             </StepTitle>
+
+            {/* What they have already said, above what is being asked. This is
+                the half the one-question-per-screen version threw away: it costs
+                a few hairline rows and it is the difference between a form you
+                are working through and a series of unrelated questions. */}
+            {answeredRows.length > 0 && (
+              <div style={{ marginBottom: 26 }}>
+                {answeredRows.map((row) => (
+                  <AnsweredRow
+                    key={row.key}
+                    label={row.label}
+                    value={row.value}
+                    busy={row.busy}
+                    onClick={() => setPart(row.index)}
+                  />
+                ))}
+              </div>
+            )}
 
             {screen.optional && !scriptOpen ? (
               <button
@@ -1325,7 +1503,7 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
               ><ChevronDown size={15} /> I've got some wording in mind</button>
             ) : (
               <div className="brief-grid">
-                {screen.questions.map((q) => (
+                {liveQuestions.map((q) => (
                   <Question
                     key={q.key} q={q} answers={answers} onWatch={setWatching}
                     value={answers[q.key]}
@@ -1334,24 +1512,39 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
                     onFocus={() => { editingKey.current = q.key; }}
                     onBlur={() => { if (editingKey.current === q.key) editingKey.current = null; flush(); }}
                     invalid={showInvalid && q.required && isBlank(answers[q.key])}
+                    revealed={!!q.follows}
+                    half={pairedKeys.has(q.key)}
                   />
                 ))}
               </div>
             )}
 
             <div style={{
-              display: 'flex', gap: 10, marginTop: 10, paddingTop: 22,
+              display: 'flex', alignItems: 'center', gap: 10, marginTop: 10, paddingTop: 22,
               borderTop: `1px solid ${HAIRLINE}`, flexWrap: 'wrap',
-              justifyContent: step > 0 ? 'space-between' : 'flex-end',
+              justifyContent: canGoBack ? 'space-between' : 'flex-end',
             }}>
-              {step > 0 && (
-                <button type="button" onClick={() => setStep(step - 1)} style={btnGhost}>
+              {canGoBack && (
+                <button type="button" onClick={goBack} style={btnGhost}>
                   <ArrowLeft size={15} /> Back
                 </button>
               )}
-              <button type="button" onClick={() => { flush(); setStep(step + 1); }} style={btnPrimary}>
-                {step === screens.length - 1 ? 'Review' : 'Next'} <ArrowRight size={15} />
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                {/* Skip only where nothing here is required. A blank field with
+                    no way past it reads as failure; naming the skip makes not
+                    answering a legitimate move, which is most of the anxiety. */}
+                {canSkip && (
+                  <button
+                    type="button" onClick={goNext}
+                    style={{
+                      ...btnGhost, border: 'none', background: 'none', color: '#8A97A3',
+                    }}
+                  >Skip</button>
+                )}
+                <button type="button" onClick={goNext} style={btnPrimary}>
+                  {isLastPartOfBrief ? 'Review' : 'Next'} <ArrowRight size={15} />
+                </button>
+              </div>
             </div>
           </div>
         </Card>
@@ -1379,11 +1572,11 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
             can't move underneath them afterwards. We can always reopen it for you if it needs to.
           </StepTitle>
           <BriefSummary answers={answers} onEdit={(k) => {
-            const i = screens.findIndex((s) => s.questions.some((q) => q.key === k));
-            if (i >= 0) setStep(i);
+            const at = locateQuestion(k);
+            if (at) goTo(at.screenIndex, at.partIndex);
           }} />
           <div style={{ display: 'flex', gap: 10, marginTop: 20, flexWrap: 'wrap' }}>
-            <button type="button" onClick={() => setStep(screens.length - 1)} style={btnGhost}>
+            <button type="button" onClick={() => goTo(screens.length - 1, lastPartOf(screens.length - 1))} style={btnGhost}>
               <ArrowLeft size={15} /> Back
             </button>
             <button type="button" onClick={() => window.print()} style={btnGhost}>

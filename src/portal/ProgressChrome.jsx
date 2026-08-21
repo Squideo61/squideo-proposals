@@ -184,6 +184,45 @@ export function StepProgress({ steps, current, onJump, markers = {} }) {
   );
 }
 
+/**
+ * Where you are WITHIN a screen: one segment per part, filling as they are
+ * answered.
+ *
+ * Wordless on purpose. "Step 2 of 8" plus "Question 3 of 4" is two counters to
+ * hold in your head, and the answered rows in the body already show progress in
+ * a form you can read. This is peripheral vision only — how much of this screen
+ * is left, at a glance, with no arithmetic.
+ *
+ * Clickable, because it sits directly under a stepper that is, and one row of
+ * marks navigating while the row below it is decorative is the kind of
+ * inconsistency people quietly stop trusting.
+ */
+export function PartProgress({ parts, current, answered = [], onJump }) {
+  return (
+    <div style={{ display: 'flex', gap: 5, marginTop: 18 }}>
+      {parts.map((pt, i) => {
+        const isNow = i === current;
+        const done = answered[i];
+        return (
+          <button
+            key={pt.key}
+            type="button"
+            onClick={() => onJump(i)}
+            aria-label={pt.questions[0]?.label || `Question ${i + 1}`}
+            title={pt.questions[0]?.label}
+            style={{
+              flex: 1, height: 4, padding: 0, borderRadius: 2, border: 'none',
+              cursor: 'pointer',
+              background: isNow ? ACCENT : (done ? `${ACCENT}66` : HAIRLINE),
+              transition: `background .3s ${EASE}`,
+            }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
 /** "About 6 minutes left", said quietly. */
 export function TimeBadge({ minutes }) {
   if (!minutes) return null;
@@ -293,6 +332,12 @@ export function ResumeBanner({ name, done, total, onResume, onDismiss }) {
  * way to make a long form feel finite, and finite is the whole battle here.
  */
 export function StepTitle({ step, total, title, children, meta = null }) {
+  // `children && …` is not enough: a caller passing {cond && text}{other && more}
+  // hands us an ARRAY of falses, which is truthy, and we render an empty
+  // paragraph with 28px of margin under it. That is exactly what the brief does
+  // once the screen blurb stops showing after the first part.
+  const body = React.Children.toArray(children).filter((c) => c !== false && c != null && c !== '');
+  const hasBody = body.length > 0;
   return (
     <div style={{ textAlign: 'center', maxWidth: 640, margin: '0 auto 30px' }}>
       {step != null && total != null && (
@@ -307,12 +352,12 @@ export function StepTitle({ step, total, title, children, meta = null }) {
         margin: '0 0 10px', fontSize: 'clamp(23px, 3vw, 31px)', fontWeight: 600,
         color: INK, lineHeight: 1.18, letterSpacing: '-0.025em',
       }}>{title}</h2>
-      {children && (
+      {hasBody && (
         <p style={{
           margin: '0 auto', maxWidth: '58ch', fontSize: 15, lineHeight: 1.6,
           color: MUTED, letterSpacing: '-0.005em',
         }}>
-          {children}
+          {body}
         </p>
       )}
       {meta && <div style={{ marginTop: 16 }}>{meta}</div>}
