@@ -128,7 +128,9 @@ import {
   scheduleCourseEmails, scheduleBriefEmails, cancelCourseEmails, kindsInFamily,
 } from './_lib/course/emails.js';
 import { ensureClientBriefs } from './_lib/brief/db.js';
-import { missingRequired, renderBriefText, briefProgress, answerLabel } from './_lib/brief/questions.js';
+import {
+  missingRequired, renderBriefText, briefProgress, answerLabel, carryOverAnswers,
+} from './_lib/brief/questions.js';
 import {
   diffAnswers, recordBriefEvents, loadBriefActivity, loadPresence, touchPresence,
   refreshContributorCount, serialiseEvent, colleagueEvents,
@@ -3308,6 +3310,12 @@ function serialiseBrief(r, { withAnswers = true } = {}) {
     reopenedAt: r.reopened_at || null,
     // 'call' | 'quote' | null — what they asked for after finalising.
     nextStep: r.next_step || null,
+    // What was pre-filled from an earlier brief, so the form can mark those
+    // answers as carried over and offer to change them. Only ever the snapshot
+    // taken at creation: an answer that no longer matches it has been edited,
+    // and stops being labelled without anyone having to write that down.
+    carried: withAnswers ? (r.carried || null) : undefined,
+    carriedFrom: r.carried_from || null,
     locked: !!r.submitted_at,
     contributors: Math.max(1, Number(r.contributor_count) || 1),
     createdAt: r.created_at || null,
@@ -3791,16 +3799,38 @@ async function briefCreateRoute(req, res, user) {
      ORDER BY updated_at DESC LIMIT 1`;
   if (clash) return res.status(200).json({ ok: true, id: clash.id, existing: true });
 
+  // Another video for the same people. Their brand, their audience, their
+  // approvers and roughly what they spend do not change between two videos, and
+  // making somebody type all of it again is why second briefs don't get filled
+  // in. Everything that describes THIS video stays blank — see carryOverAnswers.
+  //
+  // Scoped by company on the way in: copyFrom names a brief id, and the only
+  // briefs anyone may copy are their own organisation's.
+  let carried = {};
+  let carriedFrom = null;
+  const copyFrom = trimOrNull(body.copyFrom);
+  if (copyFrom) {
+    const source = await loadBriefRow(copyFrom, companyId);
+    if (source) {
+      carried = carryOverAnswers(source.answers || {});
+      carriedFrom = source.id;
+    }
+  }
+  const hasCarried = Object.keys(carried).length > 0;
+
   const id = crypto.randomUUID();
   const title = trimOrNull(body.title) || (deal ? deal.title : null);
   await sql`
-    INSERT INTO client_briefs (id, portal_user_id, company_id, deal_id, title)
-    VALUES (${id}, ${user.puid}, ${companyId}, ${dealId || null}, ${title})`;
+    INSERT INTO client_briefs (id, portal_user_id, company_id, deal_id, title, answers, carried, carried_from)
+    VALUES (${id}, ${user.puid}, ${companyId}, ${dealId || null}, ${title},
+            ${JSON.stringify(carried)}::jsonb,
+            ${hasCarried ? JSON.stringify(carried) : null}::jsonb,
+            ${hasCarried ? carriedFrom : null})`;
   await recordBriefEvents(id, briefActor(user), [
     { eventKey: 'brief.created' },
     ...(deal ? [{ eventKey: 'brief.attached', after: deal.title || 'a project' }] : []),
   ]);
-  return res.status(201).json({ ok: true, id });
+  return res.status(201).json({ ok: true, id, carried: Object.keys(carried).length });
 }
 
 // Point an existing brief at a job — the common case being a brief started as

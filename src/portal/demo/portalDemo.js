@@ -470,6 +470,12 @@ function respond(state, method, action, query, body) {
     // The post-brief choice. Live availability so the picker has something in
     // it — the demo is where anyone at Squideo judges this screen, and an empty
     // calendar would look like the feature is broken rather than unconfigured.
+    // "Start another brief" hands back the one brief the demo has rather than
+    // inventing a second. Nothing is stored here, so a demo that pretended to
+    // create one would put the viewer on a brief that does not exist.
+    case 'brief-create':
+      return { ok: true, id: briefSummary(s).id, existing: true };
+
     case 'brief-next-step':
       return {
         choice: null,

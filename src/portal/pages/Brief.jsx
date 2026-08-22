@@ -524,7 +524,38 @@ function AnsweredRow({ label, value, busy, onClick }) {
   );
 }
 
-function Question({ q, value, onChange, onBlur, onFocus, answers, invalid, disabled, editors = [], onWatch, revealed = false, half = false }) {
+// Marks an answer that came from their LAST brief, and offers to drop it.
+//
+// It has to be visible, because a pre-filled answer somebody doesn't notice is
+// an answer they didn't give — and on a brief that is a video built to the
+// wrong spec. And it has to be one click to clear, because the alternative is
+// selecting a paragraph of last month's audience description by hand.
+//
+// It disappears by itself: the label only shows while the answer still matches
+// the snapshot taken when the brief was created, so editing a carried answer —
+// by any route, from any device — stops it being carried.
+function CarriedOver({ onClear, disabled }) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap',
+      margin: '-2px 0 9px', fontSize: 12.5, color: '#8A6320', letterSpacing: '-0.01em',
+    }}>
+      <History size={12} style={{ flexShrink: 0 }} />
+      <span>From your last brief.</span>
+      {!disabled && (
+        <button
+          type="button" onClick={onClear}
+          style={{
+            background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+            font: 'inherit', color: BRAND.blue, fontWeight: 600,
+          }}
+        >Change it</button>
+      )}
+    </div>
+  );
+}
+
+function Question({ q, value, onChange, onBlur, onFocus, answers, invalid, disabled, editors = [], onWatch, revealed = false, half = false, carried = false, onClearCarried }) {
   const isMobile = useIsMobile();
   const inp = inputStyle(isMobile);
   const suggestion = q.suggestFrom ? suggestedLength(answers) : null;
@@ -555,6 +586,8 @@ function Question({ q, value, onChange, onBlur, onFocus, answers, invalid, disab
         )}
         <EditingHere people={editors} />
       </label>
+
+      {carried && <CarriedOver onClear={onClearCarried} disabled={disabled} />}
 
       {/* onBlur saves immediately rather than waiting out the debounce — moving
           to the next question is the clearest signal that an answer is done. */}
@@ -594,6 +627,88 @@ function Question({ q, value, onChange, onBlur, onFocus, answers, invalid, disab
 
       <WhyWeAsk text={q.why} videoRef={q.videoRef} onWatch={onWatch} />
     </div>
+  );
+}
+
+// ── another one ──────────────────────────────────────────────────────────────
+// Most clients do not buy one video, and the moment they are most likely to
+// think about the next one is the moment they have just finished describing
+// this one. So the finished brief offers another — and asks the one question
+// that decides how much of it can be filled in already.
+//
+// "Same project" is doing real work rather than filing: it is what lets us
+// carry their audience, brand, approvers and budget over. The other half — what
+// this video is for, its message, where it plays, when it is due — stays blank
+// on purpose. A wrong pre-filled answer is worse than an empty box, because
+// people accept defaults. See carryOverAnswers in questions.js for the split.
+function StartAnother({ fromBriefId, onChanged }) {
+  const { showToast } = usePortal();
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const start = async (sameProject) => {
+    setBusy(true);
+    try {
+      const r = await portalApi.post('brief-create', {
+        copyFrom: sameProject ? fromBriefId : null,
+      });
+      onChanged?.();
+      if (r.existing) showToast('You already had a brief open — here it is');
+      else if (r.carried) showToast(`Started — we've filled in ${r.carried} answers from last time`, 'success');
+      navigate(`#/brief/${r.id}`);
+    } catch (err) {
+      showToast(err.message || "Couldn't start another brief", 'error');
+    } finally { setBusy(false); }
+  };
+
+  if (!asking) {
+    return (
+      <Card style={{ marginTop: 18 }}>
+        <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ flex: '1 1 260px', minWidth: 0 }}>
+            <div style={{ fontSize: 14.5, fontWeight: 600, color: BRAND.ink, letterSpacing: '-0.015em' }}>
+              Need another video?
+            </div>
+            <div style={{ fontSize: 13, color: BRAND.muted, lineHeight: 1.55, marginTop: 3 }}>
+              Start another brief. If it's for the same project we'll carry over everything that
+              won't have changed, so it's a much shorter job the second time.
+            </div>
+          </div>
+          <button type="button" onClick={() => setAsking(true)} style={btnGhost}>
+            <Plus size={15} /> Start another brief
+          </button>
+        </div>
+      </Card>
+    );
+  }
+
+  return (
+    <Card style={{ marginTop: 18 }}>
+      <div style={{ fontSize: 14.5, fontWeight: 600, color: BRAND.ink, letterSpacing: '-0.015em', marginBottom: 3 }}>
+        Is this part of the same project?
+      </div>
+      <div style={{ fontSize: 13, color: BRAND.muted, lineHeight: 1.55, marginBottom: 14 }}>
+        It only changes how much we can fill in for you — you can edit any of it.
+      </div>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <button type="button" disabled={busy} onClick={() => start(true)} style={{
+          ...btnPrimary, background: busy ? '#9AC9DE' : BRAND.blue,
+        }}>
+          <Check size={15} /> Yes — same project
+        </button>
+        <button type="button" disabled={busy} onClick={() => start(false)} style={btnGhost}>
+          No, it's something different
+        </button>
+        <button type="button" onClick={() => setAsking(false)} style={{
+          ...btnGhost, border: 'none', background: 'none', color: '#8A97A3',
+        }}>Cancel</button>
+      </div>
+      <div style={{ fontSize: 12.5, color: BRAND.muted, lineHeight: 1.55, marginTop: 12 }}>
+        Same project carries over your audience, brand and style, what to include and avoid, your
+        budget and who approves it. What the video is for, its message, where it runs and when it's
+        needed all start blank.
+      </div>
+    </Card>
   );
 }
 
@@ -1256,7 +1371,18 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
     if (resumeDecided.current || !data || data.readOnly || data.brief?.locked) return;
     resumeDecided.current = true;
     const loaded = data.brief?.answers || {};
-    if (!Object.keys(loaded).some((k) => !isBlank(loaded[k]))) return;
+    // Answers CARRIED from a previous brief are not progress on this one. A
+    // brief started thirty seconds ago already holds ten of them, and without
+    // this it would greet its author with "welcome back, you've answered ten of
+    // twenty-two" — on a document they have never opened before.
+    //
+    // Today the first gap is question one, so the guard below would have caught
+    // it anyway. That is luck, not design: it holds only while projectName is
+    // the first question, and this is what the rule actually is.
+    const snapshot = data.brief?.carried || {};
+    const theirs = Object.keys(loaded).filter((k) => !isBlank(loaded[k])
+      && JSON.stringify(loaded[k]) !== JSON.stringify(snapshot[k]));
+    if (!theirs.length) return;
     const firstGap = SCREENS
       .flatMap((s) => s.questions)
       .find((q) => !q.follows && isBlank(loaded[q.key]));
@@ -1421,6 +1547,18 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
     setStep(screenIndex);
     setPart(Math.max(0, partIndex));
   }, []);
+
+  // Is this answer still the one we pre-filled from their last brief?
+  //
+  // Compared against the snapshot rather than tracked with a flag, so it needs
+  // no extra write and cannot drift: the moment the answer differs — edited
+  // here, by a colleague, or on another device — it stops being "carried" on
+  // its own. JSON.stringify because chip answers are arrays.
+  const carriedSnapshot = data?.brief?.carried || null;
+  const isCarried = useCallback((key) => {
+    if (!carriedSnapshot || !(key in carriedSnapshot)) return false;
+    return JSON.stringify(answers[key]) === JSON.stringify(carriedSnapshot[key]);
+  }, [carriedSnapshot, answers]);
 
   // Straight to one question, wherever it lives. Three callers now — the
   // summary's edit links, "Answer now" on an outstanding question, and the
@@ -1786,6 +1924,10 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
             step is production, not a quote, and offering one would suggest we
             had forgotten they were already a client. */}
         {!brief.dealSigned && <NextSteps briefId={briefId} initialChoice={brief.nextStep} />}
+        {/* Shown on signed work too: a client mid-production is exactly who
+            wants a second video, and for them "same project" is literally
+            true. */}
+        <StartAnother fromBriefId={briefId} onChanged={onChanged} />
         <HumanMade />
         <ActivityFeed events={activity} open={activityOpen} onToggle={() => setActivityOpen((v) => !v)} />
       </div>
@@ -1972,6 +2114,8 @@ function BriefEditor({ briefId, projects, showBack, onChanged }) {
                     onFocus={() => { editingKey.current = q.key; }}
                     onBlur={() => { if (editingKey.current === q.key) editingKey.current = null; flush(); }}
                     invalid={showInvalid && q.required && isBlank(answers[q.key])}
+                    carried={isCarried(q.key)}
+                    onClearCarried={() => setAnswer(q.key, Array.isArray(answers[q.key]) ? [] : '')}
                     revealed={!!q.follows}
                     half={pairedKeys.has(q.key)}
                   />

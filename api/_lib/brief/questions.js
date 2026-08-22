@@ -105,6 +105,7 @@ export const SCREENS = [
     questions: [
       {
         key: 'audience', type: 'textarea', rows: 4, required: true,
+        carriesOver: true,
         label: 'Describe the person you want watching this',
         placeholder: 'Their job, what they are trying to get done, what they already tried, what annoys them.',
         why: "Write it as one real person rather than a segment. It's much easier to hold one person in your head while writing a script.",
@@ -173,12 +174,14 @@ export const SCREENS = [
       },
       {
         key: 'mustInclude', type: 'textarea', rows: 3,
+        carriesOver: true,
         part: 'guardrails',
         label: 'Anything that has to be in it?',
         placeholder: 'Legal wording, a disclaimer, a specific product name, a stat you need to land.',
       },
       {
         key: 'mustAvoid', type: 'textarea', rows: 3,
+        carriesOver: true,
         part: 'guardrails',
         label: 'Anything that must not be?',
         placeholder: 'Claims you can\'t make, a competitor you\'d rather not name, jargon your audience hates.',
@@ -195,6 +198,7 @@ export const SCREENS = [
     questions: [
       {
         key: 'characters', type: 'chips',
+        carriesOver: true,
         part: 'feel',
         label: 'Should it have characters or people in it?',
         options: [
@@ -211,6 +215,7 @@ export const SCREENS = [
         // their nerve. Saying "an upgrade" in the why-we-ask is enough to stop
         // the quote being a surprise without anchoring the choice.
         key: 'voiceover', type: 'chips',
+        carriesOver: true,
         part: 'feel',
         label: 'Voiceover?',
         options: [
@@ -224,6 +229,7 @@ export const SCREENS = [
       },
       {
         key: 'music', type: 'chips',
+        carriesOver: true,
         part: 'feel',
         label: 'Music?',
         options: [
@@ -234,6 +240,7 @@ export const SCREENS = [
       },
       {
         key: 'references', type: 'textarea', rows: 5,
+        carriesOver: true,
         label: 'Any videos you like the look of?',
         placeholder: 'Paste links — and, more usefully, say what you like about each one. "The pacing" and "the colours" send us in completely different directions.',
         why: 'The what-you-like-about-it half matters more than the link. Ours are at squideo.com/video-examples if it helps to point at one.',
@@ -241,6 +248,7 @@ export const SCREENS = [
       },
       {
         key: 'brandAssets', type: 'chips',
+        carriesOver: true,
         label: 'What brand material do you have?',
         options: [
           { value: 'guidelines', label: 'Full brand guidelines' },
@@ -293,6 +301,7 @@ export const SCREENS = [
       },
       {
         key: 'budget', type: 'chips',
+        carriesOver: true,
         label: 'Roughly what budget are you working to?',
         options: [
           { value: 'under-2k', label: 'Under £2,000 ex VAT' },
@@ -306,6 +315,7 @@ export const SCREENS = [
       },
       {
         key: 'approvers', type: 'textarea', rows: 3,
+        carriesOver: true,
         label: 'Who needs to approve this?',
         placeholder: 'Names or job titles. Include anyone who could ask for changes late on.',
         why: "Video 7 — the feedback trap. This is quietly the most valuable question here. Most expensive re-edits happen because someone who wasn't in the room saw it at version 3. Knowing now means we get them in early instead.",
@@ -343,6 +353,55 @@ export const SCREENS = [
     ],
   },
 ];
+
+// ── THE SECOND BRIEF ─────────────────────────────────────────────────────────
+// Somebody who has sent us one brief and comes back for another video should
+// not have to describe their company, their brand and their approvers from
+// scratch. `carriesOver: true` marks a question whose answer is about THEM
+// rather than about this particular video, so it can be pre-filled from their
+// last brief and edited if it has changed.
+//
+// The split is the whole idea, and getting it wrong is worse than not doing it:
+//
+//   CARRIES  — who they sell to, what the brand must and must not do, the style
+//              of video they like, what brand material exists, roughly what
+//              they spend, who signs it off. None of that changes between two
+//              videos for the same organisation, and re-typing it is the reason
+//              second briefs do not get filled in.
+//
+//   BLANK    — everything that describes THIS video: what it is for, the one
+//              action, the message, where it plays, how long, when it is needed,
+//              the script. Carrying any of these would put last video's answers
+//              in front of someone as if they were this video's, and a wrong
+//              pre-filled answer is far more expensive than an empty box —
+//              people accept defaults.
+//
+// Two that look like they should carry and deliberately do not:
+//   `awareness`  — how much the viewer already knows about them is the thing
+//                  that MOVES across a series. Video one is for strangers;
+//                  video three is for someone comparing options.
+//   `volume`     — "one-off or the first of a few" is a question about the
+//                  enquiry, not the client. Carrying "just this one" onto their
+//                  second brief would be the form contradicting itself.
+export const CARRY_OVER_KEYS = SCREENS
+  .flatMap((s) => s.questions)
+  .filter((q) => q.carriesOver)
+  .map((q) => q.key);
+
+// The subset of a finished brief worth pre-filling into the next one. Blank
+// answers are dropped rather than copied as blanks, so a question they skipped
+// last time is simply asked again.
+export function carryOverAnswers(answers = {}) {
+  const out = {};
+  for (const key of CARRY_OVER_KEYS) {
+    const v = answers?.[key];
+    if (v == null) continue;
+    if (typeof v === 'string' && !v.trim()) continue;
+    if (Array.isArray(v) && !v.length) continue;
+    out[key] = v;
+  }
+  return out;
+}
 
 // ── PARTS ────────────────────────────────────────────────────────────────────
 // A screen is asked a part at a time: one question on screen, occasionally a

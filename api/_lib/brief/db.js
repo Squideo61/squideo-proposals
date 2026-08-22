@@ -45,6 +45,14 @@ export function ensureClientBriefs() {
       await sql`ALTER TABLE client_briefs ADD COLUMN IF NOT EXISTS next_step TEXT`;
       await sql`ALTER TABLE client_briefs ADD COLUMN IF NOT EXISTS next_step_at TIMESTAMPTZ`;
 
+      // A brief started from an earlier one. `carried` is the key→value
+      // snapshot of what was pre-filled, kept so the form can say "this came
+      // from last time, change it if it's different" — and stop saying it the
+      // moment the answer no longer matches the snapshot, which needs no extra
+      // write and cannot drift.
+      await sql`ALTER TABLE client_briefs ADD COLUMN IF NOT EXISTS carried_from TEXT`;
+      await sql`ALTER TABLE client_briefs ADD COLUMN IF NOT EXISTS carried JSONB`;
+
       // A brief belongs to the ORGANISATION now, so the old "one open draft per
       // person" rule is wrong — and dropping it is safe in a way that replacing
       // it wouldn't be: an org whose people each started a draft has several
