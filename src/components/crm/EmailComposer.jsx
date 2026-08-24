@@ -1529,7 +1529,7 @@ export function RichTextEditor({ editorRef, initialHtml, onChange, minHeight = 7
 // supported and dependency-free), plus the attach-files button. Acts on the
 // shared editorRef. Rendered at the bottom of the message box, below the
 // signature (Gmail-style).
-export function RichTextToolbar({ editorRef, onChange, onAttach }) {
+export function RichTextToolbar({ editorRef, onChange, onAttach, onInsertImage }) {
   // Which colour palette (if any) is open. Single value so opening one closes
   // the other.
   const [openPalette, setOpenPalette] = useState(null); // 'text' | 'highlight' | null
@@ -1653,6 +1653,7 @@ export function RichTextToolbar({ editorRef, onChange, onAttach }) {
       <Btn cmd="insertOrderedList" title="Numbered list">1.</Btn>
       <span style={{ width: 1, alignSelf: 'stretch', background: BRAND.border, margin: '2px 4px' }} />
       {onAttach && <Btn onClick={onAttach} title="Attach files">📎</Btn>}
+      {onInsertImage && <Btn onClick={onInsertImage} title="Insert an image">🖼</Btn>}
       <Btn onClick={addLink} title="Insert link">🔗</Btn>
       <Btn onClick={() => exec('removeFormat')} title="Clear formatting">⨯</Btn>
     </div>

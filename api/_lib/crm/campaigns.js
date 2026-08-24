@@ -49,6 +49,38 @@ export const AUDIENCE_LABELS = {
 // Anything earlier is a prospect, however warm it feels.
 const WON_STAGES = ['signed', 'paid', 'long_term'];
 
+// Image types that actually render in an email client. SVG is deliberately not
+// here: Gmail, Outlook and Apple Mail all refuse it, so accepting one would only
+// produce a broken image in every inbox.
+const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+// Every recipient downloads this, on whatever connection they have.
+const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+
+let campaignImagesReady = null;
+function ensureCampaignImages() {
+  if (campaignImagesReady) return campaignImagesReady;
+  campaignImagesReady = (async () => {
+    await sql`
+      CREATE TABLE IF NOT EXISTS email_campaign_images (
+        id            TEXT        PRIMARY KEY,
+        campaign_id   TEXT        REFERENCES email_campaigns(id) ON DELETE SET NULL,
+        filename      TEXT,
+        mime_type     TEXT        NOT NULL,
+        size_bytes    INTEGER,
+        blob_url      TEXT        NOT NULL,
+        blob_pathname TEXT,
+        uploaded_by   TEXT,
+        created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`;
+    return true;
+  })().catch((err) => {
+    console.warn('[campaigns] image table ensure failed', err.message);
+    campaignImagesReady = null;
+    return false;
+  });
+  return campaignImagesReady;
+}
+
 // How much of the queue one cron run drains. 3 × 100 = 300 emails a minute,
 // which clears a 5,000-person list in under 20 minutes while leaving headroom
 // inside the 60s function budget and under Resend's request limit.
@@ -1023,6 +1055,58 @@ export async function campaignsRoute(req, res, id, action, user) {
   if (!existing) return res.status(404).json({ error: 'Campaign not found' });
   const campaign = serialiseCampaign(existing);
   const editable = campaign.status === 'draft' || campaign.status === 'scheduled';
+
+  // POST /campaigns/:id/image — an image for the body, posted as raw bytes with
+  // an x-filename header (the same shape as deal-file uploads).
+  //
+  // Stored in the private blob store and served back through the public
+  // /api/campaign-image route, because a recipient's mail client cannot
+  // authenticate to fetch a private blob.
+  if (action === 'image' && req.method === 'POST') {
+    if (!process.env.BLOB_READ_WRITE_TOKEN) {
+      return res.status(503).json({ error: 'File storage is not configured' });
+    }
+    const mimeType = String(req.headers['content-type'] || '').split(';')[0].trim();
+    if (!IMAGE_TYPES.has(mimeType)) {
+      return res.status(415).json({ error: 'That file type will not display in an email — use a PNG, JPEG, GIF or WebP.' });
+    }
+
+    let buffer = Buffer.isBuffer(req.body) && req.body.length ? req.body : null;
+    if (!buffer) {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(Buffer.from(chunk));
+      buffer = Buffer.concat(chunks);
+    }
+    if (!buffer.length) return res.status(400).json({ error: 'Empty file' });
+    // Mail clients are unforgiving about size, and every recipient downloads it.
+    if (buffer.length > MAX_IMAGE_BYTES) {
+      return res.status(413).json({
+        error: `That image is ${(buffer.length / 1024 / 1024).toFixed(1)} MB — keep it under ${MAX_IMAGE_BYTES / 1024 / 1024} MB so it loads before people give up.`,
+      });
+    }
+
+    await ensureCampaignImages();
+    const imageId = makeId('img').replace(/[^a-zA-Z0-9_-]/g, '');
+    const filename = String(req.headers['x-filename'] || 'image')
+      .replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80);
+    const { put } = await import('@vercel/blob');
+    const blob = await put(`campaign-images/${id}/${imageId}/${filename}`, buffer, {
+      access: 'private', contentType: mimeType,
+    });
+    await sql`
+      INSERT INTO email_campaign_images
+        (id, campaign_id, filename, mime_type, size_bytes, blob_url, blob_pathname, uploaded_by)
+      VALUES (${imageId}, ${id}, ${filename}, ${mimeType}, ${buffer.length},
+              ${blob.url}, ${blob.pathname}, ${user.email})`;
+
+    // Absolute, because it has to resolve from inside someone else's inbox.
+    const base = (process.env.APP_URL || 'https://app.squideo.com').replace(/\/$/, '');
+    return res.status(201).json({
+      id: imageId,
+      url: `${base}/api/campaign-image?i=${imageId}`,
+      sizeBytes: buffer.length,
+    });
+  }
 
   // GET /campaigns/:id/exclusions — who's being left out of this one, and how
   // many people that leaves.

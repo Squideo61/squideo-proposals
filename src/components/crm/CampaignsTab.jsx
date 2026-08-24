@@ -609,6 +609,8 @@ function CampaignEditor({ campaign, counts, onSaved, onDone, onDeleted }) {
   const [hourlyCap, setHourlyCap] = useState(campaign.hourlyCap ?? SEND_SPEEDS[0].hourlyCap);
   const [dailyCap, setDailyCap] = useState(campaign.dailyCap ?? SEND_SPEEDS[0].dailyCap);
   const [excluding, setExcluding] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const imageInputRef = useRef(null);
   const [exclusions, setExclusions] = useState(null);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -620,7 +622,9 @@ function CampaignEditor({ campaign, counts, onSaved, onDone, onDeleted }) {
 
   const payload = () => ({
     name, audience, subject, preheader,
-    bodyHtml: sanitizeEmailHtml(body),
+    // rich: a campaign may carry headings, images and the table-based CTA
+    // button; the strict set would quietly flatten all three.
+    bodyHtml: sanitizeEmailHtml(body, { rich: true }),
     replyTo: replyTo || null,
     hourlyCap, dailyCap,
   });
@@ -686,6 +690,37 @@ function CampaignEditor({ campaign, counts, onSaved, onDone, onDeleted }) {
       setBody(bodyHtml);
       setDirty(true);
     } catch (e) { showMsg(e.message || 'Could not load the template'); }
+  };
+
+  // Upload an image and drop it into the body at the cursor.
+  //
+  // It has to become a hosted URL, not a data: URI: every mail client strips
+  // those, so an image that looks right in the composer would arrive as a
+  // broken box for everyone. `max-width:100%` because the one thing a campaign
+  // image must not do is force a horizontal scrollbar on a phone.
+  const pickImage = () => imageInputRef.current?.click();
+  const uploadImage = async (file) => {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const res = await fetch(`/api/crm/campaigns/${campaign.id}/image`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': file.type, 'x-filename': encodeURIComponent(file.name) },
+        body: file,
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Upload failed');
+      const el = editorRef.current;
+      if (el) {
+        el.focus();
+        const img = `<img src="${json.url}" alt="" style="max-width:100%;height:auto;display:block;margin:8px 0;">`;
+        if (!document.execCommand('insertHTML', false, img)) el.innerHTML += img;
+        setBody(el.innerHTML);
+        setDirty(true);
+      }
+    } catch (e) { showMsg(e.message || 'Could not upload that image'); }
+    finally { setUploading(false); }
   };
 
   const insertTag = (tag) => {
@@ -790,8 +825,21 @@ function CampaignEditor({ campaign, counts, onSaved, onDone, onDeleted }) {
               minHeight={220}
               maxHeight={560}
             />
-            <RichTextToolbar editorRef={editorRef} onChange={(html) => { setBody(html); setDirty(true); }} />
+            <RichTextToolbar
+              editorRef={editorRef}
+              onChange={(html) => { setBody(html); setDirty(true); }}
+              onInsertImage={uploading ? undefined : pickImage}
+            />
           </div>
+
+          <input
+            ref={imageInputRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp"
+            style={{ display: 'none' }}
+            onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; uploadImage(f); }}
+          />
+          {uploading && (
+            <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 6 }}>Uploading image…</div>
+          )}
 
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 10 }}>
             {/* Only offered once the box is empty. A one-click "reset" sitting
