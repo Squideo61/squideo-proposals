@@ -1054,52 +1054,84 @@ function GmailHarvestModal({ onClose }) {
   const { showMsg } = useStore();
   const [presets, setPresets] = useState([]);
   const [query, setQuery] = useState('');
-  const [result, setResult] = useState(null);
-  const [searching, setSearching] = useState(false);
+  const [ingest, setIngest] = useState(true);
+  const [state, setState] = useState(null);   // { run, people, counts, total }
+  const [starting, setStarting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState(null);
   const [picked, setPicked] = useState(() => new Set());
+  const [touched, setTouched] = useState(false); // has the user changed the ticks?
+
+  const load = useCallback(() => (
+    api.get('/api/crm/campaigns/harvest/run')
+      .then((d) => { setState(d); return d; })
+      .catch((e) => { setError(e.message); return null; })
+  ), []);
 
   useEffect(() => {
     api.get('/api/crm/campaigns/harvest')
       .then((d) => {
         setPresets(d.presets || []);
-        if (d.presets?.length) setQuery(d.presets[0].query);
+        if (d.presets?.length) setQuery((q) => q || d.presets[0].query);
       })
       .catch((e) => setError(e.message));
-  }, []);
+    load();
+  }, [load]);
 
-  const search = async () => {
-    setSearching(true); setError(null); setResult(null);
+  const run = state?.run || null;
+  const running = run && (run.status === 'listing' || run.status === 'working');
+
+  // While the sweep works, keep pulling — a big mailbox takes minutes, and the
+  // count climbing is the difference between "working" and "hung".
+  useEffect(() => {
+    if (!running) return undefined;
+    const t = setInterval(load, 4000);
+    return () => clearInterval(t);
+  }, [running, load]);
+
+  // Pre-tick the people we don't already hold, until the user starts choosing
+  // for themselves — after that their choices are never overwritten by a poll.
+  useEffect(() => {
+    if (touched || !state?.people) return;
+    setPicked(new Set(state.people.filter((p) => p.known === 'new').map((p) => p.email)));
+  }, [state, touched]);
+
+  const start = async () => {
+    setStarting(true); setError(null); setTouched(false);
     try {
-      const r = await api.post('/api/crm/campaigns/harvest', { query });
-      setResult(r);
-      // Pre-tick only the people we don't already hold. Everything else needs a
-      // deliberate click, so a fast double-press can't sweep in the whole
-      // mailbox.
-      setPicked(new Set(r.candidates.filter((c) => c.known === 'new').map((c) => c.email)));
-    } catch (e) { setError(e.message || 'Search failed'); }
-    finally { setSearching(false); }
+      const d = await api.post('/api/crm/campaigns/harvest', { query, ingest });
+      setState(d);
+    } catch (e) { setError(e.message || 'Could not start the sweep'); }
+    finally { setStarting(false); }
   };
 
-  const toggle = (email) => setPicked((prev) => {
-    const next = new Set(prev);
-    if (next.has(email)) next.delete(email); else next.add(email);
-    return next;
-  });
+  const stop = async () => {
+    try { await api.post('/api/crm/campaigns/harvest/stop', {}); await load(); }
+    catch (e) { showMsg(e.message || 'Could not stop it'); }
+  };
+
+  const toggle = (email) => {
+    setTouched(true);
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(email)) next.delete(email); else next.add(email);
+      return next;
+    });
+  };
 
   const importPicked = async () => {
-    const people = (result?.candidates || []).filter((c) => picked.has(c.email));
+    const people = (state?.people || []).filter((p) => picked.has(p.email));
     if (!people.length) return;
     setImporting(true);
     try {
-      const r = await api.post('/api/crm/campaigns/harvest/import', { people });
+      const r = await api.post('/api/crm/campaigns/harvest/import', { people, runId: run?.id });
       const bits = [];
       if (r.added) bits.push(`${num(r.added)} added`);
       if (r.updated) bits.push(`${num(r.updated)} confirmed`);
       if (r.skipped?.length) bits.push(`${num(r.skipped.length)} skipped`);
       showMsg(bits.join(' · ') || 'Nothing to do');
-      onClose();
+      setTouched(false);
+      await load();
     } catch (e) { showMsg(e.message || 'Import failed'); }
     finally { setImporting(false); }
   };
@@ -1112,44 +1144,62 @@ function GmailHarvestModal({ onClose }) {
   };
 
   return (
-    <Modal onClose={onClose} maxWidth={860}>
+    <Modal onClose={onClose} maxWidth={880}>
       <h3 style={{ margin: '0 0 6px', fontSize: 17, fontWeight: 700, color: BRAND.ink }}>Find enquirers in Gmail</h3>
       <p style={{ margin: '0 0 16px', fontSize: 13, color: BRAND.muted, lineHeight: 1.55 }}>
         Everyone who used the website quote form is already on your lists. This is for the ones who just emailed —
-        it searches your mailbox, shows what each person actually wrote, and adds only the people you tick.
+        it reads your whole mailbox, however far back it goes, shows what each person actually wrote, and adds only
+        the people you tick.
       </p>
 
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
         {presets.map((p) => (
           <button
-            key={p.key} onClick={() => setQuery(p.query)} title={p.hint}
+            key={p.key} onClick={() => setQuery(p.query)} title={p.hint} disabled={running}
             style={{
-              padding: '4px 11px', borderRadius: 999, fontSize: 12.5, cursor: 'pointer',
+              padding: '4px 11px', borderRadius: 999, fontSize: 12.5, cursor: running ? 'default' : 'pointer',
               border: '1px solid ' + (query === p.query ? BRAND.blue : BRAND.border),
               background: query === p.query ? BRAND.blue : 'white',
               color: query === p.query ? 'white' : BRAND.ink, fontWeight: query === p.query ? 700 : 500,
+              opacity: running ? 0.6 : 1,
             }}
           >{p.label}</button>
         ))}
       </div>
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
         <input
-          value={query} onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter' && query.trim()) search(); }}
-          placeholder="Gmail search, e.g. subject:(quote OR enquiry) before:2024/01/01"
+          value={query} onChange={(e) => setQuery(e.target.value)} disabled={running}
+          onKeyDown={(e) => { if (e.key === 'Enter' && query.trim() && !running) start(); }}
+          placeholder="Gmail search, e.g. subject:(quote OR enquiry)"
           style={{
             flex: '1 1 320px', minWidth: 0, padding: '9px 11px', border: '1px solid ' + BRAND.border,
             borderRadius: 8, fontSize: 13.5, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
           }}
         />
-        <button className="btn-primary" onClick={search} disabled={searching || !query.trim()} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-          <Search size={15} /> {searching ? 'Searching…' : 'Search'}
-        </button>
+        {running
+          ? <button className="btn-secondary" onClick={stop}>Stop</button>
+          : (
+            <button className="btn-primary" onClick={start} disabled={starting || !query.trim()} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+              <Search size={15} /> {starting ? 'Starting…' : 'Sweep my mailbox'}
+            </button>
+          )}
       </div>
+
+      <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12.5, color: BRAND.ink, marginBottom: 6, cursor: running ? 'default' : 'pointer' }}>
+        <input type="checkbox" checked={ingest} disabled={running} onChange={(e) => setIngest(e.target.checked)} style={{ marginTop: 2 }} />
+        <span>
+          <strong>Also file these emails into the CRM.</strong>
+          <span style={{ color: BRAND.muted }}>
+            {' '}Each matching message is added to the Emails view exactly as if it had arrived today, and links itself
+            to a deal where one matches — so the original enquiry is readable, not just the address. Slower, and it
+            will bring in whatever else your search matches.
+          </span>
+        </span>
+      </label>
       <div style={{ fontSize: 11.5, color: BRAND.muted, marginBottom: 14 }}>
-        Anything Gmail's own search box accepts works here — add <code>before:2024/01/01</code> or <code>after:</code> to
-        narrow it down by date. Nothing is sent, changed or deleted in your mailbox.
+        Anything Gmail's own search box accepts works here — no date limit is applied, so a sweep goes back as far as
+        your mailbox does. Nothing is sent, changed or deleted in Gmail.
       </div>
 
       {error && (
@@ -1158,19 +1208,51 @@ function GmailHarvestModal({ onClose }) {
         </div>
       )}
 
-      {result && (
+      {run && (
+        <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 10, padding: 12, marginBottom: 14 }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap', marginBottom: running ? 8 : 0 }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: BRAND.ink }}>
+              {run.status === 'listing' ? 'Finding every matching message…'
+                : run.status === 'working' ? `Reading ${num(run.processed)} of ${num(run.listed)}`
+                : run.status === 'done' ? `Finished — read ${num(run.processed)} messages`
+                : run.status === 'cancelled' ? `Stopped after ${num(run.processed)} of ${num(run.listed)}`
+                : `Stopped: ${run.error || 'something went wrong'}`}
+            </span>
+            <span style={{ fontSize: 12, color: BRAND.muted }}>
+              {run.ingest ? `${num(run.ingested)} filed into the CRM` : 'addresses only'}
+              {run.failed > 0 && ` · ${num(run.failed)} unreadable`}
+            </span>
+          </div>
+          {running && (
+            <div style={{ height: 8, borderRadius: 999, background: 'white', overflow: 'hidden', border: '1px solid ' + BRAND.border }}>
+              <div style={{
+                width: (run.percent == null ? 8 : run.percent) + '%', height: '100%',
+                background: BRAND.blue, transition: 'width .5s ease',
+                opacity: run.percent == null ? 0.5 : 1,
+              }} />
+            </div>
+          )}
+          {run.status === 'listing' && (
+            <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 6 }}>
+              {num(run.listed)} found so far. You can close this — the sweep carries on and the results will be here
+              when you come back.
+            </div>
+          )}
+        </div>
+      )}
+
+      {state?.people?.length > 0 && (
         <>
           <div style={{ fontSize: 12.5, color: BRAND.muted, marginBottom: 10, lineHeight: 1.5 }}>
-            Read {num(result.searched)} message{result.searched === 1 ? '' : 's'} · found{' '}
-            <strong style={{ color: BRAND.ink }}>{num(result.counts.total)}</strong> {result.counts.total === 1 ? 'person' : 'people'} who wrote to you
-            {result.counts.onList > 0 && <> · {num(result.counts.onList)} you already have</>}
-            {result.counts.unsubscribed > 0 && <> · {num(result.counts.unsubscribed)} unsubscribed</>}
-            {result.nextPageToken && <> · more matches remain, narrow the search by date to reach them</>}
-            . Our own addresses, no-reply senders and the usual platforms are already filtered out.
+            <strong style={{ color: BRAND.ink }}>{num(state.total)}</strong> {state.total === 1 ? 'person' : 'people'} wrote to you
+            {state.counts.onList > 0 && <> · {num(state.counts.onList)} you already have</>}
+            {state.counts.unsubscribed > 0 && <> · {num(state.counts.unsubscribed)} unsubscribed</>}
+            {state.total > state.people.length && <> · showing the {num(state.people.length)} most recent</>}
+            . Your own team, your sent mail, no-reply senders and the usual platforms are already filtered out.
           </div>
 
-          <div style={{ maxHeight: '45vh', overflowY: 'auto', border: '1px solid ' + BRAND.border, borderRadius: 10 }}>
-            {result.candidates.map((c) => {
+          <div style={{ maxHeight: '40vh', overflowY: 'auto', border: '1px solid ' + BRAND.border, borderRadius: 10 }}>
+            {state.people.map((c) => {
               const k = KNOWN[c.known] || KNOWN.new;
               const selectable = c.known === 'new' || c.known === 'provisional';
               return (
@@ -1203,23 +1285,24 @@ function GmailHarvestModal({ onClose }) {
                 </label>
               );
             })}
-            {!result.candidates.length && (
-              <div style={{ padding: 20, textAlign: 'center', color: BRAND.muted, fontSize: 13 }}>
-                No one new in those messages.
-              </div>
-            )}
           </div>
 
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', alignItems: 'center', marginTop: 14, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 12.5, color: BRAND.muted, marginRight: 'auto' }}>
               {num(picked.size)} ticked — they'll be added as contacts and land on the non-customers list.
             </span>
-            <button className="btn-secondary" onClick={onClose}>Cancel</button>
+            <button className="btn-secondary" onClick={onClose}>Close</button>
             <button className="btn-primary" onClick={importPicked} disabled={importing || !picked.size}>
               {importing ? 'Adding…' : `Add ${num(picked.size)} ${picked.size === 1 ? 'person' : 'people'}`}
             </button>
           </div>
         </>
+      )}
+
+      {run && run.status === 'done' && !state?.people?.length && (
+        <div style={{ padding: 20, textAlign: 'center', color: BRAND.muted, fontSize: 13 }}>
+          Nobody new in those messages.
+        </div>
       )}
     </Modal>
   );

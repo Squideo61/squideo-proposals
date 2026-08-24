@@ -153,6 +153,10 @@
     {
       "path": "/api/crm/cron/campaign-send",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/crm/cron/harvest-sweep",
+      "schedule": "* * * * *"
     }
   ],
   "headers": [

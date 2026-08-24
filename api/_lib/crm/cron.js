@@ -19,6 +19,7 @@ import {
 } from '../course/emails.js';
 import { briefProgress } from '../brief/questions.js';
 import { drainCampaigns } from './campaigns.js';
+import { sweepHarvestRun, requeueStaleHarvestWork } from './gmailHarvest.js';
 import { cronGscSync } from './googleSearch.js';
 import { cronGa4Sync } from './googleAnalytics.js';
 import { captureCostSnapshot } from './costSnapshot.js';
@@ -66,6 +67,7 @@ export async function cronHandler(req, res, action) {
     case 'course-nudges':     return cronCourseNudges(req, res);
     case 'brief-digest':      return cronBriefDigest(res);
     case 'campaign-send':     return cronCampaignSend(res);
+    case 'harvest-sweep':     return cronHarvestSweep(res);
     default:                  return res.status(404).json({ error: 'Unknown cron action: ' + action });
   }
 }
@@ -1313,5 +1315,22 @@ async function cronCampaignSend(res) {
   } catch (err) {
     console.error('[cron campaign-send] failed', err.message);
     return res.status(500).json({ ok: false, error: 'Campaign send failed' });
+  }
+}
+
+// ── Marketing → Email: work through a Gmail harvest sweep ───────────────────
+// Every minute while a sweep is running, idle otherwise. A ten-year mailbox is
+// tens of thousands of messages and can't be read inside one request, so the
+// run is a durable queue and this drains it a batch at a time — the tab that
+// started it can be closed, and a failed invocation just means the next one
+// picks up where it stopped.
+async function cronHarvestSweep(res) {
+  try {
+    await requeueStaleHarvestWork();
+    const result = await sweepHarvestRun({ budgetMs: 40000 });
+    return res.status(200).json(result);
+  } catch (err) {
+    console.error('[cron harvest-sweep] failed', err.message);
+    return res.status(500).json({ ok: false, error: 'Harvest sweep failed' });
   }
 }

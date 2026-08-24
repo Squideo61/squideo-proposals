@@ -755,27 +755,54 @@ export async function campaignsRoute(req, res, id, action, user) {
     return res.status(200).json({ presets: HARVEST_PRESETS });
   }
 
-  // POST /campaigns/harvest — search the mailbox for people who enquired by
-  // email and never reached the CRM. Read-only: returns candidates with their
-  // evidence, imports nothing.
+  // GET /campaigns/harvest/run — the current (or last) sweep and what it has
+  // turned up so far. Polled while one is running.
+  if (id === 'harvest' && action === 'run' && req.method === 'GET') {
+    const { latestHarvestRun, harvestPeople } = await import('./gmailHarvest.js');
+    const run = await latestHarvestRun(user.email);
+    if (!run) return res.status(200).json({ run: null, people: [], counts: null });
+    const found = await harvestPeople(run.id);
+    return res.status(200).json({ run, ...found });
+  }
+
+  // POST /campaigns/harvest — start a sweep of the WHOLE mailbox. Returns as
+  // soon as the run exists; a cron works through it. One batch runs inline so
+  // the first results are on screen immediately.
   if (id === 'harvest' && !action && req.method === 'POST') {
     const query = trimOrNull(req.body?.query);
     if (!query) return res.status(400).json({ error: 'What should I search for?' });
+    const ingest = req.body?.ingest === true;
     try {
-      const { harvestCandidates } = await import('./gmailHarvest.js');
-      const result = await harvestCandidates({
-        userEmail: user.email,
-        query,
-        pageToken: trimOrNull(req.body?.pageToken),
+      const { startHarvestRun, sweepHarvestRun, latestHarvestRun, harvestPeople } = await import('./gmailHarvest.js');
+      const runId = await startHarvestRun({
+        userEmail: user.email, query, ingest, startedBy: user.email,
       });
-      return res.status(200).json(result);
+      // Listing is cheap (500 ids a call), so this first slice usually knows
+      // the full size of the job by the time the request returns.
+      await sweepHarvestRun({ runId, budgetMs: 20000 }).catch((err) => {
+        console.error('[campaigns] inline sweep failed', err.message);
+      });
+      const run = await latestHarvestRun(user.email);
+      const found = await harvestPeople(runId);
+      return res.status(200).json({ run, ...found });
     } catch (err) {
+      if (err.code === 'ALREADY_RUNNING') {
+        return res.status(409).json({ error: 'A sweep is already running — let it finish or stop it first.' });
+      }
       if (err.code === 'NOT_CONNECTED') {
         return res.status(400).json({ error: 'Connect your Gmail account first (Account → Email).' });
       }
-      console.error('[campaigns] harvest failed', err.message, err.detail || '');
+      console.error('[campaigns] harvest failed', err.message);
       return res.status(502).json({ error: err.message || 'Could not search Gmail' });
     }
+  }
+
+  // POST /campaigns/harvest/stop — leave what's been found, stop reading.
+  if (id === 'harvest' && action === 'stop' && req.method === 'POST') {
+    const { cancelHarvestRun, latestHarvestRun } = await import('./gmailHarvest.js');
+    const run = await latestHarvestRun(user.email);
+    if (run) await cancelHarvestRun(run.id);
+    return res.status(200).json({ ok: true, run: await latestHarvestRun(user.email) });
   }
 
   // POST /campaigns/harvest/import — add the ticked people as contacts. A
@@ -785,7 +812,9 @@ export async function campaignsRoute(req, res, id, action, user) {
     const people = Array.isArray(req.body?.people) ? req.body.people : [];
     if (!people.length) return res.status(400).json({ error: 'Nobody selected' });
     const { importCandidates } = await import('./gmailHarvest.js');
-    const result = await importCandidates({ people, importedBy: user.email });
+    const result = await importCandidates({
+      people, importedBy: user.email, runId: trimOrNull(req.body?.runId),
+    });
     return res.status(200).json(result);
   }
 
