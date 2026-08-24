@@ -48,6 +48,7 @@ const CONSENT = {
   soft:         { label: 'Soft opt-in',  bg: '#F1F5F9', ink: BRAND.muted, border: BRAND.border },
   unsubscribed: { label: 'Unsubscribed', bg: '#FEF2F2', ink: '#B91C1C', border: '#FECACA' },
   bounced:      { label: 'Bounced',      bg: '#FFF8EB', ink: '#B45309', border: '#F5C26B' },
+  invalid:      { label: 'Bad address',  bg: '#FEF2F2', ink: '#B91C1C', border: '#FECACA' },
 };
 
 function ConsentBadge({ person }) {
@@ -61,7 +62,9 @@ function ConsentBadge({ person }) {
       : person.status === 'unsubscribed'
         ? `Unsubscribed${person.unsubscribedAt ? ' on ' + fmtDate(person.unsubscribedAt) : ''}`
           + `${person.unsubscribedFrom ? ' via ' + person.unsubscribedFrom : ''}`
-        : 'Their mail server rejected us — the address is off every list';
+        : person.status === 'invalid'
+          ? 'That is not a working email address — it would bounce, so it is off every list until it is corrected'
+          : 'Their mail server rejected us — the address is off every list';
   return (
     <span title={title} style={{
       whiteSpace: 'nowrap', fontSize: 10.5, fontWeight: 700, padding: '1px 7px', borderRadius: 999,
@@ -356,6 +359,8 @@ function ListPreviewModal({ listKey, initialStatus = 'mailable', onClose, onOpen
   const [error, setError] = useState(null);
   const [reload, setReload] = useState(0);
   const [confirmBack, setConfirmBack] = useState(null); // person being put back on
+  const [fixing, setFixing] = useState(false);
+  const [fixReport, setFixReport] = useState(null);
 
   useEffect(() => {
     setData(null);
@@ -370,7 +375,19 @@ function ListPreviewModal({ listKey, initialStatus = 'mailable', onClose, onOpen
     ['soft', 'Soft opt-in', b?.soft],
     ['unsubscribed', 'Unsubscribed', b?.unsubscribed],
     ['bounced', 'Bounced', b?.bounced],
+    ['invalid', 'Bad addresses', b?.invalid],
   ];
+
+  const fixAddresses = async () => {
+    setFixing(true);
+    try {
+      const r = await api.post('/api/crm/campaigns/audience/fix-addresses', {});
+      setFixReport(r);
+      setReload((n) => n + 1);
+      if (r.repaired?.length) showMsg(`Fixed ${r.repaired.length} address${r.repaired.length === 1 ? '' : 'es'}`);
+    } catch (e) { showMsg(e.message || 'Could not check the addresses'); }
+    finally { setFixing(false); }
+  };
 
   const putBackOn = async (person) => {
     try {
@@ -430,6 +447,30 @@ function ListPreviewModal({ listKey, initialStatus = 'mailable', onClose, onOpen
           {status === 'unsubscribed'
             ? 'These people are off every marketing list, whichever email they unsubscribed through — an opt-out applies to everything we send, not just the campaign it came from. Only put someone back on if they have asked you to.'
             : 'Their mail server rejected us. Sending again risks our whole domain being marked as spam, so they stay off until the address is known to work.'}
+        </div>
+      )}
+
+      {status === 'invalid' && (
+        <div style={{
+          fontSize: 12, color: BRAND.ink, marginBottom: 10, lineHeight: 1.55,
+          background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 10, padding: '10px 12px',
+        }}>
+          These aren't working addresses — mostly ones where the label text ran into the address while reading an old
+          notification email (<code>…@gmail.comphone</code>). They're off every list, because an address like that can
+          only bounce. Fixing them reads the original email again where there is one, and repairs the rest where the
+          answer is obvious.
+          <div style={{ marginTop: 8 }}>
+            <button className="btn-primary" onClick={fixAddresses} disabled={fixing}>
+              {fixing ? 'Checking…' : 'Check and fix addresses'}
+            </button>
+          </div>
+          {fixReport && (
+            <div style={{ marginTop: 8, fontSize: 12, color: BRAND.muted, lineHeight: 1.55 }}>
+              Checked {num(fixReport.checked)} · fixed <strong style={{ color: '#15803D' }}>{num(fixReport.repaired?.length || 0)}</strong>
+              {fixReport.unusable?.length ? <> · {num(fixReport.unusable.length)} still need a human</> : null}
+              {fixReport.more ? ' · more to do, press it again' : ''}
+            </div>
+          )}
         </div>
       )}
 

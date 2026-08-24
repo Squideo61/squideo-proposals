@@ -34,6 +34,8 @@
 // missing one is null rather than a parse failure. The only field that
 // actually matters is the email address, and there is a fallback for that too.
 
+import { assessEmail } from './emailAddress.js';
+
 // One label, as a line-anchored pattern: optional emoji/symbol and whitespace,
 // the label, a colon or question mark (as in "Opt In?"), then the value up to
 // the end of the line.
@@ -92,7 +94,11 @@ export function bodyToText(html) {
   return String(html || '')
     .replace(/<\s*(script|style)\b[\s\S]*?<\s*\/\s*\1\s*>/gi, '')
     .replace(/<\s*br\s*\/?>/gi, '\n')
-    .replace(/<\s*\/\s*(p|div|tr|li|h[1-6]|table)\s*>/gi, '\n')
+    // td and th matter as much as the block tags: these templates are often
+    // laid out as a table, and without a break after each cell the whole
+    // enquiry collapses onto one line — which is how an address ended up glued
+    // to the words either side of it.
+    .replace(/<\s*\/\s*(p|div|tr|td|th|li|h[1-6]|table|dt|dd)\s*>/gi, '\n')
     .replace(/<[^>]+>/g, '')
     .replace(/&nbsp;/gi, ' ')
     .replace(/&amp;/gi, '&')
@@ -138,9 +144,30 @@ function parseDate(value) {
 // The bar for "is one of these" is deliberately: it looks like a form
 // notification AND it yielded an email address that isn't one of ours. Anything
 // less would start inventing enquiries out of ordinary correspondence.
+// Put every label at the start of its own line.
+//
+// The line anchors these patterns rely on are only as good as the line breaks
+// in the source, and some of these emails arrive with none — one long run of
+// "Name: Sam Email: sam@x.com Phone: 01482…" where the value for each field
+// swallows everything after it. Breaking before each known label restores the
+// structure the template meant to have, whatever the html did to it.
+export function normaliseLabels(text) {
+  const labels = 'Full Name|Contact Name|Name|Email Address|E-mail|Email|Telephone|Phone Number|Phone|Mobile|Tel'
+    + '|Company Name|Company|Organisation|Organization|Business|Opt In|Opt-In|Marketing|Subscribe'
+    + '|Description|Project Details|Details|Message|Project|Video Length|Duration|Length'
+    + '|Timeline|Timescale|Deadline|Budget|Submitted At|Submitted|Form Session|Session'
+    + '|Uploaded Files|Attachments|Files';
+  return String(text || '')
+    // A label mid-line gets a break in front of it, taking any emoji or symbol
+    // that decorates it along too.
+    .replace(new RegExp(String.raw`(?!^)[^\S\n]*([^\w\s]{0,3}[^\S\n]*(?:${labels})[^\S\n]*[:?])`, 'gi'), '\n$1')
+    .replace(/\n{3,}/g, '\n\n');
+}
+
 export function parseQuoteRequestEmail({ subject, body, html, fallbackAt = null, internalDomains = [] }) {
-  const text = body && body.trim() ? String(body) : bodyToText(html);
-  if (!text || !text.trim()) return null;
+  const raw = body && body.trim() ? String(body) : bodyToText(html);
+  if (!raw || !raw.trim()) return null;
+  const text = normaliseLabels(raw);
 
   const looksRight = SUBJECT_RE.test(String(subject || ''))
     || /CONTACT INFORMATION|PROJECT DETAILS|Opt In/i.test(text);
@@ -148,17 +175,30 @@ export function parseQuoteRequestEmail({ subject, body, html, fallbackAt = null,
 
   const grab = (names) => findField(text, names)?.value ?? null;
 
-  let email = (grab(FIELDS.email) || '').toLowerCase() || null;
-  if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
-    // "Email: Lauren <lauren@tb.co.uk>" and similar.
-    email = (email.match(EMAIL_RE) || [])[0]?.toLowerCase() || null;
-  }
   const isOurs = (addr) => internalDomains.some((d) => String(addr).toLowerCase().endsWith('@' + d));
+  // Every candidate goes through the same gate: valid as-is, or repairable, or
+  // it isn't an address. A run-together value like
+  // "absemailolmazatheartist11@gmail.comphone" matches a naive address pattern
+  // perfectly well, and every one of those is a guaranteed bounce.
+  const usable = (candidate) => {
+    if (!candidate) return null;
+    const { verdict, email: fixed } = assessEmail(candidate);
+    return verdict === 'invalid' ? null : fixed;
+  };
+
+  let email = usable(grab(FIELDS.email));
   if (!email) {
-    // No labelled address: take the first one in the body that isn't ours. This
-    // is what rescues the older template versions.
-    const all = (text.match(EMAIL_RE) || []).map((e) => e.toLowerCase());
-    email = all.find((e) => !isOurs(e)) || null;
+    // The labelled value wasn't usable on its own — pull the addresses out of
+    // it, then out of the whole body, and take the first that survives the gate
+    // and isn't one of ours. This is what rescues the older templates.
+    const pool = [
+      ...((grab(FIELDS.email) || '').match(EMAIL_RE) || []),
+      ...(text.match(EMAIL_RE) || []),
+    ].map((e) => e.toLowerCase());
+    for (const candidate of pool) {
+      const ok = usable(candidate);
+      if (ok && !isOurs(ok)) { email = ok; break; }
+    }
   }
   if (!email || isOurs(email)) return null;
 

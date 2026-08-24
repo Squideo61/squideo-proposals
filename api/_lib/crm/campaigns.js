@@ -37,6 +37,7 @@ import { ensureCourseTables } from '../course/db.js';
 import {
   renderMergeTags, wrapCampaignHtml, htmlToText, stripUnsafeHtml, DEFAULT_CAMPAIGN_BODY,
 } from './campaignHtml.js';
+import { isValidEmail, assessEmail } from './emailAddress.js';
 
 export const AUDIENCES = ['everyone', 'customers', 'non_customers'];
 export const AUDIENCE_LABELS = {
@@ -195,11 +196,18 @@ async function suppressionSourceLabels() {
 // point at, a soft opt-in is a judgement we're relying on, an unsubscribe is a
 // door closed, and a bounce is an address that no longer works.
 export function consentStatus(row) {
+  // Opt-outs are read FIRST, before the address is even examined. Someone who
+  // unsubscribed and whose address is also malformed must show as unsubscribed:
+  // both keep them off the list, but only one of them is a decision they made,
+  // and a formatting problem must never be allowed to hide it.
   if (row.unsubscribed) {
     const bounced = row.suppression_scope === 'all'
       || (row.suppression_reason && row.suppression_reason !== 'unsubscribe');
     return bounced ? 'bounced' : 'unsubscribed';
   }
+  // An address that isn't one can only ever bounce, and bounces are the number
+  // a sending domain is judged on.
+  if (!isValidEmail(row.email)) return 'invalid';
   return row.opted_in ? 'opted_in' : 'soft';
 }
 
@@ -253,7 +261,7 @@ export async function audienceRows(audience = 'everyone', { includeUnsubscribed 
     : (audience === 'non_customers' ? all.filter((r) => !r.isCustomer) : all);
   return includeUnsubscribed
     ? byAudience
-    : byAudience.filter((r) => r.status !== 'unsubscribed' && r.status !== 'bounced');
+    : byAudience.filter((r) => !['unsubscribed', 'bounced', 'invalid'].includes(r.status));
 }
 
 async function queryAudienceRows() {
@@ -396,7 +404,7 @@ async function queryAudienceRows() {
 // why "Everyone" is smaller than the contacts page.
 export async function audienceSummary() {
   const everyone = await allAudienceRows();
-  const mailable = everyone.filter((r) => r.status !== 'unsubscribed' && r.status !== 'bounced');
+  const mailable = everyone.filter((r) => !['unsubscribed', 'bounced', 'invalid'].includes(r.status));
   const customers = mailable.filter((r) => r.isCustomer).length;
   // Counted off the same rows as the lists themselves, so "off the list" and
   // "on the list" always add up to the people we hold. A separate COUNT(*) on
@@ -404,6 +412,7 @@ export async function audienceSummary() {
   // contact record for.
   const unsubscribed = everyone.filter((r) => r.status === 'unsubscribed').length;
   const bounced = everyone.filter((r) => r.status === 'bounced').length;
+  const invalid = everyone.filter((r) => r.status === 'invalid').length;
   return {
     everyone: mailable.length,
     customers,
@@ -411,6 +420,7 @@ export async function audienceSummary() {
     optedIn: mailable.filter((r) => r.optedIn).length,
     unsubscribed,
     bounced,
+    invalid,
     suppressed: unsubscribed + bounced,
   };
 }
@@ -857,6 +867,132 @@ const trimOrNull = (v) => {
   return s || null;
 };
 
+// ── repairing stored addresses ──────────────────────────────────────────────
+// Walks the tables the mailing lists are built from, and fixes what it can.
+// Bounded per call: a re-parse costs a Gmail round trip, and this runs inside a
+// request. `more` tells the caller to press it again.
+const REPARSE_LIMIT = 40;
+
+async function fixStoredAddresses({ userEmail }) {
+  const report = { checked: 0, repaired: [], unusable: [], more: false };
+
+  // Everything the lists read from, with the row's own source of truth where it
+  // has one.
+  const [quotes, contacts, signups] = await Promise.all([
+    sql`SELECT id, email, source_message_id FROM quote_requests
+         WHERE email IS NOT NULL AND COALESCE(status, 'new') <> 'spam'`.catch(() => []),
+    sql`SELECT id, email FROM contacts
+         WHERE email IS NOT NULL AND COALESCE(provisional, FALSE) = FALSE`.catch(() => []),
+    sql`SELECT id, email FROM course_signups WHERE email IS NOT NULL`.catch(() => []),
+  ]);
+
+  const suspect = [];
+  const consider = (table, row) => {
+    report.checked += 1;
+    const assessment = assessEmail(row.email);
+    if (assessment.verdict === 'ok') return;
+    suspect.push({ table, row, assessment });
+  };
+  quotes.forEach((r) => consider('quote_requests', r));
+  contacts.forEach((r) => consider('contacts', r));
+  signups.forEach((r) => consider('course_signups', r));
+  if (!suspect.length) return report;
+
+  // Re-parse from Gmail first, for the rows that can be checked against the
+  // email they came from.
+  let accessToken = null;
+  const reparsable = suspect.filter((s) => s.row.source_message_id).slice(0, REPARSE_LIMIT);
+  report.more = suspect.filter((s) => s.row.source_message_id).length > reparsable.length;
+  if (reparsable.length) {
+    try {
+      const { getFreshAccessToken } = await import('./gmail.js');
+      accessToken = await getFreshAccessToken(userEmail);
+    } catch (err) {
+      console.warn('[campaigns] address repair: no Gmail access', err.message);
+    }
+  }
+
+  for (const item of suspect) {
+    let fixed = null;
+    let how = null;
+
+    if (accessToken && reparsable.includes(item)) {
+      const fromSource = await reparseAddress(item.row.source_message_id, accessToken).catch(() => null);
+      if (fromSource) { fixed = fromSource; how = 'read again from the original email'; }
+    }
+    if (!fixed && item.assessment.verdict === 'repaired') {
+      fixed = item.assessment.email;
+      how = 'repaired the address';
+    }
+
+    if (!fixed) {
+      report.unusable.push({ table: item.table, id: item.row.id, email: item.row.email });
+      continue;
+    }
+    if (fixed === String(item.row.email || '').toLowerCase()) continue;
+
+    // If the broken address was suppressed, the corrected one inherits it.
+    // Otherwise a repair quietly puts somebody who opted out back on the list —
+    // correcting a typo is not consent.
+    try {
+      const [wasSuppressed] = await sql`
+        SELECT scope, reason FROM email_suppressions
+         WHERE email = ${String(item.row.email || '').toLowerCase()}`;
+      if (wasSuppressed) {
+        const { suppress } = await import('../emailSuppression.js');
+        await suppress({
+          email: fixed,
+          scope: wasSuppressed.scope || 'marketing',
+          reason: wasSuppressed.reason || 'unsubscribe',
+          source: 'address-repair',
+        });
+      }
+    } catch (err) {
+      console.warn('[campaigns] could not carry suppression to repaired address', err.message);
+    }
+
+    try {
+      if (item.table === 'quote_requests') {
+        await sql`UPDATE quote_requests SET email = ${fixed} WHERE id = ${item.row.id}`;
+      } else if (item.table === 'contacts') {
+        await sql`UPDATE contacts SET email = ${fixed}, updated_at = NOW() WHERE id = ${item.row.id}`;
+      } else {
+        await sql`UPDATE course_signups SET email = ${fixed} WHERE id = ${item.row.id}`;
+      }
+      report.repaired.push({ table: item.table, id: item.row.id, from: item.row.email, to: fixed, how });
+    } catch (err) {
+      // A unique-index clash means the corrected address is already on file —
+      // the mangled row is a duplicate, not a person we're about to lose.
+      console.warn('[campaigns] could not write repaired address', err.message);
+      report.unusable.push({
+        table: item.table, id: item.row.id, email: item.row.email,
+        note: 'The corrected address is already in the CRM',
+      });
+    }
+  }
+  return report;
+}
+
+// Read the enquiry out of its original notification email again.
+async function reparseAddress(messageId, accessToken) {
+  const url = new URL(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(messageId)}`);
+  url.searchParams.set('format', 'full');
+  const res = await fetch(url.toString(), { headers: { Authorization: 'Bearer ' + accessToken } });
+  if (!res.ok) return null;
+  const msg = await res.json();
+  const { parseQuoteRequestEmail } = await import('./quoteEmailParser.js');
+  const { extractBody, parseHeaders } = await import('../gmailSync.js');
+  const headers = parseHeaders(msg.payload?.headers || []);
+  const { html, text } = extractBody(msg.payload);
+  const parsed = parseQuoteRequestEmail({
+    subject: headers.subject,
+    body: text,
+    html,
+    internalDomains: ['squideo.co.uk', 'squideo.com'],
+  });
+  return parsed?.email || null;
+}
+
 // ── route ───────────────────────────────────────────────────────────────────
 export async function campaignsRoute(req, res, id, action, user) {
   res.setHeader('Cache-Control', 'no-store');
@@ -886,12 +1022,13 @@ export async function campaignsRoute(req, res, id, action, user) {
     // every keystroke.
     const rows = await audienceRows(audience, { includeUnsubscribed: true });
     const counts = q ? null : await audienceSummary();
-    const mailable = rows.filter((r) => r.status !== 'unsubscribed' && r.status !== 'bounced');
+    const mailable = rows.filter((r) => !['unsubscribed', 'bounced', 'invalid'].includes(r.status));
     let shown = status === 'all' ? rows
       : status === 'opted_in' ? mailable.filter((r) => r.optedIn)
       : status === 'soft' ? mailable.filter((r) => !r.optedIn)
       : status === 'unsubscribed' ? rows.filter((r) => r.status === 'unsubscribed')
       : status === 'bounced' ? rows.filter((r) => r.status === 'bounced')
+      : status === 'invalid' ? rows.filter((r) => r.status === 'invalid')
       : mailable;
 
     // Free-text search across the whole list, not just the page on screen —
@@ -913,6 +1050,7 @@ export async function campaignsRoute(req, res, id, action, user) {
         soft: mailable.filter((r) => !r.optedIn).length,
         unsubscribed: rows.filter((r) => r.status === 'unsubscribed').length,
         bounced: rows.filter((r) => r.status === 'bounced').length,
+        invalid: rows.filter((r) => r.status === 'invalid').length,
       },
       shown: shown.length,
       sample: shown.slice(0, 300),
@@ -997,6 +1135,24 @@ export async function campaignsRoute(req, res, id, action, user) {
     });
     // Those people are on the lists as of now, and the screen that just added
     // them is about to ask for the counts.
+    clearAudienceCache();
+    return res.status(200).json(result);
+  }
+
+  // POST /campaigns/audience/fix-addresses — check every stored address and
+  // repair what can be repaired.
+  //
+  // Two mechanisms, strongest first:
+  //   1. RE-PARSE FROM THE ORIGINAL EMAIL. An imported quote request remembers
+  //      the message it came out of, so the true address can be read again with
+  //      a parser that no longer collapses the labels into the value. This is
+  //      evidence, not inference.
+  //   2. REPAIR THE STRING. For rows with no source message, strip the label
+  //      word welded to the address ("…@gmail.comphone"). Conservative: any
+  //      repair that doesn't come out valid is refused, and the row is left for
+  //      a human instead.
+  if (id === 'audience' && action === 'fix-addresses' && req.method === 'POST') {
+    const result = await fixStoredAddresses({ userEmail: user.email });
     clearAudienceCache();
     return res.status(200).json(result);
   }

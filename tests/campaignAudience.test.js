@@ -46,9 +46,23 @@ function stubAudience(rows = PEOPLE) {
 }
 
 describe('what each standing means', () => {
+  const at = (email, rest = {}) => consentStatus({ email, ...rest });
+
   it('separates an explicit tick from the soft opt-in we are relying on', () => {
-    expect(consentStatus({ opted_in: true })).toBe('opted_in');
-    expect(consentStatus({ opted_in: false })).toBe('soft');
+    expect(at('sam@acme.com', { opted_in: true })).toBe('opted_in');
+    expect(at('sam@acme.com', { opted_in: false })).toBe('soft');
+  });
+
+  it('flags an address that could only ever bounce', () => {
+    expect(at('absemailolmazatheartist11@gmail.comphone')).toBe('invalid');
+  });
+
+  it('reads an opt-out before it reads the address', () => {
+    // Both keep someone off the list, but only one is a decision they made — a
+    // formatting problem must never be able to hide an unsubscribe.
+    expect(at('broken@gmail.comphone', {
+      unsubscribed: true, suppression_reason: 'unsubscribe', suppression_scope: 'marketing',
+    })).toBe('unsubscribed');
   });
 
   it('separates an opt-out from an address that stopped working', () => {
