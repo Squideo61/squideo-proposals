@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Ban, Banknote, Coins, Link2, Mail, Pencil, Plus, Trash2 } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Ban, Banknote, Building2, Coins, Link2, Mail, Pencil, Plus, Trash2 } from 'lucide-react';
 import { api } from '../api.js';
 import { permissionsInclude } from '../lib/permissions.js';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { formatGBP, useIsMobile } from '../utils.js';
 import { Modal } from './ui.jsx';
+import { OrgPicker } from './PartnerCreditsView.jsx';
 import { PartnerMeetingsButton } from './PartnerMeetingsButton.jsx';
 
 function fmtCredits(n) {
@@ -115,6 +116,12 @@ export function PartnerCreditDetailView({ clientKey, onBack }) {
               ]))
               .then(() => showMsg('VAT rate saved'))
               .catch((err) => { showMsg(err?.message || 'Could not save'); throw err; })}
+          />
+          <CreditOrgLink
+            clientKey={clientKey}
+            clientName={clientName || clientKey}
+            companies={detail.companies || []}
+            canManage={permissionsInclude(state.session?.permissions, 'finance.manage')}
           />
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -1033,5 +1040,92 @@ function StatusPill({ status }) {
       background: colors.bg,
       color: colors.fg,
     }}>{colors.label}</span>
+  );
+}
+
+// Which organisation this credit belongs to — and therefore whether the client
+// can see it.
+//
+// A partner-credit balance is matched to a CRM organisation by inference
+// (linked proposal, shared Xero contact, matching name). When none of those
+// fire the credit is real here and invisible everywhere the client looks: no
+// balance on the company page, and their portal's Video credit reads "0 min".
+// That failure was silent, and it is the whole reason this row exists — it
+// states the match, and lets it be set by hand when there isn't one.
+function CreditOrgLink({ clientKey, clientName, companies, canManage }) {
+  const { state, actions, showMsg } = useStore();
+  const [picking, setPicking] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  // The explicit link wins if there is one; otherwise show whatever matched.
+  const primary = companies.find(c => c.explicit) || companies[0] || null;
+  const others = companies.filter(c => c !== primary);
+
+  const setCompany = async (companyId) => {
+    setBusy(true);
+    try {
+      await actions.setPartnerCreditCompany(clientKey, companyId);
+      await actions.fetchPartnerCreditDetail(clientKey);
+      showMsg(companyId ? 'Linked — this balance now shows on that company page and in their portal' : 'Unlinked');
+      setPicking(false);
+    } catch (err) {
+      showMsg(err?.message || 'Could not update the link');
+    } finally { setBusy(false); }
+  };
+
+  const wrap = {
+    marginTop: 10, padding: '8px 10px', borderRadius: 8, maxWidth: 520,
+    border: '1px solid ' + (primary ? BRAND.border : '#FDE68A'),
+    background: primary ? BRAND.paper : '#FFFBEB',
+    fontSize: 12.5, color: BRAND.ink,
+  };
+
+  return (
+    <div style={wrap}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        {primary ? <Building2 size={14} color={BRAND.blue} /> : <AlertTriangle size={14} color="#B45309" />}
+        <div style={{ flex: 1, minWidth: 160 }}>
+          {primary ? (
+            <>
+              <strong>{primary.name}</strong>
+              <span style={{ color: BRAND.muted }}>
+                {' · '}matched by {primary.matchedBy.join(' + ') || 'unknown route'}
+                {others.length ? ` · also matches ${others.map(o => o.name).join(', ')}` : ''}
+              </span>
+              <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 2 }}>
+                Their company page and client portal show this balance.
+              </div>
+            </>
+          ) : (
+            <>
+              <strong>Not linked to an organisation.</strong>
+              <div style={{ fontSize: 11.5, color: '#92400E', marginTop: 2 }}>
+                “{clientName}” doesn’t match any CRM organisation, so this balance is invisible on every
+                company page and their portal reads <strong>0 min</strong>. Link it to fix that.
+              </div>
+            </>
+          )}
+        </div>
+        {canManage && !picking && (
+          <button className="btn-ghost" style={{ fontSize: 12 }} disabled={busy} onClick={() => setPicking(true)}>
+            <Link2 size={12} style={{ verticalAlign: -1, marginRight: 4 }} />
+            {primary ? 'Change' : 'Link organisation'}
+          </button>
+        )}
+      </div>
+      {picking && (
+        <div style={{ marginTop: 8 }}>
+          <OrgPicker companies={Object.values(state.companies || {})} onPick={(c) => setCompany(c.id)} />
+          <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+            <button className="btn-ghost" style={{ fontSize: 12 }} disabled={busy} onClick={() => setPicking(false)}>Cancel</button>
+            {primary?.explicit && (
+              <button className="btn-ghost" style={{ fontSize: 12, color: '#B91C1C' }} disabled={busy} onClick={() => setCompany(null)}>
+                Unlink
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

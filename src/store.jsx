@@ -1812,6 +1812,25 @@ export function StoreProvider({ children }) {
           return data;
         });
     },
+    // Bind a credit client to a CRM organisation (or unbind with companyId
+    // null). This is what decides whose company page — and whose client portal
+    // — the balance appears on, so both cached views are dropped afterwards.
+    setPartnerCreditCompany(clientKey, companyId) {
+      return api.post('/api/partner/credit-company', { clientKey, companyId: companyId || null })
+        .then((row) => {
+          // Only the list is dropped — the open detail keeps rendering while the
+          // caller refetches it, rather than blanking to "client not found".
+          setState(s => ({
+            ...s,
+            partnerCreditsList: null,
+            partnerCreditDetail: {
+              ...(s.partnerCreditDetail || {}),
+              [clientKey]: { ...(s.partnerCreditDetail?.[clientKey] || {}), companies: row?.companies || [] },
+            },
+          }));
+          return row;
+        });
+    },
     logAllocation(input) {
       return api.post('/api/partner/allocations', input).then((row) => {
         applyOptimisticAllocationChange(setState, input.clientKey, (allocations) => [row, ...allocations]);

@@ -249,3 +249,80 @@ export async function creditTotalsForKeys(keys) {
     ORDER BY s.any_recurring_active DESC, s.client_name NULLS LAST
   `;
 }
+
+// The reverse of clientKeysForCompany: which company (or companies) does this
+// credit client resolve to, and by which route? The Partners & Credits page
+// needs this to answer "will this balance reach their portal?" — credit that
+// matches no company is invisible on the company page and reads as 0 minutes in
+// the client portal, which is exactly the failure this reports.
+//
+// Deliberately mirrors clientKeysForCompany's routes verbatim (explicit link,
+// proposal → deal, shared Xero contact, normalised name) so the two can't
+// disagree about what is matched.
+export async function companiesForClientKey(clientKey) {
+  if (!clientKey) return [];
+  const byKey = await companyMatchesByClientKey([clientKey]);
+  return byKey.get(clientKey) || [];
+}
+
+// The same match, for many clients at once: the Partners & Credits list uses it
+// to flag balances that reach no organisation at all. `keys` null = every
+// client. Returns a Map of client_key → [{ id, name, explicit, matchedBy }].
+export async function companyMatchesByClientKey(keys = null) {
+  await ensureCreditCompanyLink().catch(() => {});
+  const k = keys && keys.length ? keys : null;
+  // Both sides are normalised once in a CTE rather than inside the join
+  // condition: this is a cross-join between every credit client and every
+  // company, so a per-pair regexp_replace would run it hundreds of thousands of
+  // times to answer one page load.
+  const rows = await sql`
+    WITH subs AS (
+      SELECT ps.client_key,
+             ps.company_id,
+             ps.xero_contact_id,
+             d.company_id AS deal_company_id,
+             regexp_replace(LOWER(COALESCE(ps.client_name, '')), '[^a-z0-9]', '', 'g') AS norm_name
+        FROM partner_subscriptions ps
+        LEFT JOIN proposals p ON p.id = ps.proposal_id
+        LEFT JOIN deals d ON d.id = p.deal_id
+       WHERE (${k}::text[] IS NULL OR ps.client_key = ANY(${k}::text[]))
+    ),
+    cos AS (
+      SELECT c.id, c.name, c.xero_contact_id,
+             NULLIF(regexp_replace(LOWER(COALESCE(c.name, '')), '[^a-z0-9]', '', 'g'), '') AS norm_name
+        FROM companies c
+    )
+    SELECT s.client_key, c.id, c.name,
+           BOOL_OR(s.company_id = c.id)                                  AS by_link,
+           BOOL_OR(s.company_id IS NULL AND s.deal_company_id = c.id)    AS by_proposal,
+           BOOL_OR(s.company_id IS NULL AND c.xero_contact_id IS NOT NULL
+                   AND s.xero_contact_id = c.xero_contact_id)            AS by_xero,
+           BOOL_OR(s.company_id IS NULL AND s.norm_name = c.norm_name)   AS by_name
+      FROM subs s
+      JOIN cos c ON (
+            s.company_id = c.id
+         OR (s.company_id IS NULL AND (
+              s.deal_company_id = c.id
+              OR (c.xero_contact_id IS NOT NULL AND s.xero_contact_id = c.xero_contact_id)
+              OR s.norm_name = c.norm_name
+            ))
+      )
+     GROUP BY s.client_key, c.id, c.name
+  `.catch(() => []);
+  const out = new Map();
+  for (const r of rows) {
+    if (!out.has(r.client_key)) out.set(r.client_key, []);
+    out.get(r.client_key).push({
+      id: r.id,
+      name: r.name,
+      explicit: r.by_link === true,
+      matchedBy: [
+        r.by_link && 'explicit link',
+        r.by_proposal && 'linked proposal',
+        r.by_xero && 'shared Xero contact',
+        r.by_name && 'name match',
+      ].filter(Boolean),
+    });
+  }
+  return out;
+}

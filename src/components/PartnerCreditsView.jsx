@@ -182,7 +182,20 @@ export function PartnerCreditsView({ onBack, onOpen, onOpenDeal }) {
                       onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
                     >
                       <td style={{ padding: '12px 8px' }}>
-                        <div style={{ fontWeight: 600 }}>{row.clientName || row.clientKey}</div>
+                        <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                          {row.clientName || row.clientKey}
+                          {/* A balance that belongs to no organisation shows on
+                              no company page and reads as 0 min in the client's
+                              portal. Flag it here rather than letting it be
+                              discovered by a client asking where their credit
+                              went. */}
+                          {!row.company && Number(row.creditsRemaining) > 0 && (
+                            <span
+                              title="This balance isn’t linked to an organisation, so it doesn’t show on a company page or in the client’s portal. Open the client to link it."
+                              style={{ fontSize: 10.5, fontWeight: 700, padding: '1px 6px', borderRadius: 999, background: '#FFFBEB', color: '#B45309', border: '1px solid #FDE68A' }}
+                            >No organisation</span>
+                          )}
+                        </div>
                         <div style={{ fontSize: 11, color: BRAND.muted }}>
                           {row.status === 'active'
                             ? `${row.subscriptions.active} active / ${row.subscriptions.count} subscription${row.subscriptions.count === 1 ? '' : 's'}`
@@ -556,6 +569,10 @@ function AddManualClientModal({ onClose, onCreated, showMsg, createManualSubscri
         };
       }
       if (xeroContactId) payload.xeroContactId = xeroContactId;
+      // Bind the credit to the organisation that was picked. Sending only the
+      // Xero contact left the balance attached to nothing but a name, so it
+      // never reached their company page or their portal.
+      if (org?.id) payload.companyId = org.id;
       const row = await createManualSubscription(payload);
       onCreated(row?.clientKey);
     } catch (err) {
@@ -588,7 +605,7 @@ function AddManualClientModal({ onClose, onCreated, showMsg, createManualSubscri
             >Credits only</button>
           </div>
         </Field>
-        <Field label="Organisation" hint="Pick an existing organisation to link this client — a Xero-linked org syncs automatically. Or leave blank and type a one-off name below.">
+        <Field label="Organisation" hint="Pick an existing organisation to link this client — their balance then shows on that company page and in their client portal, and a Xero-linked org syncs automatically. Or leave blank and type a one-off name below.">
           {org ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', border: '1px solid ' + BRAND.border, borderRadius: 8, background: BRAND.paper }}>
               <Building2 size={15} color={BRAND.blue} style={{ flexShrink: 0 }} />
@@ -834,7 +851,7 @@ function DealPicker({ deals, companies, onPick }) {
 
 // Searchable dropdown over the CRM organisations already loaded in state.
 // Flags which orgs are Xero-linked so it's obvious which will auto-sync.
-function OrgPicker({ companies, onPick }) {
+export function OrgPicker({ companies, onPick }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const ref = useRef(null);

@@ -3,6 +3,7 @@
 //   GET    /api/partner/credits                                 — list of clients with totals
 //   GET    /api/partner/clients?key=…                           — per-client detail
 //   POST   /api/partner/allocations                             — log work / adjustment
+//   POST   /api/partner/credit-company                          — bind a credit client to a CRM organisation
 //   DELETE /api/partner/allocations?id=…                        — remove an allocation
 //   POST   /api/partner/subscriptions                           — create a manual subscription
 //   PATCH  /api/partner/subscriptions?id=<stripe_subscription_id>  — update manual subscription
@@ -15,7 +16,10 @@ import { cors, requireAuth } from '../_lib/middleware.js';
 import { getRole } from '../_lib/userRoles.js';
 import { hasPermission } from '../_lib/permissions.js';
 import { notifyPpMarkedPaid } from '../_lib/crm/stats.js';
-import { creditTotalsForKeys } from '../_lib/partnerCredits.js';
+import {
+  creditTotalsForKeys, companiesForClientKey, companyMatchesByClientKey,
+  setCreditClientCompany, ensureCreditCompanyLink,
+} from '../_lib/partnerCredits.js';
 import { archiveRecord } from '../_lib/crm/recycleBin.js';
 
 export default async function handler(req, res) {
@@ -92,6 +96,18 @@ export default async function handler(req, res) {
     if (action === 'mark-fee-paid') {
       if (req.method !== 'POST') return res.status(405).end();
       return await markFeePaid(req, res, user);
+    }
+
+    // Bind (or unbind) this credit client to a CRM organisation. The same write
+    // as the company page's "Link credit", exposed here because this is where
+    // the balance is actually looked at — and an unbound balance is one the
+    // client's portal reads as 0.
+    if (action === 'credit-company') {
+      if (req.method !== 'POST') return res.status(405).end();
+      if (!hasPermission(await getRole(user.role), 'finance.manage')) {
+        return res.status(403).json({ error: 'You don’t have permission to manage credits' });
+      }
+      return await setCreditCompany(req, res);
     }
 
     return res.status(404).json({ error: 'Unknown action' });
@@ -290,6 +306,11 @@ async function listCredits(res) {
     r.client_key, (r.n === 1 && r.all_manual) ? r.only_sub : null,
   ]));
 
+  // Which organisation each balance belongs to. A client that matches none is
+  // the silent failure worth flagging in the list: the credit is real here but
+  // shows nowhere the client can see it, including their portal.
+  const companyByClient = await companyMatchesByClientKey(null).catch(() => new Map());
+
   const list = rows.map(r => {
     const creditsRemaining = Number(r.credits_remaining) || 0;
     const fee = feeByClient.get(r.client_key) || { exVat: 0, credits: 0 };
@@ -309,9 +330,12 @@ async function listCredits(res) {
     // This month already marked paid → collected, so nothing's outstanding now.
     const paidThisMonth = paidByClient.has(r.client_key);
     const outstanding = paidThisMonth ? 0 : baseOutstanding;
+    const matchedCompanies = companyByClient.get(r.client_key) || [];
+    const company = matchedCompanies.find(c => c.explicit) || matchedCompanies[0] || null;
     return {
       clientKey: r.client_key,
       clientName: r.client_name,
+      company: company ? { id: company.id, name: company.name } : null,
       manualSubId: manualSubByClient.get(r.client_key) || null,
       subscriptions: { count: r.sub_count, active: r.sub_active_count },
       creditsIssued: Number(r.credits_issued) || 0,
@@ -568,6 +592,36 @@ async function clientDetail(res, key) {
     payments,
     allocations: allocationList,
     totals: { issued, used, remaining, usagePct },
+    // Which organisation this balance belongs to — i.e. whose company page and
+    // client portal it shows up on. Empty means nobody's: the credit exists
+    // here and reads as 0 minutes everywhere the client can see it.
+    companies: await companiesForClientKey(key).catch(() => []),
+  });
+}
+
+// POST /api/partner/credit-company { clientKey, companyId }
+// companyId null/'' unbinds, which drops the client back to the name/Xero/
+// proposal heuristics rather than leaving it attached to the wrong org.
+async function setCreditCompany(req, res) {
+  let body = req.body;
+  if (typeof body === 'string') { try { body = JSON.parse(body); } catch { body = {}; } }
+  body = body || {};
+
+  const clientKey = (body.clientKey || '').trim();
+  if (!clientKey) return res.status(400).json({ error: 'clientKey required' });
+  const companyId = body.companyId ? String(body.companyId).trim() : null;
+
+  if (companyId) {
+    const [co] = await sql`SELECT id FROM companies WHERE id = ${companyId}`;
+    if (!co) return res.status(404).json({ error: 'That organisation no longer exists' });
+  }
+
+  const n = await setCreditClientCompany(clientKey, companyId);
+  if (!n) return res.status(404).json({ error: 'That credit client no longer exists' });
+  return res.status(200).json({
+    ok: true,
+    clientKey,
+    companies: await companiesForClientKey(clientKey).catch(() => []),
   });
 }
 
@@ -682,6 +736,17 @@ async function createManualSubscription(req, res) {
     if (!xc) xeroContactId = null;
   }
 
+  // The CRM organisation this credit belongs to, when one was picked. Recording
+  // it is what makes the balance show on the company page and in the client's
+  // portal: without it we're left inferring the owner from the client's name,
+  // which quietly fails whenever the two aren't spelled the same way.
+  let companyId = body.companyId ? String(body.companyId).trim() : null;
+  if (companyId) {
+    const [co] = await sql`SELECT id FROM companies WHERE id = ${companyId}`;
+    if (!co) companyId = null;
+    else await ensureCreditCompanyLink().catch(() => { companyId = null; });
+  }
+
   const subId = newManualSubId();
 
   await sql`
@@ -692,6 +757,15 @@ async function createManualSubscription(req, res) {
       (${subId}, NULL, ${clientKey}, ${clientName},
        ${creditsPerMonth}, 'active', ${startDate}, ${autoCredit}, ${xeroContactId})
   `;
+
+  if (companyId) {
+    // Separate statement so a workspace whose company_id column hasn't been
+    // added yet still gets the subscription itself.
+    await sql`
+      UPDATE partner_subscriptions SET company_id = ${companyId}
+       WHERE stripe_subscription_id = ${subId}
+    `.catch((err) => console.warn('[partner] company link on create failed', err.message));
+  }
 
   if (Number.isFinite(initialBalance) && initialBalance !== 0) {
     await sql`
