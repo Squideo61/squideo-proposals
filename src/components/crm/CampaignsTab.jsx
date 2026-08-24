@@ -156,6 +156,9 @@ export function CampaignsTab({ onOpenContact }) {
         counts={data?.counts || null}
         onClose={() => { setOpenId(null); setEditing(false); load(); }}
         onOpenContact={onOpenContact}
+        // A duplicate opens straight into its own editor — the point of
+        // copying one is to change it.
+        onOpenCampaign={(id) => { setOpenId(id); setEditing(true); load(); }}
       />
     );
   }
@@ -563,7 +566,7 @@ function ListPreviewModal({ listKey, initialStatus = 'mailable', onClose, onOpen
 }
 
 // ── one campaign: composer + report ─────────────────────────────────────────
-function CampaignDetail({ campaignId, startEditing, counts, onClose, onOpenContact }) {
+function CampaignDetail({ campaignId, startEditing, counts, onClose, onOpenContact, onOpenCampaign }) {
   const { showMsg } = useStore();
   const isMobile = useIsMobile();
   const [state, setState] = useState(null);        // { campaign, stats, links, recipients }
@@ -630,6 +633,10 @@ function CampaignDetail({ campaignId, startEditing, counts, onClose, onOpenConta
             onOpenContact={onOpenContact}
             isMobile={isMobile}
             showMsg={showMsg}
+            // A reopened campaign is a draft again — drop straight into editing
+            // it, which is what reopening was for.
+            onReopened={() => setEditing(true)}
+            onOpenCampaign={onOpenCampaign}
           />
         )}
     </div>
@@ -1297,7 +1304,7 @@ function SendConfirmModal({ campaignId, audience, excluded = 0, speed = null, on
 }
 
 // ── report ──────────────────────────────────────────────────────────────────
-function CampaignReport({ state, onReload, onOpenContact, isMobile, showMsg }) {
+function CampaignReport({ state, onReload, onOpenContact, isMobile, showMsg, onReopened, onOpenCampaign }) {
   const { campaign, stats, links } = state;
   const [filter, setFilter] = useState('all');
   const [recipients, setRecipients] = useState(state.recipients || []);
@@ -1319,7 +1326,20 @@ function CampaignReport({ state, onReload, onOpenContact, isMobile, showMsg }) {
     try {
       await api.post(`/api/crm/campaigns/${campaign.id}/${action}`, {});
       await onReload();
+      if (action === 'reopen') onReopened?.();
     } catch (e) { showMsg(e.message || 'That did not work'); }
+    finally { setBusy(false); }
+  };
+
+  const duplicate = async () => {
+    setBusy(true);
+    try {
+      const r = await api.post(`/api/crm/campaigns/${campaign.id}/duplicate`, {});
+      showMsg(r.alreadySent
+        ? `Copied — the ${num(r.alreadySent)} who already had it are left out`
+        : 'Copied to a new draft');
+      onOpenCampaign?.(r.campaign.id);
+    } catch (e) { showMsg(e.message || 'Could not duplicate it'); }
     finally { setBusy(false); }
   };
 
@@ -1345,6 +1365,42 @@ function CampaignReport({ state, onReload, onOpenContact, isMobile, showMsg }) {
           <div style={{ height: 8, borderRadius: 999, background: BRAND.paper, overflow: 'hidden' }}>
             <div style={{ width: progress + '%', height: '100%', background: BRAND.blue, transition: 'width .4s ease' }} />
           </div>
+        </div>
+      )}
+
+      {/* A cancelled campaign was a dead end: the work was still there but
+          there was no way back to it. Which way forward depends entirely on
+          whether anybody actually received it. */}
+      {campaign.status === 'cancelled' && (
+        <div style={{
+          background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 12,
+          padding: 14, marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap',
+        }}>
+          <span style={{ fontSize: 13.5, color: BRAND.ink, lineHeight: 1.5 }}>
+            {stats?.sent
+              ? <>Cancelled after <strong>{num(stats.sent)}</strong> {stats.sent === 1 ? 'person' : 'people'} received it.
+                  Editing now would mean two versions of the same email — duplicate it instead and they'll be left out
+                  of the copy.</>
+              : <>Cancelled before anything went out, so nothing was lost — reopen it to carry on editing.</>}
+          </span>
+          <div style={{ flex: 1 }} />
+          {!stats?.sent && (
+            <button className="btn-primary" disabled={busy} onClick={() => control('reopen')}>
+              Reopen and edit
+            </button>
+          )}
+          <button className="btn-secondary" disabled={busy} onClick={duplicate}>
+            Duplicate
+          </button>
+        </div>
+      )}
+
+      {/* A finished campaign is the other place people want to start from. */}
+      {campaign.status === 'sent' && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+          <button className="btn-secondary" disabled={busy} onClick={duplicate}>
+            Duplicate for a follow-up
+          </button>
         </div>
       )}
 

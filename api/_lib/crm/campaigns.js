@@ -1469,6 +1469,85 @@ export async function campaignsRoute(req, res, id, action, user) {
     return res.status(200).json(serialiseCampaign(row));
   }
 
+  // POST /campaigns/:id/reopen — put a cancelled campaign back to a draft.
+  //
+  // Only when nothing actually went out. Cancelling before the first batch is
+  // almost always "wait, I need to change something", and leaving that as a
+  // dead end forces people to retype the whole email. But once even one person
+  // has it, editing is no longer honest: two different versions of the same
+  // campaign would exist under one report, and re-sending would post it to
+  // those people twice. That case duplicates instead.
+  if (action === 'reopen' && req.method === 'POST') {
+    if (campaign.status !== 'cancelled' && campaign.status !== 'paused') {
+      return res.status(409).json({ error: 'Only a cancelled or paused campaign can be reopened' });
+    }
+    const [{ n: alreadySent }] = await sql`
+      SELECT COUNT(*)::int AS n FROM email_campaign_recipients
+       WHERE campaign_id = ${id} AND status = 'sent'`;
+    if (alreadySent > 0) {
+      return res.status(409).json({
+        error: `${alreadySent} ${alreadySent === 1 ? 'person has' : 'people have'} already received this one — duplicate it instead, and they'll be left out of the copy.`,
+        code: 'ALREADY_SENT',
+        alreadySent,
+      });
+    }
+    // The recipient snapshot goes too: the list may have changed since, and a
+    // reopened draft should send to the list as it is when it finally goes.
+    await sql`DELETE FROM email_campaign_recipients WHERE campaign_id = ${id}`;
+    await sql`
+      UPDATE email_campaigns
+         SET status = 'draft', started_at = NULL, completed_at = NULL,
+             scheduled_at = NULL, updated_at = NOW()
+       WHERE id = ${id}`;
+    const [row] = await sql`SELECT * FROM email_campaigns WHERE id = ${id}`;
+    return res.status(200).json(serialiseCampaign(row));
+  }
+
+  // POST /campaigns/:id/duplicate — a fresh draft with the same content.
+  //
+  // The way to change a campaign that has already reached somebody. Anyone who
+  // received the original is carried over as an exclusion by default, because
+  // the one thing worse than a cancelled send is the same person getting it
+  // twice.
+  if (action === 'duplicate' && req.method === 'POST') {
+    const newId = makeId('camp');
+    const suffix = campaign.name.match(/\(copy( \d+)?\)$/i) ? '' : ' (copy)';
+    await sql`
+      INSERT INTO email_campaigns
+        (id, name, audience, subject, preheader, body_html, reply_to,
+         hourly_cap, daily_cap, created_by)
+      VALUES (${newId}, ${campaign.name + suffix}, ${campaign.audience}, ${campaign.subject},
+              ${campaign.preheader || null}, ${campaign.bodyHtml}, ${campaign.replyTo},
+              ${campaign.hourlyCap}, ${campaign.dailyCap}, ${user.email})`;
+
+    // Carry the original's own exclusions — they were decisions about these
+    // people, not about that send.
+    const previous = await campaignExclusions(id);
+    const carried = previous.map((e) => e.email);
+
+    const excludeSent = req.body?.excludeAlreadySent !== false;
+    const sentTo = excludeSent
+      ? (await sql`SELECT email FROM email_campaign_recipients
+                    WHERE campaign_id = ${id} AND status = 'sent'`).map((r) => r.email)
+      : [];
+
+    const all = [...new Set([...carried, ...sentTo])];
+    if (all.length) {
+      await batchWrite(all.map((email) => sql`
+        INSERT INTO email_campaign_exclusions (campaign_id, email, reason, created_by)
+        VALUES (${newId}, ${email},
+                ${sentTo.includes(email) ? 'Already received the original' : 'Excluded from the original'},
+                ${user.email})
+        ON CONFLICT (campaign_id, email) DO NOTHING`));
+    }
+    const [row] = await sql`SELECT * FROM email_campaigns WHERE id = ${newId}`;
+    return res.status(201).json({
+      campaign: serialiseCampaign(row),
+      excluded: all.length,
+      alreadySent: sentTo.length,
+    });
+  }
+
   // GET /campaigns/:id/recipients?filter=opened|clicked|unopened|failed
   if (action === 'recipients' && req.method === 'GET') {
     const recipients = await campaignRecipients(id, { filter: req.query.filter || 'all' });
