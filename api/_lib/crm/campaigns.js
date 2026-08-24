@@ -925,6 +925,45 @@ export async function campaignStats(campaignId) {
   };
 }
 
+// Bounce rate by how old the address is.
+//
+// "Cut the old ones" is only advice until you can see WHERE the dead addresses
+// actually are. This puts a number on each year, so the cutoff is a decision
+// made on evidence from this very send rather than a guess: if 2018 bounces at
+// 40% and 2023 at 1%, the line draws itself.
+//
+// Read-only, and only over recipients this campaign has already tried.
+export async function bounceByAge(campaignId) {
+  const rows = await sql`
+    SELECT EXTRACT(YEAR FROM q.last_at)::int AS year,
+           COUNT(*)::int AS attempted,
+           COUNT(*) FILTER (WHERE r.bounce_kind = 'hard')::int AS bounced
+      FROM email_campaign_recipients r
+      LEFT JOIN LATERAL (
+        SELECT MAX(q2.created_at) AS last_at
+          FROM quote_requests q2
+         WHERE LOWER(TRIM(q2.email)) = r.email
+           AND COALESCE(q2.status, 'new') <> 'spam'
+      ) q ON TRUE
+     WHERE r.campaign_id = ${campaignId}
+       AND (r.status IN ('sent', 'bounced') OR r.bounced_at IS NOT NULL)
+     GROUP BY 1
+     ORDER BY 1
+  `.catch((err) => {
+    console.warn('[campaigns] bounce-by-age failed', err.message);
+    return [];
+  });
+
+  return rows.map((r) => ({
+    // NULL year = no enquiry on record. Reported as its own row rather than
+    // folded in: it's a different question, and often a different answer.
+    year: r.year ?? null,
+    attempted: r.attempted || 0,
+    bounced: r.bounced || 0,
+    rate: r.attempted ? Math.round((r.bounced / r.attempted) * 1000) / 10 : 0,
+  }));
+}
+
 async function campaignLinks(campaignId) {
   const rows = await sql`
     SELECT e.link_url AS url,
@@ -1533,7 +1572,10 @@ export async function campaignsRoute(req, res, id, action, user) {
     //
     // The boolean only; the secret itself never leaves the server.
     const bounceTracking = !!process.env.RESEND_WEBHOOK_SECRET;
-    return res.status(200).json({ campaign, stats, links, recipients, pace, bounceTracking });
+    // Only worth computing once something has actually bounced — otherwise it's
+    // a table of zeroes taking up the most valuable part of the report.
+    const bounceAges = stats?.bounced > 0 ? await bounceByAge(id).catch(() => []) : [];
+    return res.status(200).json({ campaign, stats, links, recipients, pace, bounceTracking, bounceAges });
   }
 
   // PATCH /campaigns/:id — edit a draft. A campaign that has started is frozen:

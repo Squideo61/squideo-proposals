@@ -1418,7 +1418,7 @@ function SendConfirmModal({ campaignId, audience, excluded = 0, speed = null, on
 
 // ── report ──────────────────────────────────────────────────────────────────
 function CampaignReport({ state, onReload, onOpenContact, isMobile, showMsg, onReopened, onOpenCampaign }) {
-  const { campaign, stats, links, pace, bounceTracking } = state;
+  const { campaign, stats, links, pace, bounceTracking, bounceAges } = state;
   const [filter, setFilter] = useState('all');
   const [recipients, setRecipients] = useState(state.recipients || []);
   const [busy, setBusy] = useState(false);
@@ -1611,6 +1611,49 @@ function CampaignReport({ state, onReload, onOpenContact, isMobile, showMsg, onR
           muted={bounceTracking === false}
         />
       </div>
+
+      {/* Where the dead addresses actually are. A bounce rate on its own says
+          "something is wrong"; this says which part of the list is wrong, which
+          is the difference between guessing at a cutoff and knowing one. */}
+      {bounceAges?.length > 1 && (
+        <div style={{
+          background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 12,
+          padding: 16, marginBottom: 20,
+        }}>
+          <div style={{ fontSize: 13.5, fontWeight: 700, color: '#B91C1C', marginBottom: 4 }}>
+            Where the bounces are coming from
+          </div>
+          <div style={{ fontSize: 12.5, color: BRAND.muted, marginBottom: 12, lineHeight: 1.5 }}>
+            By the year each address last enquired. Anything over 2% is a problem; the years above that are the ones
+            to leave out of the next send.
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {bounceAges.map((b) => {
+              const bad = b.rate >= 5;
+              const warn = b.rate >= 2 && b.rate < 5;
+              return (
+                <div key={b.year ?? 'unknown'} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5 }}>
+                  <span style={{ width: 74, flexShrink: 0, fontWeight: 700, color: BRAND.ink }}>
+                    {b.year ?? 'No date'}
+                  </span>
+                  <span style={{ flex: 1, minWidth: 60, height: 8, background: 'white', borderRadius: 999, overflow: 'hidden', border: '1px solid ' + BRAND.border }}>
+                    <span style={{
+                      display: 'block', height: '100%', width: Math.min(100, b.rate) + '%',
+                      background: bad ? '#B91C1C' : (warn ? '#F59E0B' : '#15803D'),
+                    }} />
+                  </span>
+                  <span style={{ width: 52, textAlign: 'right', fontWeight: 700, color: bad ? '#B91C1C' : (warn ? '#B45309' : '#15803D') }}>
+                    {b.rate.toFixed(1)}%
+                  </span>
+                  <span style={{ width: 108, textAlign: 'right', color: BRAND.muted }}>
+                    {num(b.bounced)} of {num(b.attempted)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'flex-start' }}>
         {/* What people clicked. */}
