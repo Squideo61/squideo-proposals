@@ -124,15 +124,52 @@ async function ensureAudienceSources() {
   ]);
 }
 
+// Where an unsubscribe came from. The suppression row's `source` is whatever
+// list name was baked into the unsubscribe link, so it says which email lost
+// them — but `campaign:camp_abc123` means nothing to a person reading it.
+async function suppressionSourceLabels() {
+  const labels = {
+    'one-click': 'a one-click unsubscribe',
+    email: 'an unsubscribe link',
+    course: 'the video guide emails',
+    brief: 'the brief-builder emails',
+    'campaign-test': 'a test send',
+    marketing: 'a marketing email',
+  };
+  try {
+    const rows = await sql`SELECT id, name FROM email_campaigns`;
+    rows.forEach((r) => { labels['campaign:' + r.id] = r.name; });
+  } catch { /* campaign table may not exist yet */ }
+  return labels;
+}
+
+// One person's standing with us, as one word. Four states rather than a boolean
+// because they call for different things: an explicit tick is evidence we can
+// point at, a soft opt-in is a judgement we're relying on, an unsubscribe is a
+// door closed, and a bounce is an address that no longer works.
+export function consentStatus(row) {
+  if (row.unsubscribed) {
+    const bounced = row.suppression_scope === 'all'
+      || (row.suppression_reason && row.suppression_reason !== 'unsubscribe');
+    return bounced ? 'bounced' : 'unsubscribed';
+  }
+  return row.opted_in ? 'opted_in' : 'soft';
+}
+
 // ── the mailing lists ───────────────────────────────────────────────────────
 // One query builds all three lists; `audience` only filters the result. That is
 // deliberate — three separate queries would eventually disagree about what a
 // customer is, and the count on the button would stop matching the people who
 // actually receive the email.
 //
-// Excluded here rather than at send time, so the counts on screen are the
-// truth: our own staff addresses, and anyone on the suppression list.
-export async function audienceRows(audience = 'everyone') {
+// Unsubscribed people are FETCHED but not returned by default. They have to be
+// visible somewhere: an unsubscribe applies across everything we send, so
+// someone who opts out of one campaign vanishes from every other list too, and
+// a person quietly disappearing with no way to see why or when is how you end
+// up emailing them again by hand and getting a complaint. `includeUnsubscribed`
+// is what the UI uses to show them, clearly marked, without ever putting them
+// in a send.
+export async function audienceRows(audience = 'everyone', { includeUnsubscribed = false } = {}) {
   await ensureAudienceSources();
   const rows = await sql`
     WITH won AS (
@@ -178,14 +215,31 @@ export async function audienceRows(audience = 'everyone') {
        ORDER BY email, is_customer DESC, pref ASC
     )
     SELECT d.email, d.name, COALESCE(co.name, d.company_name) AS company_name,
-           d.contact_id, d.company_id, d.is_customer
+           d.contact_id, d.company_id, d.is_customer,
+           -- The explicit tick, where there is one. Only the lead-magnet forms
+           -- ask for it, so most contacts are on the soft opt-in basis instead
+           -- — which the UI says out loud rather than implying consent we were
+           -- never given.
+           COALESCE(cs.marketing_consent, FALSE) AS opted_in,
+           cs.consent_at, cs.consent_source, cs.consent_text,
+           (s.email IS NOT NULL) AS unsubscribed,
+           s.created_at AS unsubscribed_at, s.reason AS suppression_reason,
+           s.source AS suppression_source, s.scope AS suppression_scope
       FROM dedup d
       LEFT JOIN companies co ON co.id = d.company_id
+      LEFT JOIN LATERAL (
+        SELECT cs2.marketing_consent, cs2.consent_at, cs2.consent_source, cs2.consent_text
+          FROM course_signups cs2
+         WHERE LOWER(TRIM(cs2.email)) = d.email
+         ORDER BY cs2.marketing_consent DESC, cs2.consent_at DESC NULLS LAST
+         LIMIT 1
+      ) cs ON TRUE
+      LEFT JOIN email_suppressions s ON s.email = d.email
      WHERE d.email NOT ILIKE '%@squideo.co.uk'
        AND d.email NOT ILIKE '%@squideo.com'
-       AND NOT EXISTS (SELECT 1 FROM email_suppressions s WHERE s.email = d.email)
      ORDER BY d.is_customer DESC, d.email
   `;
+  const labels = await suppressionSourceLabels();
   const all = rows.map((r) => ({
     email: r.email,
     name: r.name || null,
@@ -193,28 +247,47 @@ export async function audienceRows(audience = 'everyone') {
     contactId: r.contact_id || null,
     companyId: r.company_id || null,
     isCustomer: !!r.is_customer,
+    status: consentStatus(r),
+    optedIn: !!r.opted_in,
+    consentAt: r.consent_at || null,
+    consentSource: r.consent_source || null,
+    consentText: r.consent_text || null,
+    unsubscribedAt: r.unsubscribed_at || null,
+    // Which email they unsubscribed from, in words. "They left via the August
+    // newsletter" is a fact you can act on; "campaign:camp_a91f" is not.
+    unsubscribedFrom: r.suppression_source
+      ? (labels[r.suppression_source] || r.suppression_source)
+      : null,
   }));
-  if (audience === 'customers') return all.filter((r) => r.isCustomer);
-  if (audience === 'non_customers') return all.filter((r) => !r.isCustomer);
-  return all;
+  const byAudience = audience === 'customers'
+    ? all.filter((r) => r.isCustomer)
+    : (audience === 'non_customers' ? all.filter((r) => !r.isCustomer) : all);
+  return includeUnsubscribed
+    ? byAudience
+    : byAudience.filter((r) => r.status !== 'unsubscribed' && r.status !== 'bounced');
 }
 
 // Counts for the three list cards, plus how many people the suppression list is
 // holding back. That last number is worth showing — it's the one that explains
 // why "Everyone" is smaller than the contacts page.
 export async function audienceSummary() {
-  const all = await audienceRows('everyone');
-  const customers = all.filter((r) => r.isCustomer).length;
-  let suppressed = 0;
-  try {
-    const [row] = await sql`SELECT COUNT(*)::int AS n FROM email_suppressions`;
-    suppressed = row?.n || 0;
-  } catch { /* table may not exist yet */ }
+  const everyone = await audienceRows('everyone', { includeUnsubscribed: true });
+  const mailable = everyone.filter((r) => r.status !== 'unsubscribed' && r.status !== 'bounced');
+  const customers = mailable.filter((r) => r.isCustomer).length;
+  // Counted off the same rows as the lists themselves, so "off the list" and
+  // "on the list" always add up to the people we hold. A separate COUNT(*) on
+  // the suppression table wouldn't: it also holds addresses we've never had a
+  // contact record for.
+  const unsubscribed = everyone.filter((r) => r.status === 'unsubscribed').length;
+  const bounced = everyone.filter((r) => r.status === 'bounced').length;
   return {
-    everyone: all.length,
+    everyone: mailable.length,
     customers,
-    non_customers: all.length - customers,
-    suppressed,
+    non_customers: mailable.length - customers,
+    optedIn: mailable.filter((r) => r.optedIn).length,
+    unsubscribed,
+    bounced,
+    suppressed: unsubscribed + bounced,
   };
 }
 
@@ -494,6 +567,12 @@ async function campaignRecipients(campaignId, { filter = 'all', limit = 1000 } =
   const rows = await sql`
     SELECT r.id, r.email, r.name, r.company_name, r.contact_id, r.is_customer,
            r.status, r.error, r.sent_at,
+           -- Their standing NOW, not at send time. Someone who opted out after
+           -- this went out matters, and it matters whether they left through
+           -- this email or a different one.
+           (sup.email IS NOT NULL) AS unsubscribed,
+           sup.created_at AS unsubscribed_at, sup.source AS suppression_source,
+           COALESCE(cs.marketing_consent, FALSE) AS opted_in,
            COUNT(e.id) FILTER (WHERE e.kind = 'open')::int  AS opens,
            COUNT(e.id) FILTER (WHERE e.kind = 'click')::int AS clicks,
            MIN(e.occurred_at) FILTER (WHERE e.kind = 'open') AS first_open_at,
@@ -504,10 +583,17 @@ async function campaignRecipients(campaignId, { filter = 'all', limit = 1000 } =
               FILTER (WHERE e.country IS NOT NULL))[1] AS country
       FROM email_campaign_recipients r
       LEFT JOIN email_tracking_events e ON e.tracking_id = r.tracking_id
+      LEFT JOIN email_suppressions sup ON sup.email = r.email
+      LEFT JOIN LATERAL (
+        SELECT cs2.marketing_consent FROM course_signups cs2
+         WHERE LOWER(TRIM(cs2.email)) = r.email
+         ORDER BY cs2.marketing_consent DESC LIMIT 1
+      ) cs ON TRUE
      WHERE r.campaign_id = ${campaignId}
-     GROUP BY r.id
+     GROUP BY r.id, sup.email, sup.created_at, sup.source, cs.marketing_consent
      ORDER BY clicks DESC, opens DESC, r.email
      LIMIT ${Math.min(Number(limit) || 1000, 2000)}`;
+  const labels = await suppressionSourceLabels();
   const mapped = rows.map((r) => ({
     id: r.id,
     email: r.email,
@@ -524,7 +610,18 @@ async function campaignRecipients(campaignId, { filter = 'all', limit = 1000 } =
     lastOpenAt: r.last_open_at,
     city: r.city || null,
     country: r.country || null,
+    optedIn: !!r.opted_in,
+    unsubscribed: !!r.unsubscribed,
+    unsubscribedAt: r.unsubscribed_at || null,
+    unsubscribedFrom: r.suppression_source
+      ? (labels[r.suppression_source] || r.suppression_source)
+      : null,
+    // Did THIS email lose them, or had they already gone? The report is being
+    // read to judge the email, and blaming it for someone else's unsubscribe is
+    // the easiest wrong conclusion to draw from this screen.
+    unsubscribedHere: r.suppression_source === 'campaign:' + campaignId,
   }));
+  if (filter === 'unsubscribed') return mapped.filter((r) => r.unsubscribed);
   if (filter === 'opened') return mapped.filter((r) => r.opens > 0);
   if (filter === 'clicked') return mapped.filter((r) => r.clicks > 0);
   if (filter === 'unopened') return mapped.filter((r) => r.status === 'sent' && r.opens === 0);
@@ -571,13 +668,54 @@ export async function campaignsRoute(req, res, id, action, user) {
   // check, and this is the last screen before an email leaves the building.
   if (id === 'audience' && req.method === 'GET') {
     const audience = AUDIENCES.includes(req.query.list) ? req.query.list : 'everyone';
-    const [counts, rows] = await Promise.all([audienceSummary(), audienceRows(audience)]);
+    // `status` filters what's shown, never what's sent. 'unsubscribed' and
+    // 'bounced' are the reason this endpoint returns people who are NOT on the
+    // list: they're the only way to see that someone opted out of a different
+    // email and has therefore gone from this one too.
+    const status = String(req.query.status || 'mailable');
+    // Always fetched WITH the opt-outs, whatever is being shown: the tab counts
+    // have to include the people who aren't on the list, or "Unsubscribed 0"
+    // would read as nobody having unsubscribed.
+    const [counts, rows] = await Promise.all([
+      audienceSummary(),
+      audienceRows(audience, { includeUnsubscribed: true }),
+    ]);
+    const mailable = rows.filter((r) => r.status !== 'unsubscribed' && r.status !== 'bounced');
+    const shown = status === 'all' ? rows
+      : status === 'opted_in' ? mailable.filter((r) => r.optedIn)
+      : status === 'soft' ? mailable.filter((r) => !r.optedIn)
+      : status === 'unsubscribed' ? rows.filter((r) => r.status === 'unsubscribed')
+      : status === 'bounced' ? rows.filter((r) => r.status === 'bounced')
+      : mailable;
     return res.status(200).json({
       counts,
       audience,
-      total: rows.length,
-      sample: rows.slice(0, 200),
+      status,
+      // What a send to this list would actually reach, whatever is on screen.
+      total: mailable.length,
+      breakdown: {
+        mailable: mailable.length,
+        optedIn: mailable.filter((r) => r.optedIn).length,
+        soft: mailable.filter((r) => !r.optedIn).length,
+        unsubscribed: rows.filter((r) => r.status === 'unsubscribed').length,
+        bounced: rows.filter((r) => r.status === 'bounced').length,
+      },
+      shown: shown.length,
+      sample: shown.slice(0, 300),
     });
+  }
+
+  // POST /campaigns/audience/resubscribe — put someone back on, at their own
+  // request. Deliberately an explicit, logged action rather than a quiet edit:
+  // undoing someone's opt-out is only ever legitimate when they asked for it,
+  // so the reason is recorded and the caller has to say who asked.
+  if (id === 'audience' && action === 'resubscribe' && req.method === 'POST') {
+    const email = trimOrNull(req.body?.email);
+    if (!email) return res.status(400).json({ error: 'Which address?' });
+    const { unsuppress } = await import('../emailSuppression.js');
+    await unsuppress(email);
+    console.info('[campaigns] resubscribed by request', { email, by: user.email });
+    return res.status(200).json({ ok: true, email });
   }
 
   if (!id) {

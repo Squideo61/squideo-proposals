@@ -39,6 +39,37 @@ const LISTS = [
 ];
 const listLabel = (k) => LISTS.find((l) => l.key === k)?.label || k;
 
+// Where someone stands with us, as one badge. Four states rather than a tick
+// box because they mean different things to whoever is about to press send: an
+// explicit tick is evidence, a soft opt-in is a judgement we're making, an
+// unsubscribe is a door closed, and a bounce is an address that no longer works.
+const CONSENT = {
+  opted_in:     { label: 'Opted in',     bg: '#ECFDF5', ink: '#15803D', border: '#A7F3D0' },
+  soft:         { label: 'Soft opt-in',  bg: '#F1F5F9', ink: BRAND.muted, border: BRAND.border },
+  unsubscribed: { label: 'Unsubscribed', bg: '#FEF2F2', ink: '#B91C1C', border: '#FECACA' },
+  bounced:      { label: 'Bounced',      bg: '#FFF8EB', ink: '#B45309', border: '#F5C26B' },
+};
+
+function ConsentBadge({ person }) {
+  const c = CONSENT[person.status] || CONSENT.soft;
+  const title = person.status === 'opted_in'
+    ? `Ticked the marketing box${person.consentSource ? ' on the ' + person.consentSource + ' form' : ''}`
+      + `${person.consentAt ? ' on ' + fmtDate(person.consentAt) : ''}`
+      + `${person.consentText ? `\n“${person.consentText}”` : ''}`
+    : person.status === 'soft'
+      ? 'No explicit tick — on the list under the B2B soft opt-in, and can opt out of any email'
+      : person.status === 'unsubscribed'
+        ? `Unsubscribed${person.unsubscribedAt ? ' on ' + fmtDate(person.unsubscribedAt) : ''}`
+          + `${person.unsubscribedFrom ? ' via ' + person.unsubscribedFrom : ''}`
+        : 'Their mail server rejected us — the address is off every list';
+  return (
+    <span title={title} style={{
+      whiteSpace: 'nowrap', fontSize: 10.5, fontWeight: 700, padding: '1px 7px', borderRadius: 999,
+      background: c.bg, color: c.ink, border: '1px solid ' + c.border,
+    }}>{c.label}</span>
+  );
+}
+
 // The tags a sender can drop into the subject or body. Mirrors MERGE_TAGS in
 // api/_lib/crm/campaignHtml.js — the server does the substituting.
 const MERGE_TAGS = [
@@ -58,6 +89,7 @@ const STATUS_STYLE = {
 
 const num = (n) => (Number(n) || 0).toLocaleString('en-GB');
 const pct = (n) => (n == null ? '—' : `${Number(n).toFixed(1)}%`);
+const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '');
 const fmtDateTime = (d) => (d
   ? new Date(d).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
   : '—');
@@ -80,7 +112,8 @@ export function CampaignsTab({ onOpenContact }) {
   const [error, setError] = useState(null);
   const [openId, setOpenId] = useState(null);      // campaign being viewed/edited
   const [editing, setEditing] = useState(false);
-  const [listPreview, setListPreview] = useState(null); // which list card is open
+  // { list, status } — which list card is open, and which slice of it.
+  const [listPreview, setListPreview] = useState(null);
 
   const load = useCallback(() => (
     api.get('/api/crm/campaigns')
@@ -132,7 +165,7 @@ export function CampaignsTab({ onOpenContact }) {
           return (
             <button
               key={l.key}
-              onClick={() => setListPreview(l.key)}
+              onClick={() => setListPreview({ list: l.key, status: 'mailable' })}
               style={{
                 flex: '1 1 230px', minWidth: 0, textAlign: 'left', cursor: 'pointer',
                 background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12,
@@ -152,13 +185,40 @@ export function CampaignsTab({ onOpenContact }) {
             </button>
           );
         })}
+
+        {/* Off the list. Shown as a card of its own rather than a footnote: an
+            unsubscribe applies to everything we send, so somebody who opts out
+            of one email silently disappears from all three lists above. That
+            has to be somewhere you can look at, not just a smaller number. */}
+        <button
+          onClick={() => setListPreview({ list: 'everyone', status: 'unsubscribed' })}
+          style={{
+            flex: '1 1 230px', minWidth: 0, textAlign: 'left', cursor: 'pointer',
+            background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12,
+            padding: '14px 16px',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <Ban size={15} color="#B91C1C" />
+            <span style={{ fontSize: 11.5, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+              Opted out
+            </span>
+          </div>
+          <div style={{ fontSize: 26, fontWeight: 800, color: BRAND.ink, lineHeight: 1 }}>
+            {data?.counts ? num(data.counts.suppressed) : '—'}
+          </div>
+          <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 6, lineHeight: 1.45 }}>
+            Unsubscribed or bounced — off every list, whichever email they left through.
+          </div>
+        </button>
       </div>
 
-      {/* The number that explains any gap between these counts and the contacts
-          page — worth stating rather than leaving people to wonder. */}
       <div style={{ fontSize: 12, color: BRAND.muted, marginBottom: 22, lineHeight: 1.5 }}>
-        Lists are built live from contacts and lead-magnet signups. Our own @squideo addresses are excluded, and so are
-        {' '}<strong>{num(data?.counts?.suppressed || 0)}</strong> unsubscribed or bounced {data?.counts?.suppressed === 1 ? 'address' : 'addresses'}.
+        Lists are built live from contacts and lead-magnet signups, minus our own @squideo addresses.
+        {data?.counts?.optedIn != null && (
+          <> <strong>{num(data.counts.optedIn)}</strong> of them ticked a marketing box; the rest are on the
+          B2B soft opt-in. Open any list to see which is which.</>
+        )}
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
@@ -218,7 +278,12 @@ export function CampaignsTab({ onOpenContact }) {
       </div>
 
       {listPreview && (
-        <ListPreviewModal listKey={listPreview} onClose={() => setListPreview(null)} onOpenContact={onOpenContact} />
+        <ListPreviewModal
+          listKey={listPreview.list}
+          initialStatus={listPreview.status}
+          onClose={() => { setListPreview(null); load(); }}
+          onOpenContact={onOpenContact}
+        />
       )}
     </div>
   );
@@ -227,49 +292,168 @@ export function CampaignsTab({ onOpenContact }) {
 // ── who's actually on a list ────────────────────────────────────────────────
 // A count nobody can inspect is a count nobody trusts, and this is the last
 // chance to notice that a list is full of people it shouldn't be.
-function ListPreviewModal({ listKey, onClose, onOpenContact }) {
+function ListPreviewModal({ listKey, initialStatus = 'mailable', onClose, onOpenContact }) {
+  const { showMsg } = useStore();
+  const [list, setList] = useState(listKey);
+  const [status, setStatus] = useState(initialStatus);
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
+  const [reload, setReload] = useState(0);
+  const [confirmBack, setConfirmBack] = useState(null); // person being put back on
+
   useEffect(() => {
-    api.get('/api/crm/campaigns/audience?list=' + encodeURIComponent(listKey))
+    setData(null);
+    api.get(`/api/crm/campaigns/audience?list=${encodeURIComponent(list)}&status=${encodeURIComponent(status)}`)
       .then(setData).catch((e) => setError(e.message));
-  }, [listKey]);
+  }, [list, status, reload]);
+
+  const b = data?.breakdown;
+  const TABS = [
+    ['mailable', 'On the list', b?.mailable],
+    ['opted_in', 'Opted in', b?.optedIn],
+    ['soft', 'Soft opt-in', b?.soft],
+    ['unsubscribed', 'Unsubscribed', b?.unsubscribed],
+    ['bounced', 'Bounced', b?.bounced],
+  ];
+
+  const putBackOn = async (person) => {
+    try {
+      await api.post('/api/crm/campaigns/audience/resubscribe', { email: person.email });
+      showMsg(`${person.email} is back on the list`);
+      setConfirmBack(null);
+      setReload((n) => n + 1);
+    } catch (e) { showMsg(e.message || 'Could not do that'); }
+  };
 
   return (
-    <Modal onClose={onClose} maxWidth={640}>
-      <h3 style={{ margin: '0 0 4px', fontSize: 17, fontWeight: 700, color: BRAND.ink }}>{listLabel(listKey)}</h3>
-      <div style={{ fontSize: 13, color: BRAND.muted, marginBottom: 16 }}>
-        {data ? `${num(data.total)} ${data.total === 1 ? 'person' : 'people'}` : 'Loading…'}
-        {data && data.total > (data.sample?.length || 0) && ` · showing the first ${num(data.sample.length)}`}
+    <Modal onClose={onClose} maxWidth={720}>
+      <h3 style={{ margin: '0 0 4px', fontSize: 17, fontWeight: 700, color: BRAND.ink }}>{listLabel(list)}</h3>
+      <div style={{ fontSize: 13, color: BRAND.muted, marginBottom: 12 }}>
+        {data ? `${num(data.total)} ${data.total === 1 ? 'person' : 'people'} would receive a campaign sent to this list` : 'Loading…'}
       </div>
-      {error && <div style={{ color: '#B91C1C', fontSize: 13 }}>{error}</div>}
-      <div style={{ maxHeight: '55vh', overflowY: 'auto', border: '1px solid ' + BRAND.border, borderRadius: 10 }}>
+
+      {/* Which list, so you can check the same person across all three without
+          closing and reopening. */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+        {LISTS.map((l) => (
+          <button
+            key={l.key} onClick={() => setList(l.key)}
+            style={{
+              padding: '3px 10px', borderRadius: 999, fontSize: 12, cursor: 'pointer',
+              border: '1px solid ' + (list === l.key ? BRAND.ink : BRAND.border),
+              background: list === l.key ? BRAND.ink : 'white',
+              color: list === l.key ? 'white' : BRAND.ink, fontWeight: list === l.key ? 700 : 500,
+            }}
+          >{l.label}</button>
+        ))}
+      </div>
+
+      {/* Standing. The last two tabs show people who are NOT on the list — the
+          only place you can see that someone opted out of a different email and
+          has therefore dropped off this one too. */}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+        {TABS.map(([key, text, n]) => (
+          <button
+            key={key} onClick={() => setStatus(key)}
+            style={{
+              padding: '4px 11px', borderRadius: 999, fontSize: 12.5, cursor: 'pointer',
+              border: '1px solid ' + (status === key ? BRAND.blue : BRAND.border),
+              background: status === key ? BRAND.blue : 'white',
+              color: status === key ? 'white' : BRAND.ink, fontWeight: status === key ? 700 : 500,
+            }}
+          >
+            {text}{n != null && <span style={{ opacity: 0.75 }}> {num(n)}</span>}
+          </button>
+        ))}
+      </div>
+
+      {error && <div style={{ color: '#B91C1C', fontSize: 13, marginBottom: 10 }}>{error}</div>}
+
+      {(status === 'unsubscribed' || status === 'bounced') && (
+        <div style={{ fontSize: 12, color: BRAND.muted, marginBottom: 10, lineHeight: 1.5 }}>
+          {status === 'unsubscribed'
+            ? 'These people are off every marketing list, whichever email they unsubscribed through — an opt-out applies to everything we send, not just the campaign it came from. Only put someone back on if they have asked you to.'
+            : 'Their mail server rejected us. Sending again risks our whole domain being marked as spam, so they stay off until the address is known to work.'}
+        </div>
+      )}
+
+      <div style={{ maxHeight: '50vh', overflowY: 'auto', border: '1px solid ' + BRAND.border, borderRadius: 10 }}>
         {(data?.sample || []).map((p) => (
           <div
             key={p.email}
-            onClick={p.contactId && onOpenContact ? () => { onClose(); onOpenContact(p.contactId); } : undefined}
             style={{
-              display: 'flex', gap: 10, alignItems: 'baseline', padding: '9px 12px',
-              borderBottom: '1px solid ' + BRAND.paper, fontSize: 13,
-              cursor: p.contactId && onOpenContact ? 'pointer' : 'default',
+              display: 'flex', gap: 10, alignItems: 'center', padding: '9px 12px',
+              borderBottom: '1px solid ' + BRAND.paper, fontSize: 13, flexWrap: 'wrap',
             }}
           >
-            <span style={{ fontWeight: 600, color: BRAND.ink, minWidth: 0, flex: '1 1 auto', wordBreak: 'break-word' }}>
+            <span
+              onClick={p.contactId && onOpenContact ? () => { onClose(); onOpenContact(p.contactId); } : undefined}
+              style={{
+                fontWeight: 600, color: BRAND.ink, minWidth: 0, flex: '1 1 auto', wordBreak: 'break-word',
+                cursor: p.contactId && onOpenContact ? 'pointer' : 'default',
+              }}
+            >
               {p.name || p.email}
+              {p.name && <span style={{ color: BRAND.muted, fontSize: 12, fontWeight: 400 }}> · {p.email}</span>}
+              {p.companyName && <span style={{ color: BRAND.muted, fontSize: 12, fontWeight: 400 }}> · {p.companyName}</span>}
+              {/* Said in words, not just a colour: which email lost them, and
+                  when. That is the whole question this screen answers. */}
+              {p.unsubscribedAt && (
+                <div style={{ fontSize: 11.5, color: '#B91C1C', marginTop: 2 }}>
+                  Left {fmtDate(p.unsubscribedAt)}{p.unsubscribedFrom ? ` · via ${p.unsubscribedFrom}` : ''}
+                </div>
+              )}
+              {p.status === 'opted_in' && p.consentAt && (
+                <div style={{ fontSize: 11.5, color: '#15803D', marginTop: 2 }}>
+                  Ticked the marketing box {fmtDate(p.consentAt)}{p.consentSource ? ` · ${p.consentSource} form` : ''}
+                </div>
+              )}
             </span>
-            {p.name && <span style={{ color: BRAND.muted, fontSize: 12 }}>{p.email}</span>}
-            {p.companyName && <span style={{ color: BRAND.muted, fontSize: 12 }}>{p.companyName}</span>}
             {p.isCustomer && (
-              <span style={{ fontSize: 10.5, fontWeight: 700, color: '#15803D', background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: 999, padding: '1px 7px' }}>
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: '#15803D', background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: 999, padding: '1px 7px', whiteSpace: 'nowrap' }}>
                 Customer
               </span>
+            )}
+            <ConsentBadge person={p} />
+            {p.status === 'unsubscribed' && (
+              <button
+                className="btn-ghost" onClick={() => setConfirmBack(p)}
+                style={{ fontSize: 11.5, padding: '2px 8px', border: '1px solid ' + BRAND.border, borderRadius: 999 }}
+              >
+                Put back on
+              </button>
             )}
           </div>
         ))}
         {data && !data.sample?.length && (
-          <div style={{ padding: 20, textAlign: 'center', color: BRAND.muted, fontSize: 13 }}>Nobody on this list yet.</div>
+          <div style={{ padding: 20, textAlign: 'center', color: BRAND.muted, fontSize: 13 }}>
+            {status === 'unsubscribed' ? 'Nobody has unsubscribed.' : status === 'bounced' ? 'No bounces.' : 'Nobody on this list yet.'}
+          </div>
+        )}
+        {data && data.shown > (data.sample?.length || 0) && (
+          <div style={{ padding: '10px 12px', fontSize: 12, color: BRAND.muted, textAlign: 'center' }}>
+            Showing the first {num(data.sample.length)} of {num(data.shown)}.
+          </div>
         )}
       </div>
+
+      {confirmBack && (
+        <Modal onClose={() => setConfirmBack(null)} maxWidth={420}>
+          <h3 style={{ margin: '0 0 10px', fontSize: 16, fontWeight: 700, color: BRAND.ink }}>
+            Put {confirmBack.email} back on the list?
+          </h3>
+          <p style={{ margin: '0 0 16px', fontSize: 13.5, color: BRAND.ink, lineHeight: 1.55 }}>
+            They opted out{confirmBack.unsubscribedAt ? ` on ${fmtDate(confirmBack.unsubscribedAt)}` : ''}
+            {confirmBack.unsubscribedFrom ? ` via ${confirmBack.unsubscribedFrom}` : ''}. Only do this if they have
+            asked to start receiving our emails again — undoing someone else's opt-out is what turns a marketing email
+            into a complaint.
+          </p>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+            <button className="btn-secondary" onClick={() => setConfirmBack(null)}>Cancel</button>
+            <button className="btn-primary" onClick={() => putBackOn(confirmBack)}>They asked — put them back on</button>
+          </div>
+        </Modal>
+      )}
     </Modal>
   );
 }
@@ -607,11 +791,24 @@ function SendConfirmModal({ campaignId, audience, onClose, onSent }) {
   return (
     <Modal onClose={onClose} maxWidth={460}>
       <h3 style={{ margin: '0 0 10px', fontSize: 17, fontWeight: 700, color: BRAND.ink }}>Send this campaign?</h3>
-      <p style={{ margin: '0 0 16px', fontSize: 14, color: BRAND.ink, lineHeight: 1.55 }}>
+      <p style={{ margin: '0 0 10px', fontSize: 14, color: BRAND.ink, lineHeight: 1.55 }}>
         It goes to <strong>{total == null ? '…' : num(total)}</strong> {listLabel(audience).toLowerCase()}
         {' '}— people who haven't unsubscribed, excluding our own addresses. This can't be undone once it starts,
         though you can pause it part-way.
       </p>
+
+      {/* The consent split, at the moment it matters most. Not a warning — just
+          the basis you're sending on, stated before you commit rather than
+          after somebody complains. */}
+      {audienceData?.breakdown && (
+        <p style={{ margin: '0 0 16px', fontSize: 12.5, color: BRAND.muted, lineHeight: 1.55 }}>
+          <strong style={{ color: '#15803D' }}>{num(audienceData.breakdown.optedIn)}</strong> ticked a marketing box;
+          {' '}<strong>{num(audienceData.breakdown.soft)}</strong> are on the B2B soft opt-in.
+          {audienceData.breakdown.unsubscribed > 0 && (
+            <> {num(audienceData.breakdown.unsubscribed)} previously unsubscribed {audienceData.breakdown.unsubscribed === 1 ? 'person is' : 'people are'} already excluded.</>
+          )}
+        </p>
+      )}
 
       <label style={{ fontSize: 12, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, display: 'block', marginBottom: 6 }}>
         Send later (optional)
@@ -646,6 +843,7 @@ function CampaignReport({ state, onReload, onOpenContact, isMobile, showMsg }) {
     if (filter === 'clicked') return recipients.filter((r) => r.clicks > 0);
     if (filter === 'unopened') return recipients.filter((r) => r.status === 'sent' && r.opens === 0);
     if (filter === 'failed') return recipients.filter((r) => r.status === 'failed' || r.status === 'skipped');
+    if (filter === 'unsubscribed') return recipients.filter((r) => r.unsubscribed);
     return recipients;
   }, [recipients, filter]);
 
@@ -744,6 +942,7 @@ function CampaignReport({ state, onReload, onOpenContact, isMobile, showMsg }) {
             ['opened', 'Opened', recipients.filter((r) => r.opens > 0).length],
             ['clicked', 'Clicked', recipients.filter((r) => r.clicks > 0).length],
             ['unopened', 'Not opened', recipients.filter((r) => r.status === 'sent' && r.opens === 0).length],
+            ['unsubscribed', 'Opted out since', recipients.filter((r) => r.unsubscribed).length],
             ['failed', 'Not delivered', recipients.filter((r) => r.status === 'failed' || r.status === 'skipped').length],
           ].map(([key, text, n]) => (
             <button
@@ -768,10 +967,27 @@ function CampaignReport({ state, onReload, onOpenContact, isMobile, showMsg }) {
             columns={[
               { key: 'who', label: 'Person', render: (r) => (
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, color: BRAND.ink }}>{r.name || r.email}</div>
+                  <div style={{ fontWeight: 600, color: BRAND.ink, display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
+                    {r.name || r.email}
+                    {r.optedIn && !r.unsubscribed && (
+                      <span title="Ticked the marketing box on a signup form" style={{ fontSize: 10.5, fontWeight: 700, color: '#15803D', background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: 999, padding: '1px 7px' }}>
+                        Opted in
+                      </span>
+                    )}
+                  </div>
                   <div style={{ fontSize: 12, color: BRAND.muted, wordBreak: 'break-all' }}>
                     {r.companyName || r.email}
                   </div>
+                  {/* Whether THIS email lost them or a different one did. Same
+                      badge either way would invite the wrong conclusion about
+                      the campaign you're currently judging. */}
+                  {r.unsubscribed && (
+                    <div style={{ fontSize: 11.5, color: '#B91C1C', marginTop: 2 }}>
+                      {r.unsubscribedHere ? 'Unsubscribed from this email' : 'Since unsubscribed'}
+                      {r.unsubscribedAt ? ` · ${fmtDate(r.unsubscribedAt)}` : ''}
+                      {!r.unsubscribedHere && r.unsubscribedFrom ? ` · via ${r.unsubscribedFrom}` : ''}
+                    </div>
+                  )}
                 </div>
               ) },
               { key: 'opens', label: 'Opens', align: 'right', render: (r) => (
