@@ -54,3 +54,20 @@ CREATE TABLE IF NOT EXISTS email_harvest_people (
 );
 CREATE INDEX IF NOT EXISTS email_harvest_people_last_idx
   ON email_harvest_people (run_id, last_at DESC);
+
+-- What a sweep is looking for.
+--   'people'      — harvest the SENDER of inbound mail (someone who wrote to us)
+--   'quote_forms' — read the website's own notification emails and pull the
+--                   enquiry out of the BODY. On these the sender is us, so the
+--                   other mode would only ever find our own address.
+ALTER TABLE email_harvest_runs
+  ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'people',
+  ADD COLUMN IF NOT EXISTS imported INTEGER NOT NULL DEFAULT 0;
+
+-- Which notification email a quote request was recovered from. Also the
+-- idempotency key: re-running a sweep must not create a second copy of an
+-- enquiry, and these emails carry no id of their own.
+ALTER TABLE quote_requests
+  ADD COLUMN IF NOT EXISTS source_message_id TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS quote_requests_source_message_idx
+  ON quote_requests(source_message_id) WHERE source_message_id IS NOT NULL;

@@ -32,9 +32,26 @@
 
 import sql, { batchWrite } from '../db.js';
 import { getFreshAccessToken } from './gmail.js';
-import { isInternalEmail } from '../internalAccounts.js';
-import { ingestMessage } from '../gmailSync.js';
+import { isInternalEmail, INTERNAL_EMAIL_PATTERNS } from '../internalAccounts.js';
+import { ingestMessage, extractBody, parseHeaders } from '../gmailSync.js';
 import { makeId } from './shared.js';
+import { parseQuoteRequestEmail } from './quoteEmailParser.js';
+
+// Our own domains, in the shape the parser wants them: it has to know which
+// address in a notification body is ours so it doesn't record us as the person
+// who enquired.
+const OUR_DOMAINS = INTERNAL_EMAIL_PATTERNS.map((p) => p.replace(/^%@/, ''));
+
+// What a sweep is looking for.
+//
+//   'people'      — the SENDER of inbound mail: someone who wrote to us.
+//   'quote_forms' — the website's own "New Quote Request" notifications, where
+//                   the sender is US and the enquirer is in the body. These are
+//                   the only surviving record of years of enquiries from before
+//                   the CRM, and they parse into complete quote requests —
+//                   name, email, phone, company, brief, budget, timeline and
+//                   the marketing tick — not just an address.
+export const HARVEST_MODES = ['people', 'quote_forms'];
 
 // Search presets. A starting point rather than a rule, because what an enquiry
 // looked like in 2019 is something only the person reading the mailbox knows —
@@ -44,25 +61,38 @@ import { makeId } from './shared.js';
 // does. Add `before:`/`after:` yourself to narrow it.
 export const HARVEST_PRESETS = [
   {
+    key: 'quote_form_emails',
+    mode: 'quote_forms',
+    label: 'Old website quote requests',
+    hint: 'The "New Quote Request" emails the site has sent us since forever. '
+      + 'Every one of these becomes a proper quote request in the CRM, with the '
+      + "enquirer's name, phone, company, brief and budget read out of the email.",
+    query: 'subject:("Quote Request" OR "New Quote Request" OR "New Enquiry" OR "Contact Form")',
+  },
+  {
     key: 'quote_subjects',
+    mode: 'people',
     label: 'Enquiry-shaped subject lines',
     hint: 'Mail whose subject mentions a quote, enquiry or video project.',
     query: 'subject:(quote OR quotation OR enquiry OR inquiry OR "video project" OR "explainer video") -in:chats',
   },
   {
     key: 'form_notifications',
+    mode: 'people',
     label: 'Website form notifications',
     hint: 'The "New quote request" alerts the site sends us — one per form submission, ever.',
     query: 'subject:("New quote request" OR "New enquiry" OR "New contact request" OR "Contact form")',
   },
   {
     key: 'enquiries_inbox',
+    mode: 'people',
     label: 'Anything sent to enquiries@',
     hint: 'Everything that landed on the enquiries address, whoever it came from.',
     query: 'to:enquiries@squideo.co.uk -in:chats',
   },
   {
     key: 'everything_inbound',
+    mode: 'people',
     label: 'Every message anyone sent us',
     hint: 'The whole inbox, ever. Expect suppliers and robots in the results — read the evidence column before ticking.',
     query: 'in:inbox -in:chats',
@@ -154,6 +184,15 @@ export function ensureHarvestTables() {
                 ON email_harvest_messages (run_id, state)`;
     await sql`CREATE INDEX IF NOT EXISTS email_harvest_people_last_idx
                 ON email_harvest_people (run_id, last_at DESC)`;
+    await sql`ALTER TABLE email_harvest_runs
+                ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'people'`;
+    await sql`ALTER TABLE email_harvest_runs
+                ADD COLUMN IF NOT EXISTS imported INTEGER NOT NULL DEFAULT 0`;
+    // The idempotency key for recovered enquiries — re-running a sweep must not
+    // create a second copy of the same quote request.
+    await sql`ALTER TABLE quote_requests ADD COLUMN IF NOT EXISTS source_message_id TEXT`;
+    await sql`CREATE UNIQUE INDEX IF NOT EXISTS quote_requests_source_message_idx
+                ON quote_requests(source_message_id) WHERE source_message_id IS NOT NULL`;
     return true;
   })().catch((err) => {
     console.warn('[harvest] ensure failed', err.message);
@@ -177,7 +216,7 @@ const INGEST_BATCH = 90;
 const INGEST_CONCURRENCY = 12;
 
 // ── starting a sweep ────────────────────────────────────────────────────────
-export async function startHarvestRun({ userEmail, query, ingest = false, startedBy }) {
+export async function startHarvestRun({ userEmail, query, ingest = false, mode = 'people', startedBy }) {
   await ensureHarvestTables();
   // One active run at a time. Two sweeps of the same mailbox would just race
   // each other for the same Gmail quota.
@@ -193,8 +232,9 @@ export async function startHarvestRun({ userEmail, query, ingest = false, starte
   }
   const id = makeId('hrv');
   await sql`
-    INSERT INTO email_harvest_runs (id, user_email, query, ingest, status, started_by)
-    VALUES (${id}, ${userEmail}, ${query}, ${!!ingest}, 'listing', ${startedBy || userEmail})`;
+    INSERT INTO email_harvest_runs (id, user_email, query, ingest, mode, status, started_by)
+    VALUES (${id}, ${userEmail}, ${query}, ${!!ingest},
+            ${HARVEST_MODES.includes(mode) ? mode : 'people'}, 'listing', ${startedBy || userEmail})`;
   return id;
 }
 
@@ -301,8 +341,12 @@ async function listPage({ run, accessToken, startedAt, budgetMs }) {
 // Phase two: read the messages. Claimed in one statement so two overlapping
 // cron runs can never read — or ingest — the same message twice.
 async function readBatch({ run, accessToken, startedAt, budgetMs }) {
-  const size = run.ingest ? INGEST_BATCH : READ_BATCH;
-  const concurrency = run.ingest ? INGEST_CONCURRENCY : READ_CONCURRENCY;
+  const quoteForms = run.mode === 'quote_forms';
+  // Parsing needs the whole message, not just its headers, so it runs at the
+  // narrower ingest width even when it isn't filing anything.
+  const heavy = run.ingest || quoteForms;
+  const size = heavy ? INGEST_BATCH : READ_BATCH;
+  const concurrency = heavy ? INGEST_CONCURRENCY : READ_CONCURRENCY;
 
   while (Date.now() - startedAt < budgetMs) {
     const claimed = await sql`
@@ -333,6 +377,7 @@ async function readBatch({ run, accessToken, startedAt, budgetMs }) {
 
     const ids = claimed.map((r) => r.gmail_message_id);
     const found = [];
+    const enquiries = [];
     let ingested = 0;
     let failed = 0;
 
@@ -346,6 +391,10 @@ async function readBatch({ run, accessToken, startedAt, budgetMs }) {
             // like any other, auto-linking to a deal where one matches.
             await ingestMessage({ userEmail: run.user_email, accessToken, messageId: id });
           }
+          if (quoteForms) {
+            const enquiry = await readQuoteForm(id, accessToken);
+            return { id, enquiry, ok: true };
+          }
           const meta = await fetchMetadata(id, accessToken);
           return { id, meta, ok: true };
         } catch (err) {
@@ -357,10 +406,25 @@ async function readBatch({ run, accessToken, startedAt, budgetMs }) {
         if (!r.ok) { failed += 1; return; }
         if (run.ingest) ingested += 1;
         if (r.meta) found.push(r.meta);
+        if (r.enquiry) enquiries.push(r.enquiry);
       });
     }
 
-    await foldPeople(run, found);
+    let imported = 0;
+    if (quoteForms) {
+      imported = await saveEnquiries(run, enquiries);
+      // Show them in the run's own results too, so the screen lists what it
+      // pulled in rather than just counting it.
+      await foldPeople(run, enquiries.map((e) => ({
+        email: e.email,
+        name: e.name,
+        subject: e.description ? e.description.slice(0, 120) : 'Quote request',
+        at: e.submittedAt,
+        threadId: e.threadId,
+      })), { imported: true });
+    } else {
+      await foldPeople(run, found);
+    }
 
     await batchWrite(ids.map((id) => sql`
       UPDATE email_harvest_messages SET state = 'done'
@@ -369,10 +433,85 @@ async function readBatch({ run, accessToken, startedAt, budgetMs }) {
       UPDATE email_harvest_runs
          SET processed = processed + ${ids.length},
              ingested = ingested + ${ingested},
+             imported = imported + ${imported},
              failed = failed + ${failed},
              updated_at = NOW()
        WHERE id = ${run.id}`;
   }
+}
+
+// Read one website notification email and pull the enquiry back out of its
+// body. Needs the full message — the whole point is that the headers describe
+// us, not the person who filled the form in.
+async function readQuoteForm(id, accessToken) {
+  const url = new URL(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}`);
+  url.searchParams.set('format', 'full');
+  const res = await fetch(url.toString(), { headers: { Authorization: 'Bearer ' + accessToken } });
+  if (!res.ok) return null;
+  const msg = await res.json();
+  const headers = parseHeaders(msg.payload?.headers || []);
+  const { html, text } = extractBody(msg.payload);
+  const sentAt = headers.date
+    ? new Date(headers.date)
+    : new Date(Number(msg.internalDate || Date.now()));
+
+  const parsed = parseQuoteRequestEmail({
+    subject: headers.subject,
+    body: text,
+    html,
+    fallbackAt: Number.isNaN(sentAt.getTime()) ? null : sentAt.toISOString(),
+    internalDomains: OUR_DOMAINS,
+  });
+  if (!parsed) return null;
+  return { ...parsed, messageId: id, threadId: msg.threadId || null };
+}
+
+// Write the recovered enquiries into quote_requests — the same table the live
+// website form writes to. That is what makes them real: they show up in the
+// Quote Requests view, count in Marketing's lead reporting, and land on the
+// mailing lists, all through machinery that already exists.
+//
+// status='cleared' rather than 'new': these are historic, most were dealt with
+// years ago, and dropping several hundred of them into the "new" inbox would
+// bury the enquiries that actually need answering today. Cleared still counts
+// as a lead — it just isn't waiting on anyone.
+//
+// The unique index on source_message_id is the idempotency: run the sweep twice
+// and the second pass writes nothing.
+async function saveEnquiries(run, enquiries) {
+  const usable = enquiries.filter((e) => e && e.email && !isInternalEmail(e.email));
+  if (!usable.length) return 0;
+
+  // Within one batch the same address can appear twice (someone who enquired
+  // more than once); each is its own request, keyed by its own message.
+  const rows = await Promise.all(usable.map(async (e) => {
+    try {
+      const inserted = await sql`
+        INSERT INTO quote_requests (
+          id, name, email, phone, company, project_details, timeline, budget,
+          opt_in, status, reviewed_at, source, form_source, source_message_id, created_at
+        ) VALUES (
+          ${makeId('qr')}, ${e.name}, ${e.email}, ${e.phone}, ${e.company},
+          ${[e.description, e.videoLength ? `Video length: ${e.videoLength}` : null]
+            .filter(Boolean).join('\n\n') || null},
+          ${e.timeline}, ${e.budget}, ${!!e.optIn}, 'cleared', NOW(),
+          'web', 'email-import', ${e.messageId},
+          ${e.submittedAt || new Date().toISOString()}
+        )
+        -- The predicate has to be repeated: the unique index is PARTIAL
+        -- (source_message_id IS NOT NULL, so the millions of rows without one
+        -- don't collide), and Postgres will not infer a partial index without
+        -- being shown its condition.
+        ON CONFLICT (source_message_id) WHERE source_message_id IS NOT NULL
+        DO NOTHING
+        RETURNING id`;
+      return inserted.length ? 1 : 0;
+    } catch (err) {
+      console.warn('[harvest] could not save enquiry', e.email, err.message);
+      return 0;
+    }
+  }));
+  return rows.reduce((a, b) => a + b, 0);
 }
 
 async function fetchMetadata(id, accessToken) {
@@ -403,12 +542,16 @@ async function fetchMetadata(id, accessToken) {
 // Only the SENDER of inbound mail counts. Someone who wrote to us started a
 // conversation; a person cc'd on a thread did not, and the difference matters
 // when the output is a marketing list.
-async function foldPeople(run, metas) {
+async function foldPeople(run, metas, { imported = false } = {}) {
   const me = String(run.user_email || '').toLowerCase();
   const wanted = metas.filter((m) => m
+    && m.email
     && m.email !== me
     && !isInternalEmail(m.email)
-    && !isRobotAddress(m.email));
+    // A parsed form enquiry is a person who typed their address into our own
+    // form, so the robot filter — which exists to catch senders — doesn't
+    // apply to it.
+    && (imported || !isRobotAddress(m.email)));
   if (!wanted.length) return;
 
   // Aggregate within the batch first, so one person in a batch is one write.
@@ -424,9 +567,9 @@ async function foldPeople(run, metas) {
 
   await batchWrite([...byEmail.values()].map((p) => sql`
     INSERT INTO email_harvest_people
-      (run_id, email, name, messages, first_at, last_at, last_subject, thread_id)
+      (run_id, email, name, messages, first_at, last_at, last_subject, thread_id, imported_at)
     VALUES (${run.id}, ${p.email}, ${p.name}, ${p.messages}, ${p.firstAt}, ${p.lastAt},
-            ${p.subject}, ${p.threadId})
+            ${p.subject}, ${p.threadId}, ${imported ? new Date().toISOString() : null})
     ON CONFLICT (run_id, email) DO UPDATE SET
       messages = email_harvest_people.messages + EXCLUDED.messages,
       name = COALESCE(email_harvest_people.name, EXCLUDED.name),
@@ -437,7 +580,8 @@ async function foldPeople(run, metas) {
                           THEN EXCLUDED.last_subject ELSE email_harvest_people.last_subject END,
       thread_id = CASE WHEN EXCLUDED.last_at >= email_harvest_people.last_at
                        THEN EXCLUDED.thread_id ELSE email_harvest_people.thread_id END,
-      last_at = GREATEST(email_harvest_people.last_at, EXCLUDED.last_at)`));
+      last_at = GREATEST(email_harvest_people.last_at, EXCLUDED.last_at),
+      imported_at = COALESCE(email_harvest_people.imported_at, EXCLUDED.imported_at)`));
 }
 
 // Messages left 'working' by an invocation that died go back on the queue.
@@ -462,10 +606,12 @@ function serialiseRun(row) {
     id: row.id,
     query: row.query,
     ingest: !!row.ingest,
+    mode: row.mode || 'people',
     status: row.status,
     listed,
     processed,
     ingested: row.ingested || 0,
+    imported: row.imported || 0,
     failed: row.failed || 0,
     error: row.error || null,
     startedBy: row.started_by,

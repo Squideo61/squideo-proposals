@@ -775,7 +775,9 @@ export async function campaignsRoute(req, res, id, action, user) {
     try {
       const { startHarvestRun, sweepHarvestRun, latestHarvestRun, harvestPeople } = await import('./gmailHarvest.js');
       const runId = await startHarvestRun({
-        userEmail: user.email, query, ingest, startedBy: user.email,
+        userEmail: user.email, query, ingest,
+        mode: trimOrNull(req.body?.mode) || 'people',
+        startedBy: user.email,
       });
       // Listing is cheap (500 ids a call), so this first slice usually knows
       // the full size of the job by the time the request returns.

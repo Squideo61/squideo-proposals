@@ -1054,6 +1054,9 @@ function GmailHarvestModal({ onClose }) {
   const { showMsg } = useStore();
   const [presets, setPresets] = useState([]);
   const [query, setQuery] = useState('');
+  // 'quote_forms' reads the enquiry out of the email body; 'people' harvests
+  // whoever sent it. Set by whichever preset you pick.
+  const [mode, setMode] = useState('quote_forms');
   const [ingest, setIngest] = useState(true);
   const [state, setState] = useState(null);   // { run, people, counts, total }
   const [starting, setStarting] = useState(false);
@@ -1072,7 +1075,10 @@ function GmailHarvestModal({ onClose }) {
     api.get('/api/crm/campaigns/harvest')
       .then((d) => {
         setPresets(d.presets || []);
-        if (d.presets?.length) setQuery((q) => q || d.presets[0].query);
+        if (d.presets?.length) {
+          setQuery((q) => q || d.presets[0].query);
+          setMode(d.presets[0].mode || 'people');
+        }
       })
       .catch((e) => setError(e.message));
     load();
@@ -1099,7 +1105,7 @@ function GmailHarvestModal({ onClose }) {
   const start = async () => {
     setStarting(true); setError(null); setTouched(false);
     try {
-      const d = await api.post('/api/crm/campaigns/harvest', { query, ingest });
+      const d = await api.post('/api/crm/campaigns/harvest', { query, ingest, mode });
       setState(d);
     } catch (e) { setError(e.message || 'Could not start the sweep'); }
     finally { setStarting(false); }
@@ -1147,15 +1153,19 @@ function GmailHarvestModal({ onClose }) {
     <Modal onClose={onClose} maxWidth={880}>
       <h3 style={{ margin: '0 0 6px', fontSize: 17, fontWeight: 700, color: BRAND.ink }}>Find enquirers in Gmail</h3>
       <p style={{ margin: '0 0 16px', fontSize: 13, color: BRAND.muted, lineHeight: 1.55 }}>
-        Everyone who used the website quote form is already on your lists. This is for the ones who just emailed —
-        it reads your whole mailbox, however far back it goes, shows what each person actually wrote, and adds only
-        the people you tick.
+        {mode === 'quote_forms'
+          ? <>Reads the website’s old <strong>“New Quote Request”</strong> emails and pulls the enquiry out of each one —
+              name, email, phone, company, brief, timeline and budget — straight into the CRM as a proper quote request.
+              The sender on those emails is you, so the details have to come out of the body. Goes back as far as your
+              mailbox does.</>
+          : <>For people who just emailed rather than using the form. It reads your whole mailbox, however far back it
+              goes, shows what each person actually wrote, and adds only the people you tick.</>}
       </p>
 
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
         {presets.map((p) => (
           <button
-            key={p.key} onClick={() => setQuery(p.query)} title={p.hint} disabled={running}
+            key={p.key} onClick={() => { setQuery(p.query); setMode(p.mode || 'people'); }} title={p.hint} disabled={running}
             style={{
               padding: '4px 11px', borderRadius: 999, fontSize: 12.5, cursor: running ? 'default' : 'pointer',
               border: '1px solid ' + (query === p.query ? BRAND.blue : BRAND.border),
@@ -1186,14 +1196,26 @@ function GmailHarvestModal({ onClose }) {
           )}
       </div>
 
+      {mode === 'quote_forms' && (
+        <div style={{
+          background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: 10,
+          padding: '10px 12px', fontSize: 12.5, color: '#15803D', lineHeight: 1.55, marginBottom: 8,
+        }}>
+          Every email this finds becomes a quote request automatically — no ticking required. They're filed as
+          <strong> cleared</strong> rather than new, so hundreds of old enquiries don't bury today's, and the
+          <strong> Opt In</strong> line in each email decides whether that person counts as having consented to
+          marketing. Running it twice is safe: each email can only ever produce one quote request.
+        </div>
+      )}
+
       <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12.5, color: BRAND.ink, marginBottom: 6, cursor: running ? 'default' : 'pointer' }}>
         <input type="checkbox" checked={ingest} disabled={running} onChange={(e) => setIngest(e.target.checked)} style={{ marginTop: 2 }} />
         <span>
           <strong>Also file these emails into the CRM.</strong>
           <span style={{ color: BRAND.muted }}>
             {' '}Each matching message is added to the Emails view exactly as if it had arrived today, and links itself
-            to a deal where one matches — so the original enquiry is readable, not just the address. Slower, and it
-            will bring in whatever else your search matches.
+            to a deal where one matches — so the original enquiry is readable, not just the details read out of it.
+            Slower, and it will bring in whatever else your search matches.
           </span>
         </span>
       </label>
@@ -1219,7 +1241,10 @@ function GmailHarvestModal({ onClose }) {
                 : `Stopped: ${run.error || 'something went wrong'}`}
             </span>
             <span style={{ fontSize: 12, color: BRAND.muted }}>
-              {run.ingest ? `${num(run.ingested)} filed into the CRM` : 'addresses only'}
+              {run.mode === 'quote_forms'
+                ? <><strong style={{ color: '#15803D' }}>{num(run.imported)}</strong> quote requests pulled in</>
+                : (run.ingest ? `${num(run.ingested)} filed into the CRM` : 'addresses only')}
+              {run.mode === 'quote_forms' && run.ingest && ` · ${num(run.ingested)} emails filed`}
               {run.failed > 0 && ` · ${num(run.failed)} unreadable`}
             </span>
           </div>
@@ -1244,11 +1269,15 @@ function GmailHarvestModal({ onClose }) {
       {state?.people?.length > 0 && (
         <>
           <div style={{ fontSize: 12.5, color: BRAND.muted, marginBottom: 10, lineHeight: 1.5 }}>
-            <strong style={{ color: BRAND.ink }}>{num(state.total)}</strong> {state.total === 1 ? 'person' : 'people'} wrote to you
-            {state.counts.onList > 0 && <> · {num(state.counts.onList)} you already have</>}
+            <strong style={{ color: BRAND.ink }}>{num(state.total)}</strong>{' '}
+            {run?.mode === 'quote_forms'
+              ? <>{state.total === 1 ? 'enquirer' : 'enquirers'} recovered — each one is now a quote request you can
+                  open, qualify or turn into a deal</>
+              : <>{state.total === 1 ? 'person' : 'people'} wrote to you</>}
+            {state.counts.onList > 0 && run?.mode !== 'quote_forms' && <> · {num(state.counts.onList)} you already have</>}
             {state.counts.unsubscribed > 0 && <> · {num(state.counts.unsubscribed)} unsubscribed</>}
             {state.total > state.people.length && <> · showing the {num(state.people.length)} most recent</>}
-            . Your own team, your sent mail, no-reply senders and the usual platforms are already filtered out.
+            {run?.mode !== 'quote_forms' && '. Your own team, your sent mail, no-reply senders and the usual platforms are already filtered out.'}
           </div>
 
           <div style={{ maxHeight: '40vh', overflowY: 'auto', border: '1px solid ' + BRAND.border, borderRadius: 10 }}>
@@ -1289,12 +1318,16 @@ function GmailHarvestModal({ onClose }) {
 
           <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', alignItems: 'center', marginTop: 14, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 12.5, color: BRAND.muted, marginRight: 'auto' }}>
-              {num(picked.size)} ticked — they'll be added as contacts and land on the non-customers list.
+              {run?.mode === 'quote_forms'
+                ? 'Already in the CRM — find them under Quote Requests (filter: all), and on your mailing lists.'
+                : `${num(picked.size)} ticked — they'll be added as contacts and land on the non-customers list.`}
             </span>
             <button className="btn-secondary" onClick={onClose}>Close</button>
-            <button className="btn-primary" onClick={importPicked} disabled={importing || !picked.size}>
-              {importing ? 'Adding…' : `Add ${num(picked.size)} ${picked.size === 1 ? 'person' : 'people'}`}
-            </button>
+            {run?.mode !== 'quote_forms' && (
+              <button className="btn-primary" onClick={importPicked} disabled={importing || !picked.size}>
+                {importing ? 'Adding…' : `Add ${num(picked.size)} ${picked.size === 1 ? 'person' : 'people'}`}
+              </button>
+            )}
           </div>
         </>
       )}
