@@ -5,10 +5,15 @@ vi.mock('../api/_lib/db.js', async () => ({
   batchWrite: async () => {},
 }));
 
-import { audienceRows, audienceSummary, consentStatus } from '../api/_lib/crm/campaigns.js';
-import { setSqlHandler, resetSqlMock } from './helpers/mockDb.js';
+import { audienceRows, audienceSummary, consentStatus, clearAudienceCache } from '../api/_lib/crm/campaigns.js';
+import { setSqlHandler, resetSqlMock, getSqlCalls } from './helpers/mockDb.js';
 
-beforeEach(() => resetSqlMock());
+beforeEach(() => {
+  resetSqlMock();
+  // The audience is cached for a minute in the running instance; each test
+  // needs its own fixture rather than the previous one.
+  clearAudienceCache();
+});
 
 // One of each standing, as the audience query returns them.
 const PEOPLE = [
@@ -139,5 +144,30 @@ describe('the counts on the cards', () => {
       bounced: 1,
       suppressed: 2,
     });
+  });
+});
+
+describe('the cached list', () => {
+  it('answers a second time without going back to the database', async () => {
+    // Every screen here derives from one expensive union query. Running it per
+    // keystroke — twice, as the search endpoint used to — is what made the
+    // search box look like it was doing nothing.
+    stubAudience();
+    await audienceRows('everyone');
+    const before = getSqlCalls().filter((c) => /WITH won AS/.test(c.text)).length;
+    await audienceRows('customers');
+    await audienceRows('non_customers');
+    await audienceSummary();
+    const after = getSqlCalls().filter((c) => /WITH won AS/.test(c.text)).length;
+    expect(before).toBe(1);
+    expect(after).toBe(1);
+  });
+
+  it('goes back to the database when the answer decides who receives an email', async () => {
+    // The browsing screens can live with a minute-old list. The send cannot.
+    stubAudience();
+    await audienceRows('everyone');
+    await audienceRows('everyone', { fresh: true });
+    expect(getSqlCalls().filter((c) => /WITH won AS/.test(c.text))).toHaveLength(2);
   });
 });

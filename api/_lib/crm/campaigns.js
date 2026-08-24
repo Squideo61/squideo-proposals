@@ -184,7 +184,47 @@ export function consentStatus(row) {
 // up emailing them again by hand and getting a complaint. `includeUnsubscribed`
 // is what the UI uses to show them, clearly marked, without ever putting them
 // in a send.
-export async function audienceRows(audience = 'everyone', { includeUnsubscribed = false } = {}) {
+// The whole list, cached briefly in the instance.
+//
+// Everything on this screen derives from one query — the lists, the counts, the
+// search, the exclusion picker — and it is not a cheap query: three unions over
+// contacts, lead-magnet signups and quote requests, with a customer test per
+// person. Running it per keystroke (twice, as the search endpoint used to)
+// makes a search box that looks broken.
+//
+// Sixty seconds is chosen against what the data actually does: a contact added
+// while somebody is picking people to leave out changes nothing they can see,
+// and the send path asks for a fresh copy anyway.
+const AUDIENCE_TTL_MS = 60_000;
+let audienceCache = null;   // { at, rows }
+
+// Throw the cached list away. Called when something has just changed who is on
+// it — importing people out of Gmail, most obviously — so the counts don't sit
+// a minute behind an action the user just took and watched happen.
+export function clearAudienceCache() {
+  audienceCache = null;
+}
+
+async function allAudienceRows({ fresh = false } = {}) {
+  if (!fresh && audienceCache && Date.now() - audienceCache.at < AUDIENCE_TTL_MS) {
+    return audienceCache.rows;
+  }
+  const rows = await queryAudienceRows();
+  audienceCache = { at: Date.now(), rows };
+  return rows;
+}
+
+export async function audienceRows(audience = 'everyone', { includeUnsubscribed = false, fresh = false } = {}) {
+  const all = await allAudienceRows({ fresh });
+  const byAudience = audience === 'customers'
+    ? all.filter((r) => r.isCustomer)
+    : (audience === 'non_customers' ? all.filter((r) => !r.isCustomer) : all);
+  return includeUnsubscribed
+    ? byAudience
+    : byAudience.filter((r) => r.status !== 'unsubscribed' && r.status !== 'bounced');
+}
+
+async function queryAudienceRows() {
   await ensureAudienceSources();
   const rows = await sql`
     WITH won AS (
@@ -294,7 +334,7 @@ export async function audienceRows(audience = 'everyone', { includeUnsubscribed 
      ORDER BY d.is_customer DESC, d.email
   `;
   const labels = await suppressionSourceLabels();
-  const all = rows.map((r) => ({
+  return rows.map((r) => ({
     email: r.email,
     name: r.name || null,
     companyName: r.company_name || null,
@@ -317,19 +357,13 @@ export async function audienceRows(audience = 'everyone', { includeUnsubscribed 
       ? (labels[r.suppression_source] || r.suppression_source)
       : null,
   }));
-  const byAudience = audience === 'customers'
-    ? all.filter((r) => r.isCustomer)
-    : (audience === 'non_customers' ? all.filter((r) => !r.isCustomer) : all);
-  return includeUnsubscribed
-    ? byAudience
-    : byAudience.filter((r) => r.status !== 'unsubscribed' && r.status !== 'bounced');
 }
 
 // Counts for the three list cards, plus how many people the suppression list is
 // holding back. That last number is worth showing — it's the one that explains
 // why "Everyone" is smaller than the contacts page.
 export async function audienceSummary() {
-  const everyone = await audienceRows('everyone', { includeUnsubscribed: true });
+  const everyone = await allAudienceRows();
   const mailable = everyone.filter((r) => r.status !== 'unsubscribed' && r.status !== 'bounced');
   const customers = mailable.filter((r) => r.isCustomer).length;
   // Counted off the same rows as the lists themselves, so "off the list" and
@@ -382,7 +416,9 @@ export function renderForRecipient(campaign, recipient, token, { unsubscribeList
 // unique index on campaign_id + email is what actually guarantees that).
 async function snapshotAudience(campaign) {
   const [people, excluded] = await Promise.all([
-    audienceRows(campaign.audience),
+    // `fresh` on purpose: the browsing screens can live with a minute-old list,
+    // but the moment that decides who actually receives this cannot.
+    audienceRows(campaign.audience, { fresh: true }),
     campaignExclusions(campaign.id),
   ]);
   // Applied at snapshot time rather than at send time: excluding somebody has
@@ -808,13 +844,16 @@ export async function campaignsRoute(req, res, id, action, user) {
     // list: they're the only way to see that someone opted out of a different
     // email and has therefore gone from this one too.
     const status = String(req.query.status || 'mailable');
+    const q = String(req.query.q || '').trim().toLowerCase();
     // Always fetched WITH the opt-outs, whatever is being shown: the tab counts
     // have to include the people who aren't on the list, or "Unsubscribed 0"
     // would read as nobody having unsubscribed.
-    const [counts, rows] = await Promise.all([
-      audienceSummary(),
-      audienceRows(audience, { includeUnsubscribed: true }),
-    ]);
+    //
+    // The whole-workspace summary is skipped while searching — a search box
+    // doesn't show those counts, and computing them was doubling the work on
+    // every keystroke.
+    const rows = await audienceRows(audience, { includeUnsubscribed: true });
+    const counts = q ? null : await audienceSummary();
     const mailable = rows.filter((r) => r.status !== 'unsubscribed' && r.status !== 'bounced');
     let shown = status === 'all' ? rows
       : status === 'opted_in' ? mailable.filter((r) => r.optedIn)
@@ -826,7 +865,6 @@ export async function campaignsRoute(req, res, id, action, user) {
     // Free-text search across the whole list, not just the page on screen —
     // finding one person to leave out of a list of four thousand is the entire
     // job, and a filter that only searches the visible 300 can't do it.
-    const q = String(req.query.q || '').trim().toLowerCase();
     if (q) {
       shown = shown.filter((r) => [r.email, r.name, r.companyName]
         .some((v) => v && String(v).toLowerCase().includes(q)));
@@ -925,6 +963,9 @@ export async function campaignsRoute(req, res, id, action, user) {
     const result = await importCandidates({
       people, importedBy: user.email, runId: trimOrNull(req.body?.runId),
     });
+    // Those people are on the lists as of now, and the screen that just added
+    // them is about to ask for the counts.
+    clearAudienceCache();
     return res.status(200).json(result);
   }
 

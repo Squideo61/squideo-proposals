@@ -924,6 +924,7 @@ function ExclusionsModal({ campaignId, audience, onClose, onChanged }) {
   const { showMsg } = useStore();
   const [q, setQ] = useState('');
   const [results, setResults] = useState(null);
+  const [searching, setSearching] = useState(false);
   const [state, setState] = useState(null);   // { excluded, audienceTotal, willReceive }
   const [busy, setBusy] = useState(false);
   const timer = useRef(null);
@@ -936,17 +937,25 @@ function ExclusionsModal({ campaignId, audience, onClose, onChanged }) {
 
   useEffect(() => { loadExclusions(); }, [loadExclusions]);
 
-  // Debounced: a search per keystroke over the whole audience is a lot of work
-  // for a half-typed name.
+  // Debounced, and says so. The searching flag is set the moment a keystroke
+  // lands rather than when the request goes out, because the gap between typing
+  // and any visible reaction is exactly the part that felt broken.
+  //
+  // Late responses are dropped: type "amy" quickly and three requests are in
+  // flight, which without this can finish out of order and leave the results
+  // for "am" on screen under the word "amy".
   useEffect(() => {
-    if (!q.trim()) { setResults(null); return undefined; }
+    const term = q.trim();
+    if (!term) { setResults(null); setSearching(false); return undefined; }
+    setSearching(true);
+    let live = true;
     clearTimeout(timer.current);
     timer.current = setTimeout(() => {
-      api.get(`/api/crm/campaigns/audience?list=${encodeURIComponent(audience)}&q=${encodeURIComponent(q.trim())}`)
-        .then(setResults)
-        .catch((e) => showMsg(e.message || 'Search failed'));
-    }, 300);
-    return () => clearTimeout(timer.current);
+      api.get(`/api/crm/campaigns/audience?list=${encodeURIComponent(audience)}&q=${encodeURIComponent(term)}`)
+        .then((d) => { if (live) { setResults(d); setSearching(false); } })
+        .catch((e) => { if (live) { setSearching(false); showMsg(e.message || 'Search failed'); } });
+    }, 200);
+    return () => { live = false; clearTimeout(timer.current); };
   }, [q, audience, showMsg]);
 
   const excludedSet = new Set((state?.excluded || []).map((e) => e.email));
@@ -993,14 +1002,32 @@ function ExclusionsModal({ campaignId, audience, onClose, onChanged }) {
         {state && <> Currently going to <strong style={{ color: BRAND.ink }}>{num(state.willReceive)}</strong> of {num(state.audienceTotal)}.</>}
       </p>
 
-      <input
-        value={q} onChange={(e) => setQ(e.target.value)} autoFocus
-        placeholder="Search the list by name, email or company"
-        style={{
-          width: '100%', padding: '9px 11px', border: '1px solid ' + BRAND.border,
-          borderRadius: 8, fontSize: 14, marginBottom: 10,
-        }}
-      />
+      <div style={{ position: 'relative', marginBottom: 10 }}>
+        <input
+          value={q} onChange={(e) => setQ(e.target.value)} autoFocus
+          placeholder="Search the list by name, email or company"
+          style={{
+            width: '100%', padding: '9px 11px', paddingRight: 96,
+            border: '1px solid ' + BRAND.border, borderRadius: 8, fontSize: 14,
+            boxSizing: 'border-box',
+          }}
+        />
+        {/* Inside the box, where the eye already is. A spinner further down the
+            page is one people don't look at. */}
+        {searching && (
+          <span style={{
+            position: 'absolute', right: 11, top: '50%', transform: 'translateY(-50%)',
+            fontSize: 12, color: BRAND.muted, pointerEvents: 'none',
+          }}>Searching…</span>
+        )}
+      </div>
+
+      {/* Nothing found yet, but something IS happening. */}
+      {searching && !results && (
+        <div style={{ padding: '14px 0', fontSize: 12.5, color: BRAND.muted }}>
+          Looking through {state?.audienceTotal ? num(state.audienceTotal) : 'the'} {state?.audienceTotal ? 'people' : 'list'}…
+        </div>
+      )}
 
       {results && (
         <>
@@ -1016,7 +1043,14 @@ function ExclusionsModal({ campaignId, audience, onClose, onChanged }) {
               </button>
             )}
           </div>
-          <div style={{ maxHeight: '32vh', overflowY: 'auto', border: '1px solid ' + BRAND.border, borderRadius: 10, marginBottom: 16 }}>
+          {/* Results stay put while the next search runs, dimmed rather than
+              blanked — a list that empties on every keystroke reads as "no
+              matches" when it means "still looking". */}
+          <div style={{
+            maxHeight: '32vh', overflowY: 'auto', border: '1px solid ' + BRAND.border,
+            borderRadius: 10, marginBottom: 16,
+            opacity: searching ? 0.5 : 1, transition: 'opacity .15s ease',
+          }}>
             {results.sample.map((p) => {
               const already = excludedSet.has(p.email);
               return (
