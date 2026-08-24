@@ -606,6 +606,10 @@ function CampaignEditor({ campaign, counts, onSaved, onDone, onDeleted }) {
   const [preheader, setPreheader] = useState(campaign.preheader || '');
   const [body, setBody] = useState(campaign.bodyHtml || '');
   const [replyTo, setReplyTo] = useState(campaign.replyTo || '');
+  const [hourlyCap, setHourlyCap] = useState(campaign.hourlyCap ?? SEND_SPEEDS[0].hourlyCap);
+  const [dailyCap, setDailyCap] = useState(campaign.dailyCap ?? SEND_SPEEDS[0].dailyCap);
+  const [excluding, setExcluding] = useState(false);
+  const [exclusions, setExclusions] = useState(null);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -618,7 +622,16 @@ function CampaignEditor({ campaign, counts, onSaved, onDone, onDeleted }) {
     name, audience, subject, preheader,
     bodyHtml: sanitizeEmailHtml(body),
     replyTo: replyTo || null,
+    hourlyCap, dailyCap,
   });
+
+  const speed = speedOf({ hourlyCap, dailyCap });
+
+  // How many are actually left after exclusions — the number on the button
+  // has to be the number that receives it.
+  useEffect(() => {
+    api.get(`/api/crm/campaigns/${campaign.id}/exclusions`).then(setExclusions).catch(() => {});
+  }, [campaign.id]);
 
   const save = async ({ quiet = false } = {}) => {
     setSaving(true);
@@ -684,7 +697,11 @@ function CampaignEditor({ campaign, counts, onSaved, onDone, onDeleted }) {
     setDirty(true);
   };
 
-  const recipientCount = counts?.[audience];
+  // The audience minus anyone left out. Falls back to the raw list count until
+  // the exclusions load, so the figure never reads high once they have.
+  const recipientCount = exclusions && exclusions.audienceTotal != null
+    ? exclusions.willReceive
+    : counts?.[audience];
   const ready = subject.trim() && !isHtmlEmpty(body);
 
   const label = { fontSize: 12, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, display: 'block', marginBottom: 6 };
@@ -708,6 +725,43 @@ function CampaignEditor({ campaign, counts, onSaved, onDone, onDeleted }) {
                   </option>
                 ))}
               </select>
+              <div style={{ marginTop: 6, fontSize: 12, color: BRAND.muted }}>
+                {exclusions?.excluded?.length
+                  ? <>Leaving out <strong style={{ color: '#B45309' }}>{num(exclusions.excluded.length)}</strong> · </>
+                  : null}
+                <button
+                  className="btn-ghost" onClick={() => setExcluding(true)}
+                  style={{ fontSize: 12, padding: 0, color: BRAND.blue, textDecoration: 'underline' }}
+                >
+                  {exclusions?.excluded?.length ? 'Edit who' : 'Leave someone out'}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Send speed. Sits with the audience because it's part of the same
+              decision: who it goes to, and how hard that lands. */}
+          <div style={{ marginBottom: 14 }}>
+            <label style={label}>Send speed</label>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {SEND_SPEEDS.map((s) => {
+                const active = speed.key === s.key;
+                return (
+                  <button
+                    key={s.key} onClick={() => { setHourlyCap(s.hourlyCap); setDailyCap(s.dailyCap); setDirty(true); }}
+                    title={s.hint}
+                    style={{
+                      padding: '5px 12px', borderRadius: 999, fontSize: 12.5, cursor: 'pointer',
+                      border: '1px solid ' + (active ? BRAND.blue : BRAND.border),
+                      background: active ? BRAND.blue : 'white',
+                      color: active ? 'white' : BRAND.ink, fontWeight: active ? 700 : 500,
+                    }}
+                  >{s.label}</button>
+                );
+              })}
+            </div>
+            <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 6, lineHeight: 1.5 }}>
+              {speed.hint} {recipientCount != null && <>Sending to {num(recipientCount)} would take {paceEstimate(recipientCount, speed)}.</>}
             </div>
           </div>
 
@@ -822,10 +876,20 @@ function CampaignEditor({ campaign, counts, onSaved, onDone, onDeleted }) {
         </p>
       </aside>
 
+      {excluding && (
+        <ExclusionsModal
+          campaignId={campaign.id}
+          audience={audience}
+          onChanged={setExclusions}
+          onClose={() => setExcluding(false)}
+        />
+      )}
       {confirming && (
         <SendConfirmModal
           campaignId={campaign.id}
           audience={audience}
+          excluded={exclusions?.excluded?.length || 0}
+          speed={speed}
           onClose={() => setConfirming(false)}
           onSent={() => { setConfirming(false); onDone(); }}
         />
@@ -846,10 +910,200 @@ function CampaignEditor({ campaign, counts, onSaved, onDone, onDeleted }) {
   );
 }
 
+// Leaving individuals out of one send.
+//
+// Distinct from unsubscribing, and the wording works hard to keep them apart:
+// an unsubscribe is the recipient's decision and applies to everything we ever
+// send, where this is the sender's and applies to this campaign only. Confusing
+// the two either emails someone who asked you not to, or quietly drops someone
+// from every future list because of a one-off.
+//
+// Search runs server-side across the whole list — picking one person out of
+// four thousand is the entire job, and filtering the visible page can't do it.
+function ExclusionsModal({ campaignId, audience, onClose, onChanged }) {
+  const { showMsg } = useStore();
+  const [q, setQ] = useState('');
+  const [results, setResults] = useState(null);
+  const [state, setState] = useState(null);   // { excluded, audienceTotal, willReceive }
+  const [busy, setBusy] = useState(false);
+  const timer = useRef(null);
+
+  const loadExclusions = useCallback(() => (
+    api.get(`/api/crm/campaigns/${campaignId}/exclusions`)
+      .then((d) => { setState(d); onChanged?.(d); return d; })
+      .catch(() => null)
+  ), [campaignId, onChanged]);
+
+  useEffect(() => { loadExclusions(); }, [loadExclusions]);
+
+  // Debounced: a search per keystroke over the whole audience is a lot of work
+  // for a half-typed name.
+  useEffect(() => {
+    if (!q.trim()) { setResults(null); return undefined; }
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => {
+      api.get(`/api/crm/campaigns/audience?list=${encodeURIComponent(audience)}&q=${encodeURIComponent(q.trim())}`)
+        .then(setResults)
+        .catch((e) => showMsg(e.message || 'Search failed'));
+    }, 300);
+    return () => clearTimeout(timer.current);
+  }, [q, audience, showMsg]);
+
+  const excludedSet = new Set((state?.excluded || []).map((e) => e.email));
+
+  const exclude = async (person) => {
+    setBusy(true);
+    try {
+      await api.post(`/api/crm/campaigns/${campaignId}/exclusions`, { email: person.email });
+      await loadExclusions();
+    } catch (e) { showMsg(e.message || 'Could not exclude them'); }
+    finally { setBusy(false); }
+  };
+
+  const include = async (email) => {
+    setBusy(true);
+    try {
+      await api.delete(`/api/crm/campaigns/${campaignId}/exclusions?email=${encodeURIComponent(email)}`);
+      await loadExclusions();
+    } catch (e) { showMsg(e.message || 'Could not put them back'); }
+    finally { setBusy(false); }
+  };
+
+  const excludeAllShown = async () => {
+    const people = (results?.sample || []).filter((p) => !excludedSet.has(p.email));
+    if (!people.length) return;
+    setBusy(true);
+    try {
+      await api.post(`/api/crm/campaigns/${campaignId}/exclusions`, { emails: people.map((p) => p.email) });
+      await loadExclusions();
+    } catch (e) { showMsg(e.message || 'Could not exclude them'); }
+    finally { setBusy(false); }
+  };
+
+  const row = {
+    display: 'flex', gap: 10, alignItems: 'center', padding: '9px 12px',
+    borderBottom: '1px solid ' + BRAND.paper, fontSize: 13, flexWrap: 'wrap',
+  };
+
+  return (
+    <Modal onClose={onClose} maxWidth={640}>
+      <h3 style={{ margin: '0 0 4px', fontSize: 17, fontWeight: 700, color: BRAND.ink }}>Leave people out</h3>
+      <p style={{ margin: '0 0 14px', fontSize: 12.5, color: BRAND.muted, lineHeight: 1.55 }}>
+        For this campaign only — it doesn't unsubscribe anyone or affect any other send.
+        {state && <> Currently going to <strong style={{ color: BRAND.ink }}>{num(state.willReceive)}</strong> of {num(state.audienceTotal)}.</>}
+      </p>
+
+      <input
+        value={q} onChange={(e) => setQ(e.target.value)} autoFocus
+        placeholder="Search the list by name, email or company"
+        style={{
+          width: '100%', padding: '9px 11px', border: '1px solid ' + BRAND.border,
+          borderRadius: 8, fontSize: 14, marginBottom: 10,
+        }}
+      />
+
+      {results && (
+        <>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12.5, color: BRAND.muted }}>
+              {results.shown === 0 ? 'Nobody matches that.' : `${num(results.shown)} ${results.shown === 1 ? 'match' : 'matches'}`}
+              {results.shown > results.sample.length && ` · showing ${num(results.sample.length)}`}
+            </span>
+            {results.sample.length > 1 && (
+              <button className="btn-ghost" onClick={excludeAllShown} disabled={busy}
+                style={{ fontSize: 12, padding: '2px 9px', border: '1px solid ' + BRAND.border, borderRadius: 999 }}>
+                Exclude all {num(results.sample.length)}
+              </button>
+            )}
+          </div>
+          <div style={{ maxHeight: '32vh', overflowY: 'auto', border: '1px solid ' + BRAND.border, borderRadius: 10, marginBottom: 16 }}>
+            {results.sample.map((p) => {
+              const already = excludedSet.has(p.email);
+              return (
+                <div key={p.email} style={row}>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ fontWeight: 600, color: BRAND.ink }}>{p.name || p.email}</span>
+                    {p.name && <span style={{ color: BRAND.muted, fontSize: 12 }}> · {p.email}</span>}
+                    {p.companyName && <span style={{ color: BRAND.muted, fontSize: 12 }}> · {p.companyName}</span>}
+                  </span>
+                  {already
+                    ? <span style={{ fontSize: 11.5, fontWeight: 700, color: '#B45309' }}>Excluded</span>
+                    : (
+                      <button className="btn-ghost" onClick={() => exclude(p)} disabled={busy}
+                        style={{ fontSize: 12, padding: '2px 9px', border: '1px solid ' + BRAND.border, borderRadius: 999 }}>
+                        Exclude
+                      </button>
+                    )}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      <div style={{ fontSize: 12.5, fontWeight: 700, color: BRAND.ink, marginBottom: 6 }}>
+        Excluded from this send ({num(state?.excluded?.length || 0)})
+      </div>
+      <div style={{ maxHeight: '28vh', overflowY: 'auto', border: '1px solid ' + BRAND.border, borderRadius: 10 }}>
+        {(state?.excluded || []).map((e) => (
+          <div key={e.email} style={row}>
+            <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-all' }}>{e.email}</span>
+            <button className="btn-ghost" onClick={() => include(e.email)} disabled={busy}
+              style={{ fontSize: 12, padding: '2px 9px', border: '1px solid ' + BRAND.border, borderRadius: 999 }}>
+              Put back
+            </button>
+          </div>
+        ))}
+        {!state?.excluded?.length && (
+          <div style={{ padding: 16, textAlign: 'center', color: BRAND.muted, fontSize: 12.5 }}>
+            Nobody's excluded — everyone on the list gets it.
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }}>
+        <button className="btn-primary" onClick={onClose}>Done</button>
+      </div>
+    </Modal>
+  );
+}
+
+// How fast a campaign is allowed to go out.
+//
+// The presets exist because "500 an hour" is not a decision anyone can make
+// without knowing what a mailbox provider thinks of them — where "spread it
+// over a fortnight because we've never done this before" is.
+const SEND_SPEEDS = [
+  {
+    key: 'warmup', label: 'Warm up', hourlyCap: 40, dailyCap: 300,
+    hint: 'About 300 a day. The right choice for a first big send from a domain that has never done marketing — a slow start is what builds the reputation everything later depends on.',
+  },
+  {
+    key: 'steady', label: 'Steady', hourlyCap: 150, dailyCap: 1500,
+    hint: 'About 1,500 a day. Once a few sends have gone out cleanly and bounces are low.',
+  },
+  {
+    key: 'full', label: 'All at once', hourlyCap: null, dailyCap: null,
+    hint: 'As fast as the sender allows, roughly 300 a minute. Only for a list you have emailed before without trouble.',
+  },
+];
+
+const speedOf = (c) => SEND_SPEEDS.find((s) => s.hourlyCap === (c.hourlyCap || null)
+  && s.dailyCap === (c.dailyCap || null)) || SEND_SPEEDS[0];
+
+// How long a list takes at a given speed — the number that makes a cap feel
+// like a decision rather than a restriction.
+function paceEstimate(count, speed) {
+  if (!speed.dailyCap || !count) return 'about 15 minutes';
+  const days = Math.ceil(count / speed.dailyCap);
+  if (days <= 1) return 'under a day';
+  return `about ${days} days`;
+}
+
 // The last gate. Shows the real recipient count fetched fresh (not the one
 // cached when the page loaded) — this is the one number that must not be stale,
 // because it's the one the sender is agreeing to.
-function SendConfirmModal({ campaignId, audience, onClose, onSent }) {
+function SendConfirmModal({ campaignId, audience, excluded = 0, speed = null, onClose, onSent }) {
   const { showMsg } = useStore();
   const [audienceData, setAudienceData] = useState(null);
   const [when, setWhen] = useState('');
@@ -872,15 +1126,19 @@ function SendConfirmModal({ campaignId, audience, onClose, onSent }) {
     }
   };
 
-  const total = audienceData?.total;
+  const total = audienceData?.total == null ? null : Math.max(0, audienceData.total - excluded);
 
   return (
     <Modal onClose={onClose} maxWidth={460}>
       <h3 style={{ margin: '0 0 10px', fontSize: 17, fontWeight: 700, color: BRAND.ink }}>Send this campaign?</h3>
       <p style={{ margin: '0 0 10px', fontSize: 14, color: BRAND.ink, lineHeight: 1.55 }}>
         It goes to <strong>{total == null ? '…' : num(total)}</strong> {listLabel(audience).toLowerCase()}
-        {' '}— people who haven't unsubscribed, excluding our own addresses. This can't be undone once it starts,
-        though you can pause it part-way.
+        {' '}— people who haven't unsubscribed, excluding our own addresses
+        {excluded > 0 && <> and the <strong>{num(excluded)}</strong> you left out</>}.
+        {speed && speed.dailyCap
+          ? <> At the <strong>{speed.label.toLowerCase()}</strong> speed it'll go out over {paceEstimate(total || 0, speed)},
+              a few hundred a day — you can watch it and stop at any point.</>
+          : <> This can't be undone once it starts, though you can pause it part-way.</>}
       </p>
 
       {/* The consent split, at the moment it matters most. Not a warning — just
@@ -984,6 +1242,19 @@ function CampaignReport({ state, onReload, onOpenContact, isMobile, showMsg }) {
         <Tile icon={MousePointerClick} label="Clicked" value={pct(stats?.clickRate)} hint={`${num(stats?.clicked)} people · ${num(stats?.clicks)} clicks`} good={stats?.clickRate >= 3} />
         <Tile icon={BarChart3} label="Click-to-open" value={pct(stats?.clickToOpenRate)} hint="of those who read it, who acted" />
         <Tile icon={X} label="Unsubscribed" value={pct(stats?.unsubscribeRate)} hint={`${num(stats?.unsubscribed)} ${stats?.unsubscribed === 1 ? 'person' : 'people'}`} bad={stats?.unsubscribeRate >= 0.5} />
+        {/* The two numbers mailbox providers judge the domain on. Shown even at
+            zero: their absence is the reassuring part, and a rate you only see
+            once it's bad is a rate you find out about too late. */}
+        <Tile
+          icon={AlertTriangle} label="Bounced" value={pct(stats?.bounceRate)}
+          hint={`${num(stats?.bounced)} dead ${stats?.bounced === 1 ? 'address' : 'addresses'} · keep under 2%`}
+          bad={stats?.bounceRate >= 2}
+        />
+        <Tile
+          icon={Ban} label="Spam reports" value={pct(stats?.complaintRate)}
+          hint={`${num(stats?.complaints)} · Google's limit is 0.3%`}
+          bad={stats?.complaintRate >= 0.3}
+        />
       </div>
 
       <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'flex-start' }}>

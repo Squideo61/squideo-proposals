@@ -102,6 +102,21 @@ export function ensureCampaignTables() {
                 ON email_campaign_recipients (campaign_id, status)`;
     await sql`CREATE INDEX IF NOT EXISTS email_campaigns_status_idx
                 ON email_campaigns (status)`;
+    await sql`
+      CREATE TABLE IF NOT EXISTS email_campaign_exclusions (
+        campaign_id TEXT        NOT NULL REFERENCES email_campaigns(id) ON DELETE CASCADE,
+        email       TEXT        NOT NULL,
+        reason      TEXT,
+        created_by  TEXT,
+        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (campaign_id, email)
+      )`;
+    await sql`ALTER TABLE email_campaigns ADD COLUMN IF NOT EXISTS hourly_cap INTEGER`;
+    await sql`ALTER TABLE email_campaigns ADD COLUMN IF NOT EXISTS daily_cap INTEGER`;
+    await sql`ALTER TABLE email_campaign_recipients ADD COLUMN IF NOT EXISTS bounced_at TIMESTAMPTZ`;
+    await sql`ALTER TABLE email_campaign_recipients ADD COLUMN IF NOT EXISTS bounce_kind TEXT`;
+    await sql`CREATE INDEX IF NOT EXISTS email_campaign_recipients_provider_idx
+                ON email_campaign_recipients (provider_id) WHERE provider_id IS NOT NULL`;
     return true;
   })().catch((err) => {
     console.warn('[campaigns] ensure failed', err.message);
@@ -366,9 +381,16 @@ export function renderForRecipient(campaign, recipient, token, { unsubscribeList
 // doesn't get a half-finished blast, and nobody can receive it twice (the
 // unique index on campaign_id + email is what actually guarantees that).
 async function snapshotAudience(campaign) {
-  const people = await audienceRows(campaign.audience);
-  if (people.length) {
-    await batchWrite(people.map((p) => sql`
+  const [people, excluded] = await Promise.all([
+    audienceRows(campaign.audience),
+    campaignExclusions(campaign.id),
+  ]);
+  // Applied at snapshot time rather than at send time: excluding somebody has
+  // to mean they never enter the queue, not that we notice on the way past.
+  const skip = new Set(excluded.map((e) => e.email));
+  const wanted = skip.size ? people.filter((p) => !skip.has(p.email)) : people;
+  if (wanted.length) {
+    await batchWrite(wanted.map((p) => sql`
       INSERT INTO email_campaign_recipients
         (campaign_id, email, name, company_name, contact_id, company_id, is_customer)
       VALUES (${campaign.id}, ${p.email}, ${p.name}, ${p.companyName},
@@ -381,6 +403,42 @@ async function snapshotAudience(campaign) {
   return row?.n || 0;
 }
 
+async function campaignExclusions(campaignId) {
+  const rows = await sql`
+    SELECT email, reason, created_by, created_at
+      FROM email_campaign_exclusions WHERE campaign_id = ${campaignId}
+     ORDER BY created_at DESC`.catch(() => []);
+  return rows.map((r) => ({
+    email: r.email, reason: r.reason || null,
+    createdBy: r.created_by || null, createdAt: r.created_at,
+  }));
+}
+
+// ── the speed limit ─────────────────────────────────────────────────────────
+// How many more this campaign may send right now.
+//
+// A domain with no marketing history that suddenly posts four thousand emails
+// in a quarter of an hour looks, to every mailbox provider, exactly like a
+// compromised account. The caps are what turn a big list into a send that
+// happens over days — which is what "warming up" actually is.
+//
+// Both windows are measured from the recipient rows themselves, so a restarted
+// or resumed campaign can't reset its own allowance by forgetting.
+async function sendAllowance(campaign) {
+  const hourly = Number(campaign.hourlyCap) || null;
+  const daily = Number(campaign.dailyCap) || null;
+  if (!hourly && !daily) return BATCH_LIMIT;
+  const [used] = await sql`
+    SELECT COUNT(*) FILTER (WHERE sent_at > NOW() - interval '1 hour')::int  AS last_hour,
+           COUNT(*) FILTER (WHERE sent_at > NOW() - interval '24 hours')::int AS last_day
+      FROM email_campaign_recipients
+     WHERE campaign_id = ${campaign.id} AND status = 'sent'`;
+  const room = [BATCH_LIMIT];
+  if (hourly) room.push(hourly - (used?.last_hour || 0));
+  if (daily) room.push(daily - (used?.last_day || 0));
+  return Math.max(0, Math.min(...room));
+}
+
 // Send one batch for one campaign. Returns how many recipients it handled — 0
 // means the queue is empty and the campaign can be closed off.
 //
@@ -389,6 +447,11 @@ async function snapshotAudience(campaign) {
 // only thing standing between a slow send and someone receiving the campaign
 // twice, which is why it's one statement rather than a select then an update.
 async function sendBatch(campaign) {
+  const allowance = await sendAllowance(campaign);
+  // Throttled out for now. Not finished — the queue still has people in it, so
+  // the caller must not close the campaign off.
+  if (allowance <= 0) return { sent: 0, throttled: true };
+
   const claimed = await sql`
     UPDATE email_campaign_recipients r
        SET status = 'sending'
@@ -396,13 +459,13 @@ async function sendBatch(campaign) {
         SELECT id FROM email_campaign_recipients
          WHERE campaign_id = ${campaign.id} AND status = 'queued'
          ORDER BY id
-         LIMIT ${BATCH_LIMIT}
+         LIMIT ${allowance}
          FOR UPDATE SKIP LOCKED
       ) c
      WHERE r.id = c.id
     RETURNING r.id, r.email, r.name, r.company_name
   `;
-  if (!claimed.length) return 0;
+  if (!claimed.length) return { sent: 0, throttled: false };
 
   const recipients = claimed.map((r) => ({
     id: r.id,
@@ -474,7 +537,7 @@ async function sendBatch(campaign) {
        WHERE id = ${r.id}
     `;
   }));
-  return recipients.length;
+  return { sent: recipients.length, throttled: false };
 }
 
 // Drain whatever is due: scheduled campaigns whose time has come, plus any
@@ -510,20 +573,24 @@ export async function drainCampaigns({ batches = BATCHES_PER_RUN, campaignId = n
       });
       await sql`UPDATE email_campaigns SET started_at = NOW() WHERE id = ${campaign.id}`;
     }
+    let throttled = false;
     for (let b = 0; b < batches; b++) {
-      let n = 0;
-      try { n = await sendBatch(campaign); }
+      let result = { sent: 0, throttled: false };
+      try { result = await sendBatch(campaign); }
       catch (err) {
         console.error('[campaigns] batch failed', { id: campaign.id, err: err.message });
         break;
       }
-      if (!n) break;
-      sent += n;
+      if (result.throttled) { throttled = true; break; }
+      if (!result.sent) break;
+      sent += result.sent;
     }
     const [remaining] = await sql`
       SELECT COUNT(*)::int AS n FROM email_campaign_recipients
        WHERE campaign_id = ${campaign.id} AND status IN ('queued', 'sending')`;
-    if (!remaining?.n) {
+    // A throttled campaign is mid-send, not finished — closing it off here
+    // would strand everyone still queued behind the cap.
+    if (!remaining?.n && !throttled) {
       await sql`
         UPDATE email_campaigns SET status = 'sent', completed_at = NOW(), updated_at = NOW()
          WHERE id = ${campaign.id} AND status = 'sending'`;
@@ -545,7 +612,9 @@ export async function campaignStats(campaignId) {
            COUNT(*) FILTER (WHERE status = 'queued')::int  AS queued,
            COUNT(*) FILTER (WHERE status = 'sending')::int AS sending,
            COUNT(*) FILTER (WHERE status = 'failed')::int  AS failed,
-           COUNT(*) FILTER (WHERE status = 'skipped')::int AS skipped
+           COUNT(*) FILTER (WHERE status = 'skipped')::int AS skipped,
+           COUNT(*) FILTER (WHERE bounced_at IS NOT NULL AND bounce_kind = 'hard')::int AS bounced,
+           COUNT(*) FILTER (WHERE bounce_kind = 'complaint')::int AS complaints
       FROM email_campaign_recipients WHERE campaign_id = ${campaignId}`;
   const [engagement] = await sql`
     SELECT COUNT(DISTINCT r.id) FILTER (WHERE e.kind = 'open')::int  AS opened,
@@ -574,6 +643,13 @@ export async function campaignStats(campaignId) {
     sending: counts?.sending || 0,
     failed: counts?.failed || 0,
     skipped: counts?.skipped || 0,
+    bounced: counts?.bounced || 0,
+    complaints: counts?.complaints || 0,
+    // The two numbers every mailbox provider judges us on. Shown as rates
+    // because the thresholds are rates: roughly 2% for bounces, and Google
+    // publishes 0.3% for complaints.
+    bounceRate: rate(counts?.bounced || 0),
+    complaintRate: rate(counts?.complaints || 0),
     opened,
     opens: engagement?.opens || 0,
     clicked,
@@ -682,6 +758,8 @@ function serialiseCampaign(row) {
     preheader: row.preheader || '',
     bodyHtml: row.body_html || '',
     replyTo: row.reply_to || null,
+    hourlyCap: row.hourly_cap || null,
+    dailyCap: row.daily_cap || null,
     status: row.status,
     scheduledAt: row.scheduled_at,
     startedAt: row.started_at,
@@ -724,12 +802,21 @@ export async function campaignsRoute(req, res, id, action, user) {
       audienceRows(audience, { includeUnsubscribed: true }),
     ]);
     const mailable = rows.filter((r) => r.status !== 'unsubscribed' && r.status !== 'bounced');
-    const shown = status === 'all' ? rows
+    let shown = status === 'all' ? rows
       : status === 'opted_in' ? mailable.filter((r) => r.optedIn)
       : status === 'soft' ? mailable.filter((r) => !r.optedIn)
       : status === 'unsubscribed' ? rows.filter((r) => r.status === 'unsubscribed')
       : status === 'bounced' ? rows.filter((r) => r.status === 'bounced')
       : mailable;
+
+    // Free-text search across the whole list, not just the page on screen —
+    // finding one person to leave out of a list of four thousand is the entire
+    // job, and a filter that only searches the visible 300 can't do it.
+    const q = String(req.query.q || '').trim().toLowerCase();
+    if (q) {
+      shown = shown.filter((r) => [r.email, r.name, r.companyName]
+        .some((v) => v && String(v).toLowerCase().includes(q)));
+    }
     return res.status(200).json({
       counts,
       audience,
@@ -745,6 +832,7 @@ export async function campaignsRoute(req, res, id, action, user) {
       },
       shown: shown.length,
       sample: shown.slice(0, 300),
+      query: q || null,
     });
   }
 
@@ -881,6 +969,50 @@ export async function campaignsRoute(req, res, id, action, user) {
   const campaign = serialiseCampaign(existing);
   const editable = campaign.status === 'draft' || campaign.status === 'scheduled';
 
+  // GET /campaigns/:id/exclusions — who's being left out of this one, and how
+  // many people that leaves.
+  if (action === 'exclusions' && req.method === 'GET') {
+    const [excluded, people] = await Promise.all([
+      campaignExclusions(id),
+      audienceRows(campaign.audience).catch(() => []),
+    ]);
+    const skip = new Set(excluded.map((e) => e.email));
+    return res.status(200).json({
+      excluded,
+      audienceTotal: people.length,
+      willReceive: people.filter((p) => !skip.has(p.email)).length,
+    });
+  }
+
+  // POST /campaigns/:id/exclusions — leave people out of this send.
+  //
+  // Not a suppression: that is the recipient's own decision, applies to
+  // everything we ever send, and is not ours to make on their behalf. This is
+  // the sender's, for this campaign only.
+  if (action === 'exclusions' && req.method === 'POST') {
+    if (!editable) {
+      return res.status(409).json({ error: 'This campaign has already started — its recipients are fixed' });
+    }
+    const emails = (Array.isArray(req.body?.emails) ? req.body.emails : [req.body?.email])
+      .map((e) => String(e || '').trim().toLowerCase())
+      .filter((e) => e.includes('@'));
+    if (!emails.length) return res.status(400).json({ error: 'Which address?' });
+    const reason = trimOrNull(req.body?.reason);
+    await batchWrite(emails.map((email) => sql`
+      INSERT INTO email_campaign_exclusions (campaign_id, email, reason, created_by)
+      VALUES (${id}, ${email}, ${reason}, ${user.email})
+      ON CONFLICT (campaign_id, email) DO NOTHING`));
+    return res.status(200).json({ ok: true, excluded: await campaignExclusions(id) });
+  }
+
+  // DELETE /campaigns/:id/exclusions?email=… — put someone back in.
+  if (action === 'exclusions' && req.method === 'DELETE') {
+    const email = String(req.query.email || req.body?.email || '').trim().toLowerCase();
+    if (!email) return res.status(400).json({ error: 'Which address?' });
+    await sql`DELETE FROM email_campaign_exclusions WHERE campaign_id = ${id} AND email = ${email}`;
+    return res.status(200).json({ ok: true, excluded: await campaignExclusions(id) });
+  }
+
   // GET /campaigns/:id — everything the report page needs in one round trip.
   if (!action && req.method === 'GET') {
     const [stats, links, recipients] = await Promise.all([
@@ -908,6 +1040,8 @@ export async function campaignsRoute(req, res, id, action, user) {
              preheader = ${b.preheader === undefined ? campaign.preheader : trimOrNull(b.preheader)},
              body_html = ${b.bodyHtml ?? campaign.bodyHtml},
              reply_to = ${b.replyTo === undefined ? campaign.replyTo : trimOrNull(b.replyTo)},
+             hourly_cap = ${b.hourlyCap === undefined ? campaign.hourlyCap : (Number(b.hourlyCap) || null)},
+             daily_cap = ${b.dailyCap === undefined ? campaign.dailyCap : (Number(b.dailyCap) || null)},
              updated_at = NOW()
        WHERE id = ${id}`;
     const [row] = await sql`SELECT * FROM email_campaigns WHERE id = ${id}`;
