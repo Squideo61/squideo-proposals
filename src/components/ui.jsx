@@ -4,6 +4,7 @@ import { Check, ChevronDown, Copy, Mail, MoreVertical, Phone, Video, X } from 'l
 import { BRAND } from '../theme.js';
 import { SQUIDEO_LOGO } from '../defaults.js';
 import { formatGBP, useIsMobile } from '../utils.js';
+import { isPlainLeftClick } from '../lib/routes.js';
 
 // A labelled form field: the label sits above its input(s). Shared by the deal
 // edit modal and the email composer's To/Cc/Bcc/Subject rows.
@@ -13,6 +14,37 @@ export function FormRow({ label, children }) {
       <span>{label}</span>
       {children}
     </label>
+  );
+}
+
+// A navigation control that is a real link.
+//
+// Everything in the CRM's nav used to be a <button>, which meant right-click →
+// "Open link in new tab", middle-click and ctrl-click all did nothing: the
+// browser only offers those on an <a href>, and no amount of onClick can
+// reproduce them. So this renders an anchor pointing at the destination's own
+// hash URL, and only takes the click over when the browser wasn't going to do
+// something more interesting with it.
+//
+// `onActivate` still runs for a plain left click, so in-app navigation stays a
+// state change rather than a page load.
+export function NavLink({ href, onActivate, children, style, className, title, ...rest }) {
+  const handle = (e) => {
+    if (!isPlainLeftClick(e)) return;   // let the browser open its tab/window
+    e.preventDefault();
+    onActivate?.(e);
+  };
+  return (
+    <a
+      href={href}
+      onClick={handle}
+      style={{ textDecoration: 'none', color: 'inherit', ...style }}
+      className={className}
+      title={title}
+      {...rest}
+    >
+      {children}
+    </a>
   );
 }
 

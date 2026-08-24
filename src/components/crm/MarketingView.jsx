@@ -4,7 +4,8 @@ import { ArrowLeft, Send, BarChart3, MailQuestion, LayoutDashboard, Megaphone, C
 import { BRAND, APP_MAX_WIDTH } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, useIsMobile } from '../../utils.js';
-import { CallLink, Modal } from './../ui.jsx';
+import { CallLink, Modal, NavLink } from './../ui.jsx';
+import { buildHash } from '../../lib/routes.js';
 import { computeRange, rangeHeading, fmtRangeDates, segBtn, RangeControl, thisMonthStr } from './dateRange.jsx';
 import { CourseLeadsTab } from './CourseLeadsTab.jsx';
 import { PortalStatsTab } from './PortalStatsTab.jsx';
@@ -190,9 +191,12 @@ export function MarketingView({ section: sectionProp, onBack, onOpenCompany, onO
           const Icon = t.icon;
           const active = section === t.key;
           return (
-            <button
+            <NavLink
               key={t.key}
-              onClick={() => setSection(t.key)}
+              // Each tab is its own address, so it can be opened in a new tab
+              // like any other link. A plain click stays a state change.
+              href={buildHash('marketing', t.key)}
+              onActivate={() => setSection(t.key)}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 7, padding: '10px 14px',
                 border: 'none', background: 'none', cursor: 'pointer', fontSize: 14,
@@ -201,7 +205,7 @@ export function MarketingView({ section: sectionProp, onBack, onOpenCompany, onO
               }}
             >
               <Icon size={15} /> {t.label}
-            </button>
+            </NavLink>
           );
         })}
       </div>

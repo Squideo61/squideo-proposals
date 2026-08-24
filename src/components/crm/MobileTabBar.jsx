@@ -1,11 +1,13 @@
 import React, { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { BRAND } from '../../theme.js';
+import { NavLink } from '../ui.jsx';
 
 // Fixed bottom navigation for phones — the native-app pattern that replaces the
 // old crammed top-bar icon row. Rendered only on mobile (the caller gates on
 // useIsMobile). `tabs` is an ordered list of up to ~5 destinations:
-//   { key, label, icon, onClick, views?, badge? }
+//   { key, label, icon, onClick, href?, views?, badge? }
+// Tabs with an href render as real links, so they can be opened in a new tab.
 // A tab reads as active when the current `view` is in its `views` list. The
 // final "More" tab opens the full nav drawer rather than routing.
 //
@@ -40,10 +42,10 @@ export function MobileTabBar({ tabs, view }) {
         const Icon = t.icon;
         const active = Array.isArray(t.views) && t.views.includes(view);
         return (
-          <button
+          <NavLink
             key={t.key}
-            type="button"
-            onClick={t.onClick}
+            href={t.href}
+            onActivate={t.onClick}
             aria-current={active ? 'page' : undefined}
             style={{
               flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column',
@@ -63,7 +65,7 @@ export function MobileTabBar({ tabs, view }) {
               )}
             </span>
             <span style={{ fontSize: 10.5, fontWeight: active ? 700 : 500, lineHeight: 1 }}>{t.label}</span>
-          </button>
+          </NavLink>
         );
       })}
     </nav>

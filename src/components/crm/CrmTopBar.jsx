@@ -5,7 +5,8 @@ import { useStore } from '../../store.jsx';
 import { useIsMobile, formatTaskDue } from '../../utils.js';
 import { permissionsInclude } from '../../lib/permissions.js';
 import { navFlags } from '../../lib/viewAccess.js';
-import { Logo } from '../ui.jsx';
+import { Logo, NavLink } from '../ui.jsx';
+import { buildHash } from '../../lib/routes.js';
 import { NotificationBell } from '../NotificationBell.jsx';
 import { MobileNotifications } from '../MobileNotifications.jsx';
 import { MobileTabBar } from './MobileTabBar.jsx';
@@ -83,15 +84,20 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
   // The £ (sales & finance) notifications bell — Admin, Directors, Project Managers.
   const canFinanceBell = permissionsInclude(perms, 'finance.notifications');
 
+  // Every destination carries its own URL as well as its action, so the nav
+  // can be rendered as real links: right-click, middle-click and ctrl-click
+  // then work, which no <button> can offer.
+  const to = (view, id = null) => ({ href: buildHash(view, id), go: () => navigate(view, id) });
+
   const sections = [
     {
       key: 'business',
       label: 'Business',
       views: ['overview', 'finance', 'performance'],
       items: [
-        { label: 'Overview', icon: LayoutDashboard, go: () => navigate('overview') },
+        { label: 'Overview', icon: LayoutDashboard, ...to('overview') },
         ...(canPendingPayments ? [
-          { label: 'Finance', icon: PoundSterling, go: () => navigate('finance') },
+          { label: 'Finance', icon: PoundSterling, ...to('finance') },
         ] : []),
       ],
     },
@@ -100,13 +106,13 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
       label: 'Marketing',
       views: ['marketing'],
       items: canMarketing ? [
-        { label: 'Dashboard', icon: LayoutDashboard, go: () => navigate('marketing', 'overview') },
-        { label: 'Reports', icon: BarChart3, go: () => navigate('marketing', 'reports') },
-        { label: 'Leads', icon: MailQuestion, go: () => navigate('marketing', 'leads') },
-        { label: 'Email', icon: Send, go: () => navigate('marketing', 'email') },
-        { label: 'Search', icon: Search, go: () => navigate('marketing', 'search') },
-        { label: 'Traffic', icon: Globe, go: () => navigate('marketing', 'traffic') },
-        { label: 'Settings', icon: Megaphone, go: () => navigate('marketing', 'settings') },
+        { label: 'Dashboard', icon: LayoutDashboard, ...to('marketing', 'overview') },
+        { label: 'Reports', icon: BarChart3, ...to('marketing', 'reports') },
+        { label: 'Leads', icon: MailQuestion, ...to('marketing', 'leads') },
+        { label: 'Email', icon: Send, ...to('marketing', 'email') },
+        { label: 'Search', icon: Search, ...to('marketing', 'search') },
+        { label: 'Traffic', icon: Globe, ...to('marketing', 'traffic') },
+        { label: 'Settings', icon: Megaphone, ...to('marketing', 'settings') },
       ] : [],
     },
     {
@@ -114,10 +120,10 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
       label: 'Sales',
       views: ['list', 'pipeline', 'deal', 'quote-requests', 'templates', 'sales-insights'],
       items: [
-        ...(canQuoteRequests ? [{ label: 'Quote Requests', icon: MailQuestion, go: () => navigate('quote-requests'), count: newQuoteRequestsCount }] : []),
-        { label: 'Proposals', icon: FileText, go: () => navigate('list') },
-        { label: 'Sales Pipeline', icon: KanbanSquare, go: () => navigate('pipeline') },
-        { label: 'Sales Insights', icon: Gauge, go: () => navigate('sales-insights') },
+        ...(canQuoteRequests ? [{ label: 'Quote Requests', icon: MailQuestion, ...to('quote-requests'), count: newQuoteRequestsCount }] : []),
+        { label: 'Proposals', icon: FileText, ...to('list') },
+        { label: 'Sales Pipeline', icon: KanbanSquare, ...to('pipeline') },
+        { label: 'Sales Insights', icon: Gauge, ...to('sales-insights') },
       ],
     },
     {
@@ -125,13 +131,13 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
       label: 'Projects',
       views: ['production', 'projects', 'project', 'video', 'storyboards', 'revisions', 'schedule', 'prod-dashboard', 'partner-credits', 'partner-credit-detail', 'portal-activity'],
       items: [
-        ...(canProduction ? [{ label: 'Projects', icon: LayoutGrid, go: () => navigate('projects') }] : []),
-        ...(canProduction ? [{ label: 'Production board', icon: KanbanSquare, go: () => navigate('production') }] : []),
-        ...(canSchedule ? [{ label: 'Staff Production Rota', icon: CalendarDays, go: () => navigate('schedule') }] : []),
-        ...(canRevisions ? [{ label: 'Storyboard Revisions', icon: Images, go: () => navigate('storyboards') }] : []),
-        ...(canRevisions ? [{ label: 'Video Revisions', icon: Clapperboard, go: () => navigate('revisions') }] : []),
-        { label: 'Partners & Credits', icon: Coins, go: () => navigate('partner-credits') },
-        ...(canPortalPreview ? [{ label: 'Client Portal Activity', icon: Activity, go: () => navigate('portal-activity') }] : []),
+        ...(canProduction ? [{ label: 'Projects', icon: LayoutGrid, ...to('projects') }] : []),
+        ...(canProduction ? [{ label: 'Production board', icon: KanbanSquare, ...to('production') }] : []),
+        ...(canSchedule ? [{ label: 'Staff Production Rota', icon: CalendarDays, ...to('schedule') }] : []),
+        ...(canRevisions ? [{ label: 'Storyboard Revisions', icon: Images, ...to('storyboards') }] : []),
+        ...(canRevisions ? [{ label: 'Video Revisions', icon: Clapperboard, ...to('revisions') }] : []),
+        { label: 'Partners & Credits', icon: Coins, ...to('partner-credits') },
+        ...(canPortalPreview ? [{ label: 'Client Portal Activity', icon: Activity, ...to('portal-activity') }] : []),
       ],
     },
   ].filter(s => s.items.length > 0);
@@ -144,7 +150,7 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
     ? sections
         .filter((s) => s.key === 'projects')
         .map((s) => ({ ...s, items: [
-          { label: 'Dashboard', icon: LayoutDashboard, go: () => navigate('prod-dashboard') },
+          { label: 'Dashboard', icon: LayoutDashboard, ...to('prod-dashboard') },
           ...s.items
             .filter((i) => i.label !== 'Partners & Credits')
             // Freelancers have no board — just their assigned "My Projects" list.
@@ -166,31 +172,40 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
   // is replaced by: a slim top bar (logo + one bell + avatar) and this fixed
   // bottom bar carrying the day-to-day destinations. "More" opens the same nav
   // drawer the hamburger used to. Desktop keeps the full top-bar layout.
-  const tab = (key, label, icon, onClick, views, badge) => ({ key, label, icon, onClick, views, badge });
+  // href as well as onClick, so a phone-sized nav is still made of real links.
+  // A tab is given its DESTINATION rather than a closure, so it can expose the
+  // address as well as the action and be rendered as a real link. 'More' opens
+  // the drawer and has no address, so it still takes a function.
+  const tab = (key, label, icon, target, views, badge) => ({
+    key, label, icon, views, badge,
+    ...(typeof target === 'function'
+      ? { onClick: target }
+      : { href: buildHash(target[0], target[1] || null), onClick: () => navigate(target[0], target[1] || null) }),
+  });
   const openMore = () => setDrawerOpen(true);
   const mobileTabs = marketing
     ? [
-        tab('m-home', 'Home', LayoutDashboard, () => navigate('marketing', 'overview'), ['marketing']),
-        tab('m-reports', 'Reports', BarChart3, () => navigate('marketing', 'reports')),
-        tab('m-leads', 'Leads', MailQuestion, () => navigate('marketing', 'leads')),
-        tab('m-traffic', 'Traffic', Globe, () => navigate('marketing', 'traffic')),
+        tab('m-home', 'Home', LayoutDashboard, ['marketing', 'overview'], ['marketing']),
+        tab('m-reports', 'Reports', BarChart3, ['marketing', 'reports']),
+        tab('m-leads', 'Leads', MailQuestion, ['marketing', 'leads']),
+        tab('m-traffic', 'Traffic', Globe, ['marketing', 'traffic']),
         tab('more', 'More', Menu, openMore),
       ]
     : producer
     ? [
-        tab('prod-dashboard', 'Home', LayoutDashboard, () => navigate('prod-dashboard'), ['prod-dashboard']),
+        tab('prod-dashboard', 'Home', LayoutDashboard, ['prod-dashboard'], ['prod-dashboard']),
         freelancer
-          ? tab('projects', 'Projects', LayoutGrid, () => navigate('projects'), ['projects', 'project'])
-          : tab('production', 'Board', KanbanSquare, () => navigate('production'), ['production']),
-        tab('schedule', 'Rota', CalendarDays, () => navigate('schedule'), ['schedule']),
-        tab('tasks', 'Tasks', CheckSquare, () => navigate('tasks'), ['tasks'], openTasksDue),
+          ? tab('projects', 'Projects', LayoutGrid, ['projects'], ['projects', 'project'])
+          : tab('production', 'Board', KanbanSquare, ['production'], ['production']),
+        tab('schedule', 'Rota', CalendarDays, ['schedule'], ['schedule']),
+        tab('tasks', 'Tasks', CheckSquare, ['tasks'], ['tasks'], openTasksDue),
         tab('more', 'More', Menu, openMore),
       ]
     : [
-        tab('overview', 'Home', LayoutDashboard, () => navigate('overview'), ['overview']),
-        tab('pipeline', 'Sales', FileText, () => navigate('pipeline'), ['list', 'deal', 'pipeline', 'quote-requests', 'templates']),
-        tab('tasks', 'Tasks', CheckSquare, () => navigate('tasks'), ['tasks'], openTasksDue),
-        tab('emails', 'Inbox', Mail, () => navigate('emails'), ['emails', 'email', 'triage'], inboxUnread),
+        tab('overview', 'Home', LayoutDashboard, ['overview'], ['overview']),
+        tab('pipeline', 'Sales', FileText, ['pipeline'], ['list', 'deal', 'pipeline', 'quote-requests', 'templates']),
+        tab('tasks', 'Tasks', CheckSquare, ['tasks'], ['tasks'], openTasksDue),
+        tab('emails', 'Inbox', Mail, ['emails'], ['emails', 'email', 'triage'], inboxUnread),
         tab('more', 'More', Menu, openMore),
       ];
   // Feeds folded into the single mobile bell, ordered Updates / Finance / Tracking
@@ -265,11 +280,11 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
                     {s.items.map((item) => {
                       const Icon = item.icon;
                       return (
-                        <button
+                        <NavLink
                           key={item.label}
-                          type="button"
                           role="menuitem"
-                          onClick={() => { item.go(); setOpenMenu(null); }}
+                          href={item.href}
+                          onActivate={() => { item.go(); setOpenMenu(null); }}
                           onMouseEnter={(e) => { e.currentTarget.style.background = BRAND.paper; }}
                           onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
                           style={{
@@ -290,7 +305,7 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
                               Soon
                             </span>
                           )}
-                        </button>
+                        </NavLink>
                       );
                     })}
                   </div>
@@ -299,9 +314,9 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
             );
           })}
           {!marketing && !producer && (
-          <button
-            type="button"
-            onClick={() => navigate('contacts')}
+          <NavLink
+            href={buildHash('contacts')}
+            onActivate={() => navigate('contacts')}
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 6,
               padding: '8px 12px', border: 'none', borderRadius: 8, cursor: 'pointer',
@@ -310,7 +325,7 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
             }}
           >
             Contacts
-          </button>
+          </NavLink>
           )}
         </nav>
         )}
@@ -371,7 +386,7 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
         {/* Emails is available to producers too (their project comms inbox), but
             not to freelancers — they don't get the client-comms inbox. */}
         {!marketing && !freelancer && !isMobile && [
-          { label: 'Emails', icon: Mail, route: 'emails', views: ['emails', 'triage', 'email'], go: () => navigate('emails'), count: inboxUnread },
+          { label: 'Emails', icon: Mail, route: 'emails', views: ['emails', 'triage', 'email'], ...to('emails'), count: inboxUnread },
         ].map((item) => {
           const Icon = item.icon;
           const active = item.views.includes(view);
@@ -459,7 +474,7 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
             >
               {[
                 { label: 'Account settings', icon: UserCog, go: () => onManageAccount(), show: true },
-                { label: 'Admin', icon: Settings, go: () => navigate('admin', 'users'), show: canAdmin },
+                { label: 'Admin', icon: Settings, ...to('admin', 'users'), show: canAdmin },
               ].filter(i => i.show).map((item) => {
                 const Icon = item.icon;
                 return (
@@ -655,14 +670,15 @@ function MobileNavDrawer({ sections, showContacts, contactsActive, navigate, onC
               {s.items.map((item) => {
                 const Icon = item.icon;
                 return (
-                  <button
+                  <NavLink
                     key={item.label}
-                    type="button"
-                    onClick={() => go(item.go)}
+                    href={item.href}
+                    onActivate={() => go(item.go)}
                     style={{
                       display: 'flex', alignItems: 'center', gap: 12, width: '100%',
                       padding: '11px 10px', border: 'none', background: 'transparent', borderRadius: 8,
                       cursor: 'pointer', fontSize: 15, color: BRAND.ink, textAlign: 'left', minHeight: 44,
+                      boxSizing: 'border-box',
                     }}
                   >
                     <Icon size={18} color={BRAND.muted} />
@@ -670,7 +686,7 @@ function MobileNavDrawer({ sections, showContacts, contactsActive, navigate, onC
                     {item.count > 0 && (
                       <span style={{ background: BADGE, color: 'white', fontSize: 11, fontWeight: 700, padding: '1px 7px', borderRadius: 999 }}>{item.count}</span>
                     )}
-                  </button>
+                  </NavLink>
                 );
               })}
             </div>

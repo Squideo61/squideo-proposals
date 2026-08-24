@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
+import { buildHash } from './lib/routes.js';
 import { BRAND, APP_MAX_WIDTH } from './theme.js';
 import { DEFAULT_PROPOSAL } from './defaults.js';
 import { StoreProvider, useStore } from './store.jsx';
@@ -93,10 +94,6 @@ function parseHash() {
   return { view: raw.slice(0, sep), activeId: decodeURIComponent(raw.slice(sep + 1)) || null };
 }
 
-function buildHash(view, id) {
-  if (view === 'list') return '#/';
-  return '#/' + view + (id ? '/' + encodeURIComponent(id) : '');
-}
 
 function AppShell() {
   const { state, actions, showMsg, toast } = useStore();
