@@ -663,6 +663,18 @@ function CampaignEditor({ campaign, counts, onSaved, onDone, onDeleted }) {
     } catch (e) { showMsg(e.message || 'Could not delete'); }
   };
 
+  // Drop the branded starter back into an emptied draft. Written straight into
+  // the editor element as well as into state — the contentEditable seeds itself
+  // once on mount, so setting state alone would leave the box looking empty.
+  const applyTemplate = async () => {
+    try {
+      const { bodyHtml } = await api.get('/api/crm/campaigns/template');
+      if (editorRef.current) editorRef.current.innerHTML = bodyHtml;
+      setBody(bodyHtml);
+      setDirty(true);
+    } catch (e) { showMsg(e.message || 'Could not load the template'); }
+  };
+
   const insertTag = (tag) => {
     const el = editorRef.current;
     if (!el) return;
@@ -728,6 +740,17 @@ function CampaignEditor({ campaign, counts, onSaved, onDone, onDeleted }) {
           </div>
 
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 10 }}>
+            {/* Only offered once the box is empty. A one-click "reset" sitting
+                next to a finished draft is a way to lose an afternoon's
+                writing, and there's no undo across a reload. */}
+            {isHtmlEmpty(body) && (
+              <button
+                className="btn-ghost" onClick={applyTemplate}
+                style={{ fontSize: 12, padding: '3px 9px', border: '1px solid ' + BRAND.blue, borderRadius: 999, color: BRAND.blue, fontWeight: 600 }}
+              >
+                Start from the Squideo template
+              </button>
+            )}
             <span style={{ fontSize: 12, color: BRAND.muted }}>Personalise:</span>
             {MERGE_TAGS.map((t) => (
               <button

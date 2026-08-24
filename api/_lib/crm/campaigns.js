@@ -35,7 +35,7 @@ import {
 import { instrumentHtml, newTrackingToken } from './trackingHtml.js';
 import { ensureCourseTables } from '../course/db.js';
 import {
-  renderMergeTags, wrapCampaignHtml, htmlToText, stripUnsafeHtml,
+  renderMergeTags, wrapCampaignHtml, htmlToText, stripUnsafeHtml, DEFAULT_CAMPAIGN_BODY,
 } from './campaignHtml.js';
 
 export const AUDIENCES = ['everyone', 'customers', 'non_customers'];
@@ -748,6 +748,12 @@ export async function campaignsRoute(req, res, id, action, user) {
     });
   }
 
+  // GET /campaigns/template — the starter body, so the composer can drop it
+  // into a draft that's been emptied out without duplicating the html here.
+  if (id === 'template' && req.method === 'GET') {
+    return res.status(200).json({ bodyHtml: DEFAULT_CAMPAIGN_BODY });
+  }
+
   // GET /campaigns/harvest — the search presets, so the UI doesn't hard-code
   // Gmail query syntax of its own.
   if (id === 'harvest' && req.method === 'GET') {
@@ -854,10 +860,15 @@ export async function campaignsRoute(req, res, id, action, user) {
       const b = req.body || {};
       const newId = makeId('camp');
       const audience = AUDIENCES.includes(b.audience) ? b.audience : 'everyone';
+      // A new campaign starts on the Squideo template rather than as an empty
+      // box. A blank page is where most unsent drafts die, and the skeleton
+      // also carries the things people forget — a merge tag and one clear
+      // call to action.
+      const body = b.bodyHtml === undefined ? DEFAULT_CAMPAIGN_BODY : (b.bodyHtml || '');
       await sql`
         INSERT INTO email_campaigns (id, name, audience, subject, preheader, body_html, reply_to, created_by)
         VALUES (${newId}, ${trimOrNull(b.name) || 'Untitled campaign'}, ${audience},
-                ${b.subject || ''}, ${trimOrNull(b.preheader)}, ${b.bodyHtml || ''},
+                ${b.subject || ''}, ${trimOrNull(b.preheader)}, ${body},
                 ${trimOrNull(b.replyTo)}, ${user.email})`;
       const [row] = await sql`SELECT * FROM email_campaigns WHERE id = ${newId}`;
       return res.status(201).json(serialiseCampaign(row));

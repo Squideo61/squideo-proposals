@@ -7,6 +7,7 @@ vi.mock('../api/_lib/db.js', async () => ({
 
 import {
   renderMergeTags, htmlToText, stripUnsafeHtml, firstNameOf, wrapCampaignHtml,
+  ctaButton, DEFAULT_CAMPAIGN_BODY,
 } from '../api/_lib/crm/campaignHtml.js';
 import { renderForRecipient } from '../api/_lib/crm/campaigns.js';
 
@@ -100,9 +101,84 @@ describe('a rendered campaign email', () => {
 });
 
 describe('the wrapper', () => {
+  const html = wrapCampaignHtml({ bodyHtml: '<p>hi</p>', unsubscribeUrl: 'https://x/unsub' });
+
   it('will not render a marketing email without an opt-out', () => {
-    const html = wrapCampaignHtml({ bodyHtml: '<p>hi</p>', unsubscribeUrl: 'https://x/unsub' });
     expect(html).toContain('Unsubscribe');
     expect(html).toContain('https://x/unsub');
   });
+
+  it('carries the logo as a hosted image, never a data URI', () => {
+    // Every mail client strips data: URIs — the app's own logo constant is one,
+    // so using it here would silently ship a broken image to everybody.
+    expect(html).toContain('/squideo-logo-email.png');
+    expect(html).not.toContain('data:image');
+  });
+
+  it('is branded rather than generic', () => {
+    expect(html).toContain('#0F2A3D');            // navy header
+    expect(html).toContain('#2BB8E6');            // cyan rule
+    expect(html).toContain('squideo.com');
+    expect(html).toContain('01482 738 656');
+  });
+
+  it('states every dimension Outlook needs, and uses no layout it cannot render', () => {
+    expect(html).toMatch(/<table role="presentation"/);
+    expect(html).toContain('width="600"');
+    expect(html).not.toMatch(/display:\s*(flex|grid)/);
+  });
+
+  it('keeps the body inside the styled region', () => {
+    expect(html).toMatch(/class="sq-body sq-pad"[^>]*>\s*<p>hi<\/p>/);
+  });
 });
+
+describe('the starter template', () => {
+  it('opens with a personalised line, because nobody adds one later', () => {
+    expect(DEFAULT_CAMPAIGN_BODY).toContain('{{first_name|there}}');
+  });
+
+  it('gives them one thing to click', () => {
+    expect(DEFAULT_CAMPAIGN_BODY).toContain('https://squideo.com');
+  });
+
+  it('reads as a skeleton, so it cannot be sent as-is by accident', () => {
+    expect(DEFAULT_CAMPAIGN_BODY).toMatch(/One or two sentences/);
+  });
+
+  it('renders through the same path a real send takes', () => {
+    const built = wrapCampaignHtml({
+      bodyHtml: renderMergeTags(DEFAULT_CAMPAIGN_BODY, { name: 'Lauren', companyName: 'TB Projects' }),
+      unsubscribeUrl: '#',
+    });
+    expect(built).toContain('Hi Lauren,');
+    expect(built).not.toContain('{{');
+  });
+});
+
+describe('the call-to-action button', () => {
+  it('is a table, not a padded link', () => {
+    // Outlook ignores padding on inline elements: a styled <a> collapses to
+    // underlined text there, which is the difference between a button and a
+    // sentence nobody presses.
+    const btn = ctaButton('See our work', 'https://squideo.com/work');
+    expect(btn).toMatch(/^<table role="presentation"/);
+    expect(btn).toContain('bgcolor="#2BB8E6"');
+    expect(btn).toContain('https://squideo.com/work');
+  });
+
+  it('gets its link tracked like any other', () => {
+    const { links } = instrumentHtmlViaRender(ctaButton('Go', 'https://squideo.com/work'));
+    expect(links).toEqual(['https://squideo.com/work']);
+  });
+});
+
+// The button has to survive link rewriting — it's the one link in most
+// campaigns anyone actually cares about measuring.
+function instrumentHtmlViaRender(bodyHtml) {
+  return renderForRecipient(
+    { id: 'camp_x', subject: 's', bodyHtml },
+    { email: 'sam@acme.com', name: 'Sam' },
+    'tok',
+  );
+}
