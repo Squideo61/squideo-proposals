@@ -568,6 +568,81 @@ async function sendAllowance(campaign) {
   return Math.max(0, Math.min(...room));
 }
 
+// When the next batch will go, and when the whole thing should be done.
+//
+// READ-ONLY, and deliberately separate from sendAllowance: this runs while a
+// campaign is mid-flight, and nothing on a reporting path should be able to
+// affect a send. It mirrors the same rule rather than sharing the code, so a
+// change here can never alter what actually goes out.
+//
+// The rule it mirrors: a cap is a rolling window, so the next slot opens when
+// the OLDEST send inside that window ages out of it. With 150 an hour, sending
+// 150 at 16:12 means nothing more until 17:12 — which from the outside looks
+// exactly like a campaign that has stalled, hence this.
+export async function campaignPace(campaign) {
+  const hourly = Number(campaign.hourlyCap) || null;
+  const daily = Number(campaign.dailyCap) || null;
+  try {
+    const [row] = await sql`
+      SELECT COUNT(*) FILTER (WHERE sent_at > NOW() - interval '1 hour')::int   AS last_hour,
+             COUNT(*) FILTER (WHERE sent_at > NOW() - interval '24 hours')::int AS last_day,
+             MIN(sent_at) FILTER (WHERE sent_at > NOW() - interval '1 hour')    AS oldest_in_hour,
+             MIN(sent_at) FILTER (WHERE sent_at > NOW() - interval '24 hours')  AS oldest_in_day,
+             COUNT(*) FILTER (WHERE status IN ('queued', 'sending'))::int       AS remaining
+        FROM email_campaign_recipients
+       WHERE campaign_id = ${campaign.id}`;
+    if (!row) return null;
+
+    const lastHour = row.last_hour || 0;
+    const lastDay = row.last_day || 0;
+    const remaining = row.remaining || 0;
+
+    const room = [BATCH_LIMIT];
+    if (hourly) room.push(hourly - lastHour);
+    if (daily) room.push(daily - lastDay);
+    const allowance = Math.max(0, Math.min(...room));
+
+    // Which cap is holding it up, and when that cap next lets something
+    // through. If several are, the later one wins.
+    let nextBatchAt = null;
+    if (allowance <= 0) {
+      const opens = [];
+      if (hourly && hourly - lastHour <= 0 && row.oldest_in_hour) {
+        opens.push(new Date(row.oldest_in_hour).getTime() + 60 * 60 * 1000);
+      }
+      if (daily && daily - lastDay <= 0 && row.oldest_in_day) {
+        opens.push(new Date(row.oldest_in_day).getTime() + 24 * 60 * 60 * 1000);
+      }
+      if (opens.length) nextBatchAt = new Date(Math.max(...opens)).toISOString();
+    }
+
+    // What it can actually manage in a day: the hourly cap 24 times over, or
+    // the daily cap, whichever bites first.
+    const perDay = daily && hourly ? Math.min(daily, hourly * 24) : (daily || (hourly ? hourly * 24 : null));
+    const finishAt = remaining > 0 && perDay
+      ? new Date(Date.now() + Math.ceil(remaining / perDay) * 24 * 60 * 60 * 1000).toISOString()
+      : null;
+
+    return {
+      hourlyCap: hourly,
+      dailyCap: daily,
+      sentLastHour: lastHour,
+      sentLastDay: lastDay,
+      remaining,
+      // How many the next batch can carry — 0 means it's waiting on a cap.
+      nextBatchSize: allowance,
+      nextBatchAt,
+      perDay,
+      finishAt,
+    };
+  } catch (err) {
+    // Never let a reporting query be the reason a page fails while a campaign
+    // is running.
+    console.warn('[campaigns] pace read failed', err.message);
+    return null;
+  }
+}
+
 // Send one batch for one campaign. Returns how many recipients it handled — 0
 // means the queue is empty and the campaign can be closed off.
 //
@@ -1388,12 +1463,15 @@ export async function campaignsRoute(req, res, id, action, user) {
 
   // GET /campaigns/:id — everything the report page needs in one round trip.
   if (!action && req.method === 'GET') {
-    const [stats, links, recipients] = await Promise.all([
+    const [stats, links, recipients, pace] = await Promise.all([
       campaignStats(id).catch(() => null),
       campaignLinks(id).catch(() => []),
       campaignRecipients(id).catch(() => []),
+      // Only while it's actually running — for a finished campaign there is no
+      // next batch, and the query would be work for nothing.
+      campaign.status === 'sending' ? campaignPace(campaign).catch(() => null) : Promise.resolve(null),
     ]);
-    return res.status(200).json({ campaign, stats, links, recipients });
+    return res.status(200).json({ campaign, stats, links, recipients, pace });
   }
 
   // PATCH /campaigns/:id — edit a draft. A campaign that has started is frozen:

@@ -93,6 +93,20 @@ const STATUS_STYLE = {
 const num = (n) => (Number(n) || 0).toLocaleString('en-GB');
 const pct = (n) => (n == null ? '—' : `${Number(n).toFixed(1)}%`);
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '');
+// "in about 40 minutes" reads better than a timestamp for something imminent,
+// and the timestamp is given alongside it for anyone planning around it.
+const untilLabel = (iso) => {
+  const ms = new Date(iso).getTime() - Date.now();
+  if (!Number.isFinite(ms) || ms <= 60000) return 'any moment';
+  const plural = (n, word) => `in about ${n} ${word}${n === 1 ? '' : 's'}`;
+  const mins = Math.round(ms / 60000);
+  if (mins < 60) return plural(mins, 'minute');
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return plural(hours, 'hour');
+  return plural(Math.round(hours / 24), 'day');
+};
+const fmtClock = (d) => (d ? new Date(d).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '');
+const fmtDay = (d) => (d ? new Date(d).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) : '');
 const fmtDateTime = (d) => (d
   ? new Date(d).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
   : '—');
@@ -1350,7 +1364,7 @@ function SendConfirmModal({ campaignId, audience, excluded = 0, speed = null, on
 
 // ── report ──────────────────────────────────────────────────────────────────
 function CampaignReport({ state, onReload, onOpenContact, isMobile, showMsg, onReopened, onOpenCampaign }) {
-  const { campaign, stats, links } = state;
+  const { campaign, stats, links, pace } = state;
   const [filter, setFilter] = useState('all');
   const [recipients, setRecipients] = useState(state.recipients || []);
   const [busy, setBusy] = useState(false);
@@ -1410,6 +1424,22 @@ function CampaignReport({ state, onReload, onOpenContact, isMobile, showMsg, onR
           <div style={{ height: 8, borderRadius: 999, background: BRAND.paper, overflow: 'hidden' }}>
             <div style={{ width: progress + '%', height: '100%', background: BRAND.blue, transition: 'width .4s ease' }} />
           </div>
+
+          {/* A throttled campaign spends most of its life waiting, which from
+              the outside is indistinguishable from one that has stopped. */}
+          {pace && (
+            <div style={{ fontSize: 12.5, color: BRAND.muted, marginTop: 8, lineHeight: 1.55 }}>
+              {pace.nextBatchAt
+                ? <>Waiting on the {pace.sentLastHour >= (pace.hourlyCap || Infinity) ? 'hourly' : 'daily'} limit —
+                    next batch <strong style={{ color: BRAND.ink }}>{untilLabel(pace.nextBatchAt)}</strong>
+                    {' '}(around {fmtClock(pace.nextBatchAt)}).</>
+                : <>Next batch is due <strong style={{ color: BRAND.ink }}>within a minute</strong>
+                    {pace.nextBatchSize > 0 && <> — up to {num(pace.nextBatchSize)} at a time</>}.</>}
+              {pace.perDay && <> Sending up to <strong>{num(pace.perDay)}</strong> a day
+                {pace.hourlyCap ? <> ({num(pace.hourlyCap)} an hour)</> : null}.</>}
+              {pace.finishAt && <> On course to finish <strong>{fmtDay(pace.finishAt)}</strong>.</>}
+            </div>
+          )}
         </div>
       )}
 
