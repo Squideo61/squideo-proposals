@@ -1390,6 +1390,18 @@ function CampaignReport({ state, onReload, onOpenContact, isMobile, showMsg, onR
     finally { setBusy(false); }
   };
 
+  const changeSpeed = async (speed) => {
+    setBusy(true);
+    try {
+      await api.post(`/api/crm/campaigns/${campaign.id}/speed`, {
+        hourlyCap: speed.hourlyCap, dailyCap: speed.dailyCap,
+      });
+      await onReload();
+      showMsg(`Now sending at "${speed.label}"`);
+    } catch (e) { showMsg(e.message || 'Could not change the speed'); }
+    finally { setBusy(false); }
+  };
+
   const duplicate = async () => {
     setBusy(true);
     try {
@@ -1438,6 +1450,29 @@ function CampaignReport({ state, onReload, onOpenContact, isMobile, showMsg, onR
               {pace.perDay && <> Sending up to <strong>{num(pace.perDay)}</strong> a day
                 {pace.hourlyCap ? <> ({num(pace.hourlyCap)} an hour)</> : null}.</>}
               {pace.finishAt && <> On course to finish <strong>{fmtDay(pace.finishAt)}</strong>.</>}
+
+              {/* Changing speed mid-send is safe and often what you want: the
+                  first batches are the evidence you didn't have when you chose.
+                  Raising the cap frees the difference straight away. */}
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
+                <span style={{ fontSize: 12 }}>Change speed:</span>
+                {SEND_SPEEDS.map((s) => {
+                  const active = (pace.hourlyCap || null) === s.hourlyCap && (pace.dailyCap || null) === s.dailyCap;
+                  return (
+                    <button
+                      key={s.key} disabled={busy || active} title={s.hint}
+                      onClick={() => changeSpeed(s)}
+                      style={{
+                        padding: '3px 10px', borderRadius: 999, fontSize: 12,
+                        cursor: active ? 'default' : 'pointer',
+                        border: '1px solid ' + (active ? BRAND.blue : BRAND.border),
+                        background: active ? BRAND.blue : 'white',
+                        color: active ? 'white' : BRAND.ink, fontWeight: active ? 700 : 500,
+                      }}
+                    >{s.label}</button>
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>

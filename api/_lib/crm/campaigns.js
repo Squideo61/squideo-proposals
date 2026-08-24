@@ -1625,6 +1625,44 @@ export async function campaignsRoute(req, res, id, action, user) {
     return res.status(200).json(serialiseCampaign(row));
   }
 
+  // POST /campaigns/:id/speed — change how fast a campaign sends, including
+  // one that is already running.
+  //
+  // Safe to do mid-flight, and that is the point: the caps are read fresh from
+  // this row at the start of every batch, so a change lands on the next cron
+  // run without restarting anything, and a batch already in the air is
+  // unaffected. Nothing here touches the queue or a recipient.
+  //
+  // Raising the cap mid-hour does NOT clear the window — the sends already in
+  // it still count. Going from 150 to 500 an hour with 150 already sent frees
+  // 350 immediately, which is the behaviour you want: it resumes at once but
+  // still honours the hour it is in.
+  if (action === 'speed' && req.method === 'POST') {
+    if (['sent', 'cancelled'].includes(campaign.status)) {
+      return res.status(409).json({ error: 'This campaign has finished' });
+    }
+    const cap = (v) => {
+      if (v === null || v === undefined || v === '') return null;
+      const n = Math.floor(Number(v));
+      return Number.isFinite(n) && n > 0 ? n : null;
+    };
+    const hourlyCap = cap(req.body?.hourlyCap);
+    const dailyCap = cap(req.body?.dailyCap);
+    await sql`
+      UPDATE email_campaigns
+         SET hourly_cap = ${hourlyCap}, daily_cap = ${dailyCap}, updated_at = NOW()
+       WHERE id = ${id}`;
+    const [row] = await sql`SELECT * FROM email_campaigns WHERE id = ${id}`;
+    const updated = serialiseCampaign(row);
+    console.info('[campaigns] send speed changed', {
+      id, by: user.email, hourlyCap, dailyCap, status: campaign.status,
+    });
+    return res.status(200).json({
+      campaign: updated,
+      pace: updated.status === 'sending' ? await campaignPace(updated).catch(() => null) : null,
+    });
+  }
+
   // POST /campaigns/:id/reopen — put a cancelled campaign back to a draft.
   //
   // Only when nothing actually went out. Cancelling before the first batch is
