@@ -13,7 +13,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft, BarChart3, Check, Clock, Eye, Mail, MousePointerClick, Pause, Play,
-  Plus, Send, Trash2, Users, UserCheck, UserPlus, X, AlertTriangle, Link2, Ban,
+  Plus, Send, Trash2, Users, UserCheck, UserPlus, X, AlertTriangle, Link2, Ban, Inbox, Search,
 } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { api } from '../../api.js';
@@ -114,6 +114,7 @@ export function CampaignsTab({ onOpenContact }) {
   const [editing, setEditing] = useState(false);
   // { list, status } — which list card is open, and which slice of it.
   const [listPreview, setListPreview] = useState(null);
+  const [harvesting, setHarvesting] = useState(false);
 
   const load = useCallback(() => (
     api.get('/api/crm/campaigns')
@@ -224,6 +225,9 @@ export function CampaignsTab({ onOpenContact }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
         <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: BRAND.ink }}>Campaigns</h2>
         <div style={{ flex: 1 }} />
+        <button className="btn-secondary" onClick={() => setHarvesting(true)} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+          <Inbox size={15} /> Find enquirers in Gmail
+        </button>
         <button className="btn-primary" onClick={newCampaign} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
           <Plus size={15} /> New campaign
         </button>
@@ -276,6 +280,8 @@ export function CampaignsTab({ onOpenContact }) {
           rows={campaigns}
         />
       </div>
+
+      {harvesting && <GmailHarvestModal onClose={() => { setHarvesting(false); load(); }} />}
 
       {listPreview && (
         <ListPreviewModal
@@ -406,6 +412,13 @@ function ListPreviewModal({ listKey, initialStatus = 'mailable', onClose, onOpen
               {p.status === 'opted_in' && p.consentAt && (
                 <div style={{ fontSize: 11.5, color: '#15803D', marginTop: 2 }}>
                   Ticked the marketing box {fmtDate(p.consentAt)}{p.consentSource ? ` · ${p.consentSource} form` : ''}
+                </div>
+              )}
+              {/* How we came by them. The question behind every other one on
+                  this screen, and the answer to "why is this person here?". */}
+              {p.lastEnquiryAt && (
+                <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 2 }}>
+                  Asked us for a quote {fmtDate(p.lastEnquiryAt)}
                 </div>
               )}
             </span>
@@ -1023,6 +1036,192 @@ function CampaignReport({ state, onReload, onOpenContact, isMobile, showMsg }) {
         </div>
       </div>
     </div>
+  );
+}
+
+// ── finding people who only exist in the mailbox ────────────────────────────
+// Someone who emailed years ago asking about a video is a real enquiry, and
+// their address is nowhere in the CRM — only in Gmail. This searches for that
+// mail and offers up who it finds.
+//
+// It is a SEARCH AND A REVIEW, not a scrape, and the screen is built to make
+// that obvious. A blanket harvest of a mailbox collects suppliers, the
+// accountant, recruiters and a great many robots; the soft opt-in only covers
+// an address given while asking us about work. So every candidate arrives with
+// the evidence — the subject line they wrote, when, how often — and nothing is
+// added until somebody ticks it.
+function GmailHarvestModal({ onClose }) {
+  const { showMsg } = useStore();
+  const [presets, setPresets] = useState([]);
+  const [query, setQuery] = useState('');
+  const [result, setResult] = useState(null);
+  const [searching, setSearching] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [error, setError] = useState(null);
+  const [picked, setPicked] = useState(() => new Set());
+
+  useEffect(() => {
+    api.get('/api/crm/campaigns/harvest')
+      .then((d) => {
+        setPresets(d.presets || []);
+        if (d.presets?.length) setQuery(d.presets[0].query);
+      })
+      .catch((e) => setError(e.message));
+  }, []);
+
+  const search = async () => {
+    setSearching(true); setError(null); setResult(null);
+    try {
+      const r = await api.post('/api/crm/campaigns/harvest', { query });
+      setResult(r);
+      // Pre-tick only the people we don't already hold. Everything else needs a
+      // deliberate click, so a fast double-press can't sweep in the whole
+      // mailbox.
+      setPicked(new Set(r.candidates.filter((c) => c.known === 'new').map((c) => c.email)));
+    } catch (e) { setError(e.message || 'Search failed'); }
+    finally { setSearching(false); }
+  };
+
+  const toggle = (email) => setPicked((prev) => {
+    const next = new Set(prev);
+    if (next.has(email)) next.delete(email); else next.add(email);
+    return next;
+  });
+
+  const importPicked = async () => {
+    const people = (result?.candidates || []).filter((c) => picked.has(c.email));
+    if (!people.length) return;
+    setImporting(true);
+    try {
+      const r = await api.post('/api/crm/campaigns/harvest/import', { people });
+      const bits = [];
+      if (r.added) bits.push(`${num(r.added)} added`);
+      if (r.updated) bits.push(`${num(r.updated)} confirmed`);
+      if (r.skipped?.length) bits.push(`${num(r.skipped.length)} skipped`);
+      showMsg(bits.join(' · ') || 'Nothing to do');
+      onClose();
+    } catch (e) { showMsg(e.message || 'Import failed'); }
+    finally { setImporting(false); }
+  };
+
+  const KNOWN = {
+    new: { label: 'New', bg: '#ECFDF5', ink: '#15803D', border: '#A7F3D0' },
+    on_list: { label: 'Already have them', bg: '#F1F5F9', ink: BRAND.muted, border: BRAND.border },
+    provisional: { label: 'Half-known', bg: '#EFF6FF', ink: '#1D4ED8', border: '#BFDBFE' },
+    unsubscribed: { label: 'Unsubscribed', bg: '#FEF2F2', ink: '#B91C1C', border: '#FECACA' },
+  };
+
+  return (
+    <Modal onClose={onClose} maxWidth={860}>
+      <h3 style={{ margin: '0 0 6px', fontSize: 17, fontWeight: 700, color: BRAND.ink }}>Find enquirers in Gmail</h3>
+      <p style={{ margin: '0 0 16px', fontSize: 13, color: BRAND.muted, lineHeight: 1.55 }}>
+        Everyone who used the website quote form is already on your lists. This is for the ones who just emailed —
+        it searches your mailbox, shows what each person actually wrote, and adds only the people you tick.
+      </p>
+
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 10 }}>
+        {presets.map((p) => (
+          <button
+            key={p.key} onClick={() => setQuery(p.query)} title={p.hint}
+            style={{
+              padding: '4px 11px', borderRadius: 999, fontSize: 12.5, cursor: 'pointer',
+              border: '1px solid ' + (query === p.query ? BRAND.blue : BRAND.border),
+              background: query === p.query ? BRAND.blue : 'white',
+              color: query === p.query ? 'white' : BRAND.ink, fontWeight: query === p.query ? 700 : 500,
+            }}
+          >{p.label}</button>
+        ))}
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
+        <input
+          value={query} onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && query.trim()) search(); }}
+          placeholder="Gmail search, e.g. subject:(quote OR enquiry) before:2024/01/01"
+          style={{
+            flex: '1 1 320px', minWidth: 0, padding: '9px 11px', border: '1px solid ' + BRAND.border,
+            borderRadius: 8, fontSize: 13.5, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+          }}
+        />
+        <button className="btn-primary" onClick={search} disabled={searching || !query.trim()} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+          <Search size={15} /> {searching ? 'Searching…' : 'Search'}
+        </button>
+      </div>
+      <div style={{ fontSize: 11.5, color: BRAND.muted, marginBottom: 14 }}>
+        Anything Gmail's own search box accepts works here — add <code>before:2024/01/01</code> or <code>after:</code> to
+        narrow it down by date. Nothing is sent, changed or deleted in your mailbox.
+      </div>
+
+      {error && (
+        <div style={{ padding: 12, border: '1px solid #FECACA', background: '#FEF2F2', borderRadius: 10, color: '#B91C1C', fontSize: 13, marginBottom: 12 }}>
+          {error}
+        </div>
+      )}
+
+      {result && (
+        <>
+          <div style={{ fontSize: 12.5, color: BRAND.muted, marginBottom: 10, lineHeight: 1.5 }}>
+            Read {num(result.searched)} message{result.searched === 1 ? '' : 's'} · found{' '}
+            <strong style={{ color: BRAND.ink }}>{num(result.counts.total)}</strong> {result.counts.total === 1 ? 'person' : 'people'} who wrote to you
+            {result.counts.onList > 0 && <> · {num(result.counts.onList)} you already have</>}
+            {result.counts.unsubscribed > 0 && <> · {num(result.counts.unsubscribed)} unsubscribed</>}
+            {result.nextPageToken && <> · more matches remain, narrow the search by date to reach them</>}
+            . Our own addresses, no-reply senders and the usual platforms are already filtered out.
+          </div>
+
+          <div style={{ maxHeight: '45vh', overflowY: 'auto', border: '1px solid ' + BRAND.border, borderRadius: 10 }}>
+            {result.candidates.map((c) => {
+              const k = KNOWN[c.known] || KNOWN.new;
+              const selectable = c.known === 'new' || c.known === 'provisional';
+              return (
+                <label
+                  key={c.email}
+                  style={{
+                    display: 'flex', gap: 10, alignItems: 'flex-start', padding: '9px 12px',
+                    borderBottom: '1px solid ' + BRAND.paper, fontSize: 13,
+                    cursor: selectable ? 'pointer' : 'default', opacity: selectable ? 1 : 0.65,
+                  }}
+                >
+                  <input
+                    type="checkbox" checked={picked.has(c.email)} disabled={!selectable}
+                    onChange={() => toggle(c.email)} style={{ marginTop: 3 }}
+                  />
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ fontWeight: 600, color: BRAND.ink }}>{c.name || c.email}</span>
+                    {c.name && <span style={{ color: BRAND.muted, fontSize: 12 }}> · {c.email}</span>}
+                    {/* The evidence. Without it this is a list of strings; with
+                        it, it's a decision someone can actually make. */}
+                    <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 2, wordBreak: 'break-word' }}>
+                      “{c.lastSubject}” · {fmtDate(c.lastAt)}
+                      {c.messages > 1 && ` · ${num(c.messages)} messages`}
+                    </div>
+                  </span>
+                  <span style={{
+                    whiteSpace: 'nowrap', fontSize: 10.5, fontWeight: 700, padding: '1px 7px', borderRadius: 999,
+                    background: k.bg, color: k.ink, border: '1px solid ' + k.border,
+                  }}>{k.label}</span>
+                </label>
+              );
+            })}
+            {!result.candidates.length && (
+              <div style={{ padding: 20, textAlign: 'center', color: BRAND.muted, fontSize: 13 }}>
+                No one new in those messages.
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', alignItems: 'center', marginTop: 14, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12.5, color: BRAND.muted, marginRight: 'auto' }}>
+              {num(picked.size)} ticked — they'll be added as contacts and land on the non-customers list.
+            </span>
+            <button className="btn-secondary" onClick={onClose}>Cancel</button>
+            <button className="btn-primary" onClick={importPicked} disabled={importing || !picked.size}>
+              {importing ? 'Adding…' : `Add ${num(picked.size)} ${picked.size === 1 ? 'person' : 'people'}`}
+            </button>
+          </div>
+        </>
+      )}
+    </Modal>
   );
 }
 

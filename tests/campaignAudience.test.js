@@ -12,6 +12,9 @@ beforeEach(() => resetSqlMock());
 
 // One of each standing, as the audience query returns them.
 const PEOPLE = [
+  { email: 'ask@quoted.com', name: 'Quote Asker', company_name: 'Quoted Ltd', contact_id: null,
+    company_id: null, is_customer: false, src: 'quote', opted_in: true, consent_source: 'quote',
+    consent_at: '2026-03-02T10:00:00Z', last_enquiry_at: '2026-03-02T10:00:00Z', unsubscribed: false },
   { email: 'sam@acme.com', name: 'Sam Taylor', company_name: 'Acme Ltd', contact_id: 'ct_1',
     company_id: 'co_1', is_customer: true, opted_in: false, unsubscribed: false },
   { email: 'lead@new.com', name: 'New Lead', company_name: 'Newco', contact_id: null,
@@ -60,16 +63,34 @@ describe('the mailing lists', () => {
   it('leaves anyone who has opted out off the list by default', async () => {
     stubAudience();
     const rows = await audienceRows('everyone');
-    expect(rows.map((r) => r.email)).toEqual(['sam@acme.com', 'lead@new.com']);
+    expect(rows.map((r) => r.email)).toEqual(['ask@quoted.com', 'sam@acme.com', 'lead@new.com']);
   });
 
   it('can show the opt-outs, clearly marked, without putting them in a send', async () => {
     stubAudience();
     const rows = await audienceRows('everyone', { includeUnsubscribed: true });
     const byEmail = Object.fromEntries(rows.map((r) => [r.email, r]));
-    expect(rows).toHaveLength(4);
+    expect(rows).toHaveLength(5);
     expect(byEmail['jo@beta.com'].status).toBe('unsubscribed');
     expect(byEmail['kit@gamma.com'].status).toBe('bounced');
+  });
+
+  it('carries somebody who only ever asked for a quote, and says so', async () => {
+    // These were invisible before: an unconverted quote request leaves either
+    // no contact at all or a provisional one, and both are filtered out of the
+    // contacts page the lists were built from.
+    stubAudience();
+    const asker = (await audienceRows('everyone')).find((r) => r.email === 'ask@quoted.com');
+    expect(asker.source).toBe('quote');
+    expect(asker.lastEnquiryAt).toBe('2026-03-02T10:00:00Z');
+    expect(asker.isCustomer).toBe(false);
+  });
+
+  it('treats the quote form tick as the explicit consent it is', async () => {
+    stubAudience();
+    const asker = (await audienceRows('everyone')).find((r) => r.email === 'ask@quoted.com');
+    expect(asker.status).toBe('opted_in');
+    expect(asker.consentSource).toBe('quote');
   });
 
   it('says which email someone unsubscribed through, by name', async () => {
@@ -83,7 +104,7 @@ describe('the mailing lists', () => {
   });
 
   it('translates the built-in unsubscribe sources into words too', async () => {
-    stubAudience([{ ...PEOPLE[2], suppression_source: 'one-click' }]);
+    stubAudience([{ ...PEOPLE[3], suppression_source: 'one-click' }]);
     const [row] = await audienceRows('everyone', { includeUnsubscribed: true });
     expect(row.unsubscribedFrom).toBe('a one-click unsubscribe');
   });
@@ -100,7 +121,8 @@ describe('the mailing lists', () => {
   it('applies the customer split to the mailable people only', async () => {
     stubAudience();
     expect((await audienceRows('customers')).map((r) => r.email)).toEqual(['sam@acme.com']);
-    expect((await audienceRows('non_customers')).map((r) => r.email)).toEqual(['lead@new.com']);
+    expect((await audienceRows('non_customers')).map((r) => r.email))
+      .toEqual(['ask@quoted.com', 'lead@new.com']);
   });
 });
 
@@ -109,10 +131,10 @@ describe('the counts on the cards', () => {
     stubAudience();
     const counts = await audienceSummary();
     expect(counts).toMatchObject({
-      everyone: 2,
+      everyone: 3,
       customers: 1,
-      non_customers: 1,
-      optedIn: 1,
+      non_customers: 2,
+      optedIn: 2,
       unsubscribed: 1,
       bounced: 1,
       suppressed: 2,

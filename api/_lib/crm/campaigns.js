@@ -189,7 +189,7 @@ export async function audienceRows(audience = 'everyone', { includeUnsubscribed 
       -- sync rather than people anyone chose to add, so they stay out.
       SELECT LOWER(TRIM(c.email)) AS email, c.name AS name, NULL::text AS company_name,
              c.id AS contact_id, c.company_id AS company_id,
-             (cc.id IS NOT NULL) AS is_customer, 1 AS pref
+             (cc.id IS NOT NULL) AS is_customer, 1 AS pref, 'contact' AS src
         FROM contacts c
         LEFT JOIN customer_contacts cc ON cc.id = c.id
        WHERE COALESCE(c.provisional, FALSE) = FALSE
@@ -202,26 +202,55 @@ export async function audienceRows(audience = 'everyone', { includeUnsubscribed 
              s.contact_id, s.company_id,
              (s.contact_id IS NOT NULL AND EXISTS (
                 SELECT 1 FROM customer_contacts cc WHERE cc.id = s.contact_id)) AS is_customer,
-             2 AS pref
+             2 AS pref, 'signup' AS src
         FROM course_signups s
        WHERE s.email IS NOT NULL AND POSITION('@' IN s.email) > 1
+      UNION ALL
+      -- Everyone who has ever asked us for a quote through the website.
+      --
+      -- These were missing, and they are the single most valuable non-customer
+      -- list there is: a quote request is someone asking us to sell to them.
+      -- They were invisible because a quote request only becomes a permanent
+      -- contact when somebody converts it into a deal — the ones nobody
+      -- followed up stayed provisional, which the contacts page and therefore
+      -- these lists both filter out. Read straight from the source table so
+      -- that stops being true.
+      --
+      -- Spam-marked requests are excluded: those addresses were never a person
+      -- asking for anything.
+      SELECT LOWER(TRIM(q.email)), q.name, q.company,
+             q.contact_id, NULL::text,
+             (q.contact_id IS NOT NULL AND EXISTS (
+                SELECT 1 FROM customer_contacts cc WHERE cc.id = q.contact_id)) AS is_customer,
+             3 AS pref, 'quote' AS src
+        FROM quote_requests q
+       WHERE q.email IS NOT NULL AND POSITION('@' IN q.email) > 1
+         AND COALESCE(q.status, 'new') <> 'spam'
     ),
     dedup AS (
       -- One row per address. A customer row beats a non-customer one and a
-      -- contact beats a signup, so nobody is counted twice or lands in both
-      -- lists.
-      SELECT DISTINCT ON (email) email, name, company_name, contact_id, company_id, is_customer
+      -- contact beats a signup or a quote request, so nobody is counted twice
+      -- or lands in both lists.
+      SELECT DISTINCT ON (email) email, name, company_name, contact_id, company_id, is_customer, src
         FROM people
        ORDER BY email, is_customer DESC, pref ASC
     )
     SELECT d.email, d.name, COALESCE(co.name, d.company_name) AS company_name,
-           d.contact_id, d.company_id, d.is_customer,
-           -- The explicit tick, where there is one. Only the lead-magnet forms
-           -- ask for it, so most contacts are on the soft opt-in basis instead
-           -- — which the UI says out loud rather than implying consent we were
-           -- never given.
-           COALESCE(cs.marketing_consent, FALSE) AS opted_in,
-           cs.consent_at, cs.consent_source, cs.consent_text,
+           d.contact_id, d.company_id, d.is_customer, d.src,
+           -- The explicit tick, wherever it came from — the lead-magnet forms
+           -- or the quote form. Most CRM contacts have neither and are on the
+           -- soft opt-in basis instead, which the UI says out loud rather than
+           -- implying a consent we were never given.
+           (COALESCE(cs.marketing_consent, FALSE) OR COALESCE(qr.opt_in, FALSE)) AS opted_in,
+           CASE WHEN COALESCE(cs.marketing_consent, FALSE) THEN cs.consent_at
+                WHEN COALESCE(qr.opt_in, FALSE) THEN qr.opted_in_at END AS consent_at,
+           CASE WHEN COALESCE(cs.marketing_consent, FALSE) THEN cs.consent_source
+                WHEN COALESCE(qr.opt_in, FALSE) THEN 'quote' END AS consent_source,
+           cs.consent_text,
+           -- When they last asked us for something. The reason a cold-looking
+           -- address is on the list at all, and the thing you want to see
+           -- before writing to it.
+           qr.last_enquiry_at,
            (s.email IS NOT NULL) AS unsubscribed,
            s.created_at AS unsubscribed_at, s.reason AS suppression_reason,
            s.source AS suppression_source, s.scope AS suppression_scope
@@ -234,6 +263,16 @@ export async function audienceRows(audience = 'everyone', { includeUnsubscribed 
          ORDER BY cs2.marketing_consent DESC, cs2.consent_at DESC NULLS LAST
          LIMIT 1
       ) cs ON TRUE
+      -- Aggregated, not LIMIT 1: someone who has asked for three quotes and
+      -- ticked the box on one of them has ticked the box.
+      LEFT JOIN LATERAL (
+        SELECT BOOL_OR(q2.opt_in) AS opt_in,
+               MAX(q2.created_at) AS last_enquiry_at,
+               MAX(q2.created_at) FILTER (WHERE q2.opt_in) AS opted_in_at
+          FROM quote_requests q2
+         WHERE LOWER(TRIM(q2.email)) = d.email
+           AND COALESCE(q2.status, 'new') <> 'spam'
+      ) qr ON TRUE
       LEFT JOIN email_suppressions s ON s.email = d.email
      WHERE d.email NOT ILIKE '%@squideo.co.uk'
        AND d.email NOT ILIKE '%@squideo.com'
@@ -247,6 +286,10 @@ export async function audienceRows(audience = 'everyone', { includeUnsubscribed 
     contactId: r.contact_id || null,
     companyId: r.company_id || null,
     isCustomer: !!r.is_customer,
+    // Where we got the address. Shown in the UI because "how did we come by
+    // this person" is the question behind every other one on that screen.
+    source: r.src || 'contact',
+    lastEnquiryAt: r.last_enquiry_at || null,
     status: consentStatus(r),
     optedIn: !!r.opted_in,
     consentAt: r.consent_at || null,
@@ -703,6 +746,47 @@ export async function campaignsRoute(req, res, id, action, user) {
       shown: shown.length,
       sample: shown.slice(0, 300),
     });
+  }
+
+  // GET /campaigns/harvest — the search presets, so the UI doesn't hard-code
+  // Gmail query syntax of its own.
+  if (id === 'harvest' && req.method === 'GET') {
+    const { HARVEST_PRESETS } = await import('./gmailHarvest.js');
+    return res.status(200).json({ presets: HARVEST_PRESETS });
+  }
+
+  // POST /campaigns/harvest — search the mailbox for people who enquired by
+  // email and never reached the CRM. Read-only: returns candidates with their
+  // evidence, imports nothing.
+  if (id === 'harvest' && !action && req.method === 'POST') {
+    const query = trimOrNull(req.body?.query);
+    if (!query) return res.status(400).json({ error: 'What should I search for?' });
+    try {
+      const { harvestCandidates } = await import('./gmailHarvest.js');
+      const result = await harvestCandidates({
+        userEmail: user.email,
+        query,
+        pageToken: trimOrNull(req.body?.pageToken),
+      });
+      return res.status(200).json(result);
+    } catch (err) {
+      if (err.code === 'NOT_CONNECTED') {
+        return res.status(400).json({ error: 'Connect your Gmail account first (Account → Email).' });
+      }
+      console.error('[campaigns] harvest failed', err.message, err.detail || '');
+      return res.status(502).json({ error: err.message || 'Could not search Gmail' });
+    }
+  }
+
+  // POST /campaigns/harvest/import — add the ticked people as contacts. A
+  // separate call from the search on purpose: nothing this reads out of a
+  // mailbox reaches a mailing list without somebody choosing it.
+  if (id === 'harvest' && action === 'import' && req.method === 'POST') {
+    const people = Array.isArray(req.body?.people) ? req.body.people : [];
+    if (!people.length) return res.status(400).json({ error: 'Nobody selected' });
+    const { importCandidates } = await import('./gmailHarvest.js');
+    const result = await importCandidates({ people, importedBy: user.email });
+    return res.status(200).json(result);
   }
 
   // POST /campaigns/audience/resubscribe — put someone back on, at their own
