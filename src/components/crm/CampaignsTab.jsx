@@ -1074,6 +1074,16 @@ function ExclusionsModal({ campaignId, audience, onClose, onChanged }) {
     finally { setBusy(false); }
   };
 
+  const excludeOpenDeals = async () => {
+    setBusy(true);
+    try {
+      const r = await api.post(`/api/crm/campaigns/${campaignId}/exclusions`, { group: 'open_deals' });
+      await loadExclusions();
+      showMsg(r.added ? `Left out ${num(r.added)} with live deals` : 'Already left out');
+    } catch (e) { showMsg(e.message || 'Could not exclude them'); }
+    finally { setBusy(false); }
+  };
+
   const excludeAllShown = async () => {
     const people = (results?.sample || []).filter((p) => !excludedSet.has(p.email));
     if (!people.length) return;
@@ -1097,6 +1107,34 @@ function ExclusionsModal({ campaignId, audience, onClose, onChanged }) {
         For this campaign only — it doesn't unsubscribe anyone or affect any other send.
         {state && <> Currently going to <strong style={{ color: BRAND.ink }}>{num(state.willReceive)}</strong> of {num(state.audienceTotal)}.</>}
       </p>
+
+      {/* The one group a blanket offer can actively damage: someone in the
+          middle of being quoted. Offered as a button because doing it by hand
+          means searching for people you'd have to already know were there. */}
+      {state?.openDeals?.total > 0 && (
+        <div style={{
+          background: '#FFF8EB', border: '1px solid #F5C26B', borderRadius: 10,
+          padding: '10px 12px', marginBottom: 12, display: 'flex', gap: 12,
+          alignItems: 'center', flexWrap: 'wrap',
+        }}>
+          <span style={{ fontSize: 12.5, color: BRAND.ink, lineHeight: 1.5, flex: '1 1 240px' }}>
+            <strong>{num(state.openDeals.total)}</strong> {state.openDeals.total === 1 ? 'person' : 'people'} on this
+            list {state.openDeals.total === 1 ? 'has' : 'have'} a live deal in the pipeline
+            {state.openDeals.sample?.length > 0 && (
+              <span style={{ color: BRAND.muted }}>
+                {' '}— {state.openDeals.sample.slice(0, 3).map((d) => d.name || d.email).join(', ')}
+                {state.openDeals.total > 3 ? ` and ${num(state.openDeals.total - 3)} more` : ''}
+              </span>
+            )}.
+            {state.openDeals.remaining === 0 && <strong style={{ color: '#B45309' }}> All already left out.</strong>}
+          </span>
+          {state.openDeals.remaining > 0 && (
+            <button className="btn-secondary" disabled={busy} onClick={excludeOpenDeals}>
+              Leave out {num(state.openDeals.remaining)}
+            </button>
+          )}
+        </div>
+      )}
 
       <div style={{ position: 'relative', marginBottom: 10 }}>
         <input
@@ -1177,7 +1215,14 @@ function ExclusionsModal({ campaignId, audience, onClose, onChanged }) {
       <div style={{ maxHeight: '28vh', overflowY: 'auto', border: '1px solid ' + BRAND.border, borderRadius: 10 }}>
         {(state?.excluded || []).map((e) => (
           <div key={e.email} style={row}>
-            <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-all' }}>{e.email}</span>
+            <span style={{ flex: 1, minWidth: 0, wordBreak: 'break-all' }}>
+              {e.email}
+              {/* Why, not just who — six addresses with no reason is a list
+                  nobody can review a month later. */}
+              {e.reason && (
+                <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 2 }}>{e.reason}</div>
+              )}
+            </span>
             <button className="btn-ghost" onClick={() => include(e.email)} disabled={busy}
               style={{ fontSize: 12, padding: '2px 9px', border: '1px solid ' + BRAND.border, borderRadius: 999 }}>
               Put back

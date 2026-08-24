@@ -185,3 +185,20 @@ describe('the cached list', () => {
     expect(getSqlCalls().filter((c) => /WITH won AS/.test(c.text))).toHaveLength(2);
   });
 });
+
+describe('the stage boundary', () => {
+  it('splits the pipeline at "signed", from one shared order', () => {
+    // Both groups are slices of dealStage's STAGES, so they can never drift
+    // apart or leave a stage belonging to neither.
+    const STAGES = ['lead', 'responded', 'proposal_sent', 'viewed', 'interested', 'signed', 'paid', 'long_term', 'lost'];
+    const open = STAGES.slice(0, STAGES.indexOf('signed'));
+    const won = STAGES.slice(STAGES.indexOf('signed'), STAGES.indexOf('lost'));
+    expect(open).toEqual(['lead', 'responded', 'proposal_sent', 'viewed', 'interested']);
+    expect(won).toEqual(['signed', 'paid', 'long_term']);
+    // A lost deal is in neither: not live, and not a customer — so they go
+    // back to being someone we can market to.
+    expect(open).not.toContain('lost');
+    expect(won).not.toContain('lost');
+    expect(open.filter((s) => won.includes(s))).toEqual([]);
+  });
+});

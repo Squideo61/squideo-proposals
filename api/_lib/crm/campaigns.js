@@ -38,6 +38,7 @@ import {
   renderMergeTags, wrapCampaignHtml, htmlToText, stripUnsafeHtml, DEFAULT_CAMPAIGN_BODY,
 } from './campaignHtml.js';
 import { isValidEmail, assessEmail } from './emailAddress.js';
+import { STAGES } from '../dealStage.js';
 
 export const AUDIENCES = ['everyone', 'customers', 'non_customers'];
 export const AUDIENCE_LABELS = {
@@ -48,7 +49,7 @@ export const AUDIENCE_LABELS = {
 
 // What makes someone a customer: a deal that reached signed, paid or long-term.
 // Anything earlier is a prospect, however warm it feels.
-const WON_STAGES = ['signed', 'paid', 'long_term'];
+const WON_STAGES = STAGES.slice(STAGES.indexOf('signed'), STAGES.indexOf('lost'));
 
 // Image types that actually render in an email client. SVG is deliberately not
 // here: Gmail, Outlook and Apple Mail all refuse it, so accepting one would only
@@ -479,6 +480,56 @@ async function snapshotAudience(campaign) {
   const [row] = await sql`
     SELECT COUNT(*)::int AS n FROM email_campaign_recipients WHERE campaign_id = ${campaign.id}`;
   return row?.n || 0;
+}
+
+// Everyone with a live deal — in the pipeline, but not yet signed.
+//
+// The one group a general marketing email can actively damage. Someone
+// mid-negotiation receiving a blanket "25% off this month" either undercuts the
+// quote their salesperson is sitting on or reads as though nobody in the
+// building knows they're already talking to us. Both are worse than not
+// emailing them at all.
+//
+// Derived from the shared stage order rather than a list of its own: everything
+// BEFORE 'signed'. Lost deals aren't live, and signed/paid/long-term are
+// customers, so both are left alone.
+const OPEN_STAGES = STAGES.slice(0, STAGES.indexOf('signed'));
+
+export async function openDealEmails() {
+  await ensureDealContactsTable().catch(() => {});
+  const rows = await sql`
+    WITH open_deals AS (
+      SELECT id, title, stage, primary_contact_id FROM deals WHERE stage = ANY(${OPEN_STAGES})
+    )
+    -- The contact the deal is addressed to.
+    SELECT LOWER(TRIM(c.email)) AS email, c.name, d.title, d.stage
+      FROM open_deals d JOIN contacts c ON c.id = d.primary_contact_id
+     WHERE c.email IS NOT NULL AND POSITION('@' IN c.email) > 1
+    UNION
+    -- Anyone else attached to it.
+    SELECT LOWER(TRIM(c.email)), c.name, d.title, d.stage
+      FROM open_deals d
+      JOIN deal_contacts dc ON dc.deal_id = d.id
+      JOIN contacts c ON c.id = dc.contact_id
+     WHERE c.email IS NOT NULL AND POSITION('@' IN c.email) > 1
+    UNION
+    -- And the address the enquiry itself came from, which is the only record
+    -- when the quote request was never converted into a contact.
+    SELECT LOWER(TRIM(q.email)), q.name, d.title, d.stage
+      FROM open_deals d JOIN quote_requests q ON q.deal_id = d.id
+     WHERE q.email IS NOT NULL AND POSITION('@' IN q.email) > 1
+  `.catch((err) => {
+    console.warn('[campaigns] open-deal lookup failed', err.message);
+    return [];
+  });
+
+  // One entry per address — somebody on three open deals is still one person.
+  const byEmail = new Map();
+  for (const r of rows) {
+    if (!r.email || byEmail.has(r.email)) continue;
+    byEmail.set(r.email, { email: r.email, name: r.name || null, deal: r.title || null, stage: r.stage });
+  }
+  return [...byEmail.values()];
 }
 
 async function campaignExclusions(campaignId) {
@@ -1267,15 +1318,26 @@ export async function campaignsRoute(req, res, id, action, user) {
   // GET /campaigns/:id/exclusions — who's being left out of this one, and how
   // many people that leaves.
   if (action === 'exclusions' && req.method === 'GET') {
-    const [excluded, people] = await Promise.all([
+    const [excluded, people, openDeals] = await Promise.all([
       campaignExclusions(id),
       audienceRows(campaign.audience).catch(() => []),
+      openDealEmails().catch(() => []),
     ]);
     const skip = new Set(excluded.map((e) => e.email));
+    // Only the ones actually on THIS list matter — an open deal with a customer
+    // is not on the non-customers list to begin with, and offering to exclude
+    // someone who was never going to receive it is a number that means nothing.
+    const onThisList = new Set(people.map((p) => p.email));
+    const openOnList = openDeals.filter((d) => onThisList.has(d.email));
     return res.status(200).json({
       excluded,
       audienceTotal: people.length,
       willReceive: people.filter((p) => !skip.has(p.email)).length,
+      openDeals: {
+        total: openOnList.length,
+        remaining: openOnList.filter((d) => !skip.has(d.email)).length,
+        sample: openOnList.slice(0, 8),
+      },
     });
   }
 
@@ -1288,16 +1350,32 @@ export async function campaignsRoute(req, res, id, action, user) {
     if (!editable) {
       return res.status(409).json({ error: 'This campaign has already started — its recipients are fixed' });
     }
-    const emails = (Array.isArray(req.body?.emails) ? req.body.emails : [req.body?.email])
-      .map((e) => String(e || '').trim().toLowerCase())
-      .filter((e) => e.includes('@'));
-    if (!emails.length) return res.status(400).json({ error: 'Which address?' });
-    const reason = trimOrNull(req.body?.reason);
+    // A named group resolves server-side, so "everyone with a live deal" is one
+    // button rather than a search anybody could get wrong by hand.
+    let emails;
+    let reason = trimOrNull(req.body?.reason);
+    if (req.body?.group === 'open_deals') {
+      const open = await openDealEmails();
+      emails = open.map((d) => d.email);
+      reason = reason || 'Live deal in the pipeline';
+      if (!emails.length) {
+        return res.status(200).json({ ok: true, added: 0, excluded: await campaignExclusions(id) });
+      }
+    } else {
+      emails = (Array.isArray(req.body?.emails) ? req.body.emails : [req.body?.email])
+        .map((e) => String(e || '').trim().toLowerCase())
+        .filter((e) => e.includes('@'));
+      if (!emails.length) return res.status(400).json({ error: 'Which address?' });
+    }
+    const before = (await campaignExclusions(id)).length;
     await batchWrite(emails.map((email) => sql`
       INSERT INTO email_campaign_exclusions (campaign_id, email, reason, created_by)
       VALUES (${id}, ${email}, ${reason}, ${user.email})
       ON CONFLICT (campaign_id, email) DO NOTHING`));
-    return res.status(200).json({ ok: true, excluded: await campaignExclusions(id) });
+    const excluded = await campaignExclusions(id);
+    // How many were actually NEW — pressing the button twice should say
+    // "already left out", not report the same people again.
+    return res.status(200).json({ ok: true, added: excluded.length - before, excluded });
   }
 
   // DELETE /campaigns/:id/exclusions?email=… — put someone back in.
