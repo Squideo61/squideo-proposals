@@ -523,20 +523,34 @@ async function sendBatch(campaign) {
     headers: listUnsubscribeHeaders(r.email, `campaign:${campaign.id}`),
   })));
 
+  // A rate limit or a daily quota is the provider saying "not now", not "never"
+  // — those recipients go back on the queue for the next run rather than being
+  // written off. Getting this wrong on a plan with a daily cap would silently
+  // fail most of a campaign and report it as sent.
+  let requeued = 0;
   await batchWrite(recipients.map((r, i) => {
     const result = results[i] || { ok: false, error: 'No result' };
-    const status = result.ok ? 'sent' : (result.suppressed ? 'skipped' : 'failed');
+    const retry = !result.ok && !result.suppressed && result.retryable;
+    if (retry) requeued += 1;
+    const status = result.ok ? 'sent' : (result.suppressed ? 'skipped' : (retry ? 'queued' : 'failed'));
     const trackingId = trackingByToken.get(tokens[i]) || null;
     return sql`
       UPDATE email_campaign_recipients
          SET status = ${status},
              tracking_id = ${trackingId},
              provider_id = ${result.id || null},
-             error = ${result.ok ? null : (result.error || 'Send failed')},
+             error = ${result.ok || retry ? null : (result.error || 'Send failed')},
              sent_at = ${result.ok ? new Date().toISOString() : null}
        WHERE id = ${r.id}
     `;
   }));
+
+  if (requeued) {
+    console.warn('[campaigns] batch deferred by the sender', { id: campaign.id, requeued });
+    // Stop this run: whatever the provider is unhappy about, hammering it with
+    // the next batch a second later will not help.
+    return { sent: recipients.length - requeued, throttled: true };
+  }
   return { sent: recipients.length, throttled: false };
 }
 

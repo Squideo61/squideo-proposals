@@ -195,17 +195,46 @@ export async function sendMarketingBatch(messages = []) {
 
   try {
     const { data, error } = await c.batch.send(payload);
-    if (error) throw new Error(error.message || 'Batch send failed');
+    if (error) {
+      const e = new Error(error.message || 'Batch send failed');
+      e.name = error.name || '';
+      e.statusCode = error.statusCode || error.status || null;
+      throw e;
+    }
     const ids = data?.data || [];
     payloadIndex.forEach((i, n) => {
       results[i].ok = true;
       results[i].id = ids[n]?.id || null;
     });
   } catch (err) {
-    console.error('[email] batch send failed', { count: payload.length, err: err.message });
-    payloadIndex.forEach((i) => { results[i].error = err.message || 'Send failed'; });
+    const retryable = isRetryableSendError(err);
+    console.error('[email] batch send failed', {
+      count: payload.length, err: err.message, retryable,
+    });
+    payloadIndex.forEach((i) => {
+      results[i].error = err.message || 'Send failed';
+      results[i].retryable = retryable;
+    });
   }
   return results;
+}
+
+// Whether a failed batch should go back on the queue rather than being written
+// off. This is the difference between a campaign pausing for a minute and a
+// campaign losing a hundred recipients permanently.
+//
+// The cases that matter in practice:
+//   · the daily quota on a small plan (the free tier stops at 100 a day)
+//   · the per-second rate limit
+//   · any 5xx, which is the provider having a moment, not a bad address
+//
+// A rejected ADDRESS is not retryable and must not be — retrying a malformed
+// recipient forever is how a queue stops moving.
+export function isRetryableSendError(err) {
+  const status = Number(err?.statusCode) || 0;
+  const text = `${err?.name || ''} ${err?.message || ''}`.toLowerCase();
+  if (status === 429 || (status >= 500 && status < 600)) return true;
+  return /rate.?limit|too many requests|quota|daily limit|timeout|temporarily|try again/.test(text);
 }
 
 const formatGBP = (n) =>
