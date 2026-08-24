@@ -532,6 +532,48 @@ export async function openDealEmails() {
   return [...byEmail.values()];
 }
 
+// How old the list is, by the year we last heard from each person.
+//
+// The reason this exists: an address harvested from a 2018 enquiry is a
+// different proposition from one that enquired last month. People change jobs,
+// companies fold, mailboxes get deleted — and a dead address is not a wasted
+// email, it is a bounce, which is the number the mailbox providers score a
+// sending domain on. Being able to see where the list's weight sits, and cut a
+// year off the back of it, is the difference between a campaign that lands and
+// one that quietly damages the domain it went out from.
+//
+// Only people whose age we actually know are counted. Somebody with no enquiry
+// on record isn't old — they're unknown, and guessing would exclude the wrong
+// people.
+export function audienceByAge(people, alreadyExcluded = new Set()) {
+  const years = new Map();
+  let unknown = 0;
+  for (const p of people) {
+    if (alreadyExcluded.has(p.email)) continue;
+    if (!p.lastEnquiryAt) { unknown += 1; continue; }
+    const year = new Date(p.lastEnquiryAt).getUTCFullYear();
+    if (!Number.isFinite(year)) { unknown += 1; continue; }
+    years.set(year, (years.get(year) || 0) + 1);
+  }
+  const known = [...years.entries()].sort((a, b) => a[0] - b[0]).map(([year, count]) => ({ year, count }));
+  // "Everyone before 2021" is the question people actually ask, so give the
+  // running total each cutoff would remove.
+  let running = 0;
+  const cumulative = known.map(({ year, count }) => {
+    running += count;
+    return { year, count, upToAndIncluding: running };
+  });
+  return { years: cumulative, unknown, dated: running };
+}
+
+// The people whose last contact predates a cutoff.
+export async function staleAudience(audience, beforeIso) {
+  const cutoff = new Date(beforeIso);
+  if (Number.isNaN(cutoff.getTime())) return [];
+  const people = await audienceRows(audience);
+  return people.filter((p) => p.lastEnquiryAt && new Date(p.lastEnquiryAt) < cutoff);
+}
+
 async function campaignExclusions(campaignId) {
   const rows = await sql`
     SELECT email, reason, created_by, created_at
@@ -1413,6 +1455,7 @@ export async function campaignsRoute(req, res, id, action, user) {
         remaining: openOnList.filter((d) => !skip.has(d.email)).length,
         sample: openOnList.slice(0, 8),
       },
+      byAge: audienceByAge(people, skip),
     });
   }
 
@@ -1429,7 +1472,19 @@ export async function campaignsRoute(req, res, id, action, user) {
     // button rather than a search anybody could get wrong by hand.
     let emails;
     let reason = trimOrNull(req.body?.reason);
-    if (req.body?.group === 'open_deals') {
+    if (req.body?.group === 'stale') {
+      // Everyone we last heard from before a cutoff — the 2018 cohort and its
+      // neighbours, which is where dead addresses concentrate.
+      const before = trimOrNull(req.body?.before);
+      if (!before) return res.status(400).json({ error: 'Before when?' });
+      const stale = await staleAudience(campaign.audience, before);
+      emails = stale.map((p) => p.email);
+      const year = new Date(before).getUTCFullYear();
+      reason = reason || `No contact since before ${year}`;
+      if (!emails.length) {
+        return res.status(200).json({ ok: true, added: 0, excluded: await campaignExclusions(id) });
+      }
+    } else if (req.body?.group === 'open_deals') {
       const open = await openDealEmails();
       emails = open.map((d) => d.email);
       reason = reason || 'Live deal in the pipeline';

@@ -1088,6 +1088,18 @@ function ExclusionsModal({ campaignId, audience, onClose, onChanged }) {
     finally { setBusy(false); }
   };
 
+  const excludeStale = async (year) => {
+    setBusy(true);
+    try {
+      const r = await api.post(`/api/crm/campaigns/${campaignId}/exclusions`, {
+        group: 'stale', before: `${year}-01-01T00:00:00.000Z`,
+      });
+      await loadExclusions();
+      showMsg(r.added ? `Left out ${num(r.added)} last in touch before ${year}` : 'Already left out');
+    } catch (e) { showMsg(e.message || 'Could not exclude them'); }
+    finally { setBusy(false); }
+  };
+
   const excludeOpenDeals = async () => {
     setBusy(true);
     try {
@@ -1147,6 +1159,48 @@ function ExclusionsModal({ campaignId, audience, onClose, onChanged }) {
               Leave out {num(state.openDeals.remaining)}
             </button>
           )}
+        </div>
+      )}
+
+      {/* Where the list's age sits. An address last heard from in 2018 is the
+          likeliest thing on here to bounce, and bounces are what a sending
+          domain is scored on — so this is the cut worth making before a big
+          send, not after. */}
+      {state?.byAge?.years?.length > 1 && (
+        <div style={{
+          background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 10,
+          padding: '10px 12px', marginBottom: 12,
+        }}>
+          <div style={{ fontSize: 12.5, color: BRAND.ink, marginBottom: 8, lineHeight: 1.5 }}>
+            <strong>How old is this list?</strong> By the year we last heard from each person.
+            {state.byAge.unknown > 0 && (
+              <span style={{ color: BRAND.muted }}> {num(state.byAge.unknown)} have no enquiry on record — they're
+                unknown rather than old, so they stay in.</span>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {state.byAge.years.map((y) => (
+              <span key={y.year} style={{
+                fontSize: 11.5, padding: '2px 8px', borderRadius: 999,
+                border: '1px solid ' + BRAND.border, background: 'white', color: BRAND.ink,
+              }}>
+                {y.year} <strong>{num(y.count)}</strong>
+              </span>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginTop: 10 }}>
+            <span style={{ fontSize: 12, color: BRAND.muted }}>Leave out everyone last in touch before</span>
+            {state.byAge.years.slice(1, 6).map((y) => (
+              <button
+                key={y.year} className="btn-ghost" disabled={busy}
+                onClick={() => excludeStale(y.year)}
+                title={`Removes the ${num(y.upToAndIncluding - y.count)} people we last heard from before ${y.year}`}
+                style={{ fontSize: 12, padding: '3px 9px', border: '1px solid ' + BRAND.border, borderRadius: 999 }}
+              >
+                {y.year} <span style={{ color: BRAND.muted }}>(−{num(y.upToAndIncluding - y.count)})</span>
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
