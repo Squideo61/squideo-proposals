@@ -1471,7 +1471,14 @@ export async function campaignsRoute(req, res, id, action, user) {
       // next batch, and the query would be work for nothing.
       campaign.status === 'sending' ? campaignPace(campaign).catch(() => null) : Promise.resolve(null),
     ]);
-    return res.status(200).json({ campaign, stats, links, recipients, pace });
+    // Whether bounces and complaints are actually reaching us. Without the
+    // webhook those tiles read 0.0% whatever is really happening, which is
+    // worse than showing nothing — it is the number someone would use to
+    // decide it is safe to send faster.
+    //
+    // The boolean only; the secret itself never leaves the server.
+    const bounceTracking = !!process.env.RESEND_WEBHOOK_SECRET;
+    return res.status(200).json({ campaign, stats, links, recipients, pace, bounceTracking });
   }
 
   // PATCH /campaigns/:id — edit a draft. A campaign that has started is frozen:

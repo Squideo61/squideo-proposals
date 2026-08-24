@@ -1364,7 +1364,7 @@ function SendConfirmModal({ campaignId, audience, excluded = 0, speed = null, on
 
 // ── report ──────────────────────────────────────────────────────────────────
 function CampaignReport({ state, onReload, onOpenContact, isMobile, showMsg, onReopened, onOpenCampaign }) {
-  const { campaign, stats, links, pace } = state;
+  const { campaign, stats, links, pace, bounceTracking } = state;
   const [filter, setFilter] = useState('all');
   const [recipients, setRecipients] = useState(state.recipients || []);
   const [busy, setBusy] = useState(false);
@@ -1534,15 +1534,27 @@ function CampaignReport({ state, onReload, onOpenContact, isMobile, showMsg, onR
         {/* The two numbers mailbox providers judge the domain on. Shown even at
             zero: their absence is the reassuring part, and a rate you only see
             once it's bad is a rate you find out about too late. */}
+        {/* A rate of 0.0% and "we aren't being told" look identical, and the
+            difference decides whether it's safe to send faster. So when the
+            webhook isn't wired up, these say so instead of showing a number
+            that would be believed. */}
         <Tile
-          icon={AlertTriangle} label="Bounced" value={pct(stats?.bounceRate)}
-          hint={`${num(stats?.bounced)} dead ${stats?.bounced === 1 ? 'address' : 'addresses'} · keep under 2%`}
-          bad={stats?.bounceRate >= 2}
+          icon={AlertTriangle} label="Bounced"
+          value={bounceTracking === false ? 'Not tracked' : pct(stats?.bounceRate)}
+          hint={bounceTracking === false
+            ? 'Set RESEND_WEBHOOK_SECRET to see real bounces — check Resend’s dashboard meanwhile'
+            : `${num(stats?.bounced)} dead ${stats?.bounced === 1 ? 'address' : 'addresses'} · keep under 2%`}
+          bad={bounceTracking !== false && stats?.bounceRate >= 2}
+          muted={bounceTracking === false}
         />
         <Tile
-          icon={Ban} label="Spam reports" value={pct(stats?.complaintRate)}
-          hint={`${num(stats?.complaints)} · Google's limit is 0.3%`}
-          bad={stats?.complaintRate >= 0.3}
+          icon={Ban} label="Spam reports"
+          value={bounceTracking === false ? 'Not tracked' : pct(stats?.complaintRate)}
+          hint={bounceTracking === false
+            ? 'Complaints aren’t reaching the CRM, so nobody is being suppressed'
+            : `${num(stats?.complaints)} · Google's limit is 0.3%`}
+          bad={bounceTracking !== false && stats?.complaintRate >= 0.3}
+          muted={bounceTracking === false}
         />
       </div>
 
@@ -1974,7 +1986,7 @@ function GmailHarvestModal({ onClose }) {
   );
 }
 
-function Tile({ icon: Icon, label, value, hint, good, bad }) {
+function Tile({ icon: Icon, label, value, hint, good, bad, muted }) {
   return (
     <div style={{
       flex: '1 1 150px', minWidth: 0, background: 'white',
@@ -1985,8 +1997,8 @@ function Tile({ icon: Icon, label, value, hint, good, bad }) {
         <span style={{ fontSize: 11.5, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>{label}</span>
       </div>
       <div style={{
-        fontSize: 24, fontWeight: 800, lineHeight: 1,
-        color: bad ? '#B91C1C' : (good ? '#15803D' : BRAND.ink),
+        fontSize: muted ? 15 : 24, fontWeight: muted ? 700 : 800, lineHeight: muted ? 1.3 : 1,
+        color: bad ? '#B91C1C' : (good ? '#15803D' : (muted ? BRAND.muted : BRAND.ink)),
       }}>{value}</div>
       {hint && <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 5, lineHeight: 1.4 }}>{hint}</div>}
     </div>
