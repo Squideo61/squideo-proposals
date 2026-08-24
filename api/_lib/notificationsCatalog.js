@@ -155,6 +155,14 @@ export const NOTIFICATIONS = [
     channel: 'finance',
   },
   {
+    key: 'marketing.harvest_done',
+    label: 'Gmail sweep finished',
+    description: 'A mailbox sweep for old enquiries has finished, with what it found. Goes to whoever started it — a sweep of a full mailbox runs for minutes in the background, and nobody should have to sit watching a progress bar to find out it is done.',
+    audience: 'owner',
+    group: 'Leads',
+    channel: 'general',
+  },
+  {
     key: 'course.signup',
     label: 'Video guide signup',
     description: 'Someone gives us their email address for the 6-Min Video Guide. Defaults to the bell only (which is what raises a desktop/phone push) rather than email — a lead magnet is meant to be high volume, and an inbox copy of each one stops being read.',

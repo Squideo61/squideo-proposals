@@ -842,7 +842,12 @@ export async function campaignsRoute(req, res, id, action, user) {
         stats: await campaignStats(row.id).catch(() => null),
       })));
       const counts = await audienceSummary().catch(() => null);
-      return res.status(200).json({ campaigns, counts });
+      // The state of the user's last mailbox sweep rides along, so the Email
+      // tab can show one running (or just-finished) without anyone having to
+      // open the sweep window to find out.
+      const { latestHarvestRun } = await import('./gmailHarvest.js');
+      const harvest = await latestHarvestRun(user.email).catch(() => null);
+      return res.status(200).json({ campaigns, counts, harvest });
     }
     // POST /campaigns — a new draft.
     if (req.method === 'POST') {

@@ -255,6 +255,27 @@ export async function ensureTrackingNotificationDefaults() {
   }
 }
 
+// Self-heal the role default for marketing.harvest_done.
+//
+// Defaults ON for every role, which is the exception rather than the rule here
+// — and deliberate. This one only ever fires in response to something you
+// started yourself, minutes earlier, and it is the ONLY way of finding out that
+// a background job you kicked off has finished. Defaulting it off (what an
+// absent key resolves to) would mean the sweep silently never told anyone,
+// which is indistinguishable from it having hung.
+let harvestDefaultReady = false;
+export async function ensureHarvestNotificationDefault() {
+  if (harvestDefaultReady) return;
+  try {
+    await sql`UPDATE roles SET notification_defaults = jsonb_set(
+      notification_defaults, '{marketing.harvest_done}', 'true'::jsonb, true)
+      WHERE NOT (notification_defaults ? 'marketing.harvest_done')`;
+    harvestDefaultReady = true;
+  } catch (err) {
+    console.warn('[notifications] ensureHarvestNotificationDefault failed', err.message);
+  }
+}
+
 // Self-heal the role default for the intro_call.booked key so the booking
 // notification works before its migration/seed lands. Defaults each role's
 // value to whatever it gets for revision.feedback_submitted (the closest

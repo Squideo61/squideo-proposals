@@ -125,8 +125,11 @@ export function CampaignsTab({ onOpenContact }) {
   useEffect(() => { load(); }, [load]);
 
   // Anything mid-flight keeps the list refreshing, so the sent count climbs on
-  // screen instead of needing a manual reload.
-  const inFlight = (data?.campaigns || []).some((c) => c.status === 'sending');
+  // screen instead of needing a manual reload. A running mailbox sweep counts
+  // too — its progress is on this screen now.
+  const harvest = data?.harvest || null;
+  const sweeping = !!harvest && (harvest.status === 'listing' || harvest.status === 'working');
+  const inFlight = (data?.campaigns || []).some((c) => c.status === 'sending') || sweeping;
   useEffect(() => {
     if (!inFlight || openId) return undefined;
     const t = setInterval(load, 8000);
@@ -225,8 +228,16 @@ export function CampaignsTab({ onOpenContact }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
         <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: BRAND.ink }}>Campaigns</h2>
         <div style={{ flex: 1 }} />
-        <button className="btn-secondary" onClick={() => setHarvesting(true)} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-          <Inbox size={15} /> Find enquirers in Gmail
+        {/* A sweep runs for minutes in the background, so its state belongs
+            here rather than only inside the window that started it. */}
+        <button
+          className="btn-secondary" onClick={() => setHarvesting(true)}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}
+        >
+          <Inbox size={15} />
+          {sweeping
+            ? `Sweeping Gmail… ${harvest.percent == null ? '' : harvest.percent + '%'}`
+            : 'Find enquirers in Gmail'}
         </button>
         <button className="btn-primary" onClick={newCampaign} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
           <Plus size={15} /> New campaign
@@ -237,6 +248,45 @@ export function CampaignsTab({ onOpenContact }) {
         <div style={{ padding: 14, border: '1px solid #FECACA', background: '#FEF2F2', borderRadius: 10, color: '#B91C1C', fontSize: 13, marginBottom: 14 }}>
           {error}
         </div>
+      )}
+
+      {/* Where a sweep got to, on the page you'd already be looking at. Stays
+          after it finishes so the result isn't only visible to whoever happened
+          to have the window open at the moment it ended. */}
+      {harvest && harvest.status !== 'cancelled' && (
+        <button
+          onClick={() => setHarvesting(true)}
+          style={{
+            display: 'flex', width: '100%', textAlign: 'left', gap: 12, alignItems: 'center', flexWrap: 'wrap',
+            padding: '11px 14px', marginBottom: 14, cursor: 'pointer', borderRadius: 10,
+            border: '1px solid ' + (sweeping ? '#F5C26B' : (harvest.status === 'failed' ? '#FECACA' : '#A7F3D0')),
+            background: sweeping ? '#FFF8EB' : (harvest.status === 'failed' ? '#FEF2F2' : '#ECFDF5'),
+          }}
+        >
+          <span style={{ fontSize: 13, fontWeight: 700, color: sweeping ? '#B45309' : (harvest.status === 'failed' ? '#B91C1C' : '#15803D') }}>
+            {sweeping
+              ? (harvest.status === 'listing'
+                ? 'Gmail sweep — finding every matching message…'
+                : `Gmail sweep — read ${num(harvest.processed)} of ${num(harvest.listed)}`)
+              : harvest.status === 'failed'
+                ? `Gmail sweep stopped: ${harvest.error || 'something went wrong'}`
+                : 'Gmail sweep finished'}
+          </span>
+          <span style={{ fontSize: 12.5, color: BRAND.muted }}>
+            {harvest.mode === 'quote_forms'
+              ? `${num(harvest.imported)} quote requests recovered`
+              : `${num(harvest.processed)} messages read`}
+            {sweeping ? ' so far · carry on, it keeps going in the background' : ' · open to see who it found'}
+          </span>
+          {sweeping && (
+            <span style={{ flex: '1 1 120px', minWidth: 100, height: 6, borderRadius: 999, background: 'white', overflow: 'hidden', border: '1px solid ' + BRAND.border }}>
+              <span style={{
+                display: 'block', height: '100%', background: BRAND.blue,
+                width: (harvest.percent == null ? 8 : harvest.percent) + '%', transition: 'width .5s ease',
+              }} />
+            </span>
+          )}
+        </button>
       )}
 
       <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 4 }}>

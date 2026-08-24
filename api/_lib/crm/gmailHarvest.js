@@ -288,6 +288,48 @@ export async function sweepHarvestRun({ runId = null, budgetMs = 40000 } = {}) {
   return { ok: true, run: serialiseRun(after) };
 }
 
+// Tell whoever started it. A full-mailbox sweep runs for minutes in the
+// background — the whole point of making it a durable job was that you could
+// walk away, which only works if something tells you when to come back.
+//
+// Best-effort: a sweep that finished successfully must not be reported as
+// failed because a bell didn't ring.
+async function notifyFinished(run) {
+  try {
+    const { sendNotification, ensureHarvestNotificationDefault } = await import('../notifications.js');
+    // Without a role default this key resolves to "off" and the alert would
+    // never be sent — which looks exactly like a sweep that hung.
+    await ensureHarvestNotificationDefault();
+    const [{ n: people }] = await sql`
+      SELECT COUNT(*)::int AS n FROM email_harvest_people WHERE run_id = ${run.id}`;
+    const quoteMode = run.mode === 'quote_forms';
+    const headline = quoteMode
+      ? `${(run.imported || 0).toLocaleString('en-GB')} old quote requests recovered`
+      : `${people.toLocaleString('en-GB')} ${people === 1 ? 'person' : 'people'} found in your mailbox`;
+    const detail = [
+      `Read ${(run.processed || 0).toLocaleString('en-GB')} messages.`,
+      quoteMode
+        ? 'They\'re in Quote Requests (filter: all) and on your mailing lists.'
+        : 'Open Marketing → Email to review who to add.',
+      run.failed ? `${run.failed} could not be read.` : null,
+    ].filter(Boolean).join(' ');
+
+    await sendNotification('marketing.harvest_done', {
+      ownerEmail: run.started_by,
+      inAppOnly: true,
+      subject: `Gmail sweep finished — ${headline}`,
+      inApp: {
+        title: `Gmail sweep finished — ${headline}`,
+        body: detail,
+        link: '#/marketing/email',
+        tag: `harvest-${run.id}`,
+      },
+    });
+  } catch (err) {
+    console.warn('[harvest] finish notification failed', err.message);
+  }
+}
+
 async function failRun(id, message) {
   await sql`
     UPDATE email_harvest_runs
@@ -367,10 +409,15 @@ async function readBatch({ run, accessToken, startedAt, budgetMs }) {
         SELECT COUNT(*)::int AS n FROM email_harvest_messages
          WHERE run_id = ${run.id} AND state = 'working'`;
       if (!n) {
-        await sql`
+        // Claim the completion in the same statement that records it, so the
+        // "finished" notification fires exactly once however many cron runs
+        // arrive at an empty queue together.
+        const finished = await sql`
           UPDATE email_harvest_runs
              SET status = 'done', completed_at = NOW(), updated_at = NOW()
-           WHERE id = ${run.id} AND status = 'working'`;
+           WHERE id = ${run.id} AND status = 'working'
+          RETURNING id, mode, processed, imported, ingested, failed, started_by, query`;
+        if (finished.length) await notifyFinished(finished[0]);
       }
       return;
     }
