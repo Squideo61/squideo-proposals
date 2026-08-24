@@ -1393,7 +1393,10 @@ function defaultScheduleValueNow() { return toDatetimeLocal(new Date()); }
 // position is never disturbed by re-renders. The formatting controls live in
 // RichTextToolbar (rendered separately, below the signature) and act on this
 // same editorRef.
-function RichTextEditor({ editorRef, initialHtml, onChange }) {
+// Exported so the campaign composer (Marketing → Email) writes its body in the
+// same editor staff already use for one-to-one email, rather than a second,
+// slightly-different one.
+export function RichTextEditor({ editorRef, initialHtml, onChange, minHeight = 72, maxHeight = 280 }) {
   // Streak-style link bubble: hovering a link shows a small bar to visit/change/
   // remove it. Anchored to the link via a fixed-position portal so it isn't
   // clipped by the editor's scroll box. `el` is the live <a> node so edits write
@@ -1487,7 +1490,7 @@ function RichTextEditor({ editorRef, initialHtml, onChange }) {
           // font-weight:500, which made typed text look bold.
           outline: 'none', padding: '10px 12px 4px',
           fontFamily: '-apple-system, system-ui, sans-serif', fontSize: 14, fontWeight: 400,
-          lineHeight: 1.5, minHeight: 72, maxHeight: 280, overflowY: 'auto',
+          lineHeight: 1.5, minHeight, maxHeight, overflowY: 'auto',
           color: BRAND.ink, background: 'transparent',
         }}
       />
@@ -1526,7 +1529,7 @@ function RichTextEditor({ editorRef, initialHtml, onChange }) {
 // supported and dependency-free), plus the attach-files button. Acts on the
 // shared editorRef. Rendered at the bottom of the message box, below the
 // signature (Gmail-style).
-function RichTextToolbar({ editorRef, onChange, onAttach }) {
+export function RichTextToolbar({ editorRef, onChange, onAttach }) {
   // Which colour palette (if any) is open. Single value so opening one closes
   // the other.
   const [openPalette, setOpenPalette] = useState(null); // 'text' | 'highlight' | null
@@ -1649,7 +1652,7 @@ function RichTextToolbar({ editorRef, onChange, onAttach }) {
       <Btn cmd="insertUnorderedList" title="Bulleted list">• —</Btn>
       <Btn cmd="insertOrderedList" title="Numbered list">1.</Btn>
       <span style={{ width: 1, alignSelf: 'stretch', background: BRAND.border, margin: '2px 4px' }} />
-      <Btn onClick={onAttach} title="Attach files">📎</Btn>
+      {onAttach && <Btn onClick={onAttach} title="Attach files">📎</Btn>}
       <Btn onClick={addLink} title="Insert link">🔗</Btn>
       <Btn onClick={() => exec('removeFormat')} title="Clear formatting">⨯</Btn>
     </div>

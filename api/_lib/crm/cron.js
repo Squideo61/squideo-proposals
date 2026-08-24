@@ -18,6 +18,7 @@ import {
   stepFor, kindsInFamily,
 } from '../course/emails.js';
 import { briefProgress } from '../brief/questions.js';
+import { drainCampaigns } from './campaigns.js';
 import { cronGscSync } from './googleSearch.js';
 import { cronGa4Sync } from './googleAnalytics.js';
 import { captureCostSnapshot } from './costSnapshot.js';
@@ -64,6 +65,7 @@ export async function cronHandler(req, res, action) {
     case 'cost-snapshot':     return cronCostSnapshot(res);
     case 'course-nudges':     return cronCourseNudges(req, res);
     case 'brief-digest':      return cronBriefDigest(res);
+    case 'campaign-send':     return cronCampaignSend(res);
     default:                  return res.status(404).json({ error: 'Unknown cron action: ' + action });
   }
 }
@@ -1294,4 +1296,22 @@ export async function cronCourseNudges(req, res) {
   }
 
   return res.status(200).json({ ok: true, found: due.length, sent, skipped });
+}
+
+// ── Marketing → Email: drain the campaign send queue ────────────────────────
+// Every minute. Each run sends a few hundred emails and stops well inside the
+// function budget; a campaign bigger than that simply finishes over the next
+// few runs. Nothing here needs to know how big the list is.
+//
+// Idle runs are the normal case and cost one query — cheaper than the
+// alternative, which is a send path that has to hold a request open for the
+// length of a mailshot.
+async function cronCampaignSend(res) {
+  try {
+    const result = await drainCampaigns();
+    return res.status(200).json(result);
+  } catch (err) {
+    console.error('[cron campaign-send] failed', err.message);
+    return res.status(500).json({ ok: false, error: 'Campaign send failed' });
+  }
 }

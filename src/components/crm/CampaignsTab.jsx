@@ -1,0 +1,830 @@
+// Marketing → Email. Three mailing lists, a composer, and what happened after
+// you pressed send.
+//
+// The screen is deliberately ordered the way the job runs: who you could email
+// (the list cards), what you've sent (the table), then — once you open one —
+// how it did. The list cards are first because the count is the number worth
+// checking before writing anything, and it's the only one that can surprise you
+// (unsubscribes and staff addresses come off it).
+//
+// Sending is a queue on the server, so this view polls while a campaign is in
+// flight rather than holding a request open.
+
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ArrowLeft, BarChart3, Check, Clock, Eye, Mail, MousePointerClick, Pause, Play,
+  Plus, Send, Trash2, Users, UserCheck, UserPlus, X, AlertTriangle, Link2, Ban,
+} from 'lucide-react';
+import { BRAND } from '../../theme.js';
+import { api } from '../../api.js';
+import { useStore } from '../../store.jsx';
+import { useIsMobile } from '../../utils.js';
+import { Modal, ResponsiveTable } from '../ui.jsx';
+import { RichTextEditor, RichTextToolbar } from './EmailComposer.jsx';
+import { sanitizeEmailHtml, isHtmlEmpty } from '../../lib/emailHtml.js';
+
+const LISTS = [
+  {
+    key: 'everyone', label: 'Everyone', icon: Users,
+    blurb: 'Every contact and lead-magnet signup we hold an address for.',
+  },
+  {
+    key: 'customers', label: 'Customers', icon: UserCheck,
+    blurb: "People at organisations with a deal that's signed, paid or on retainer.",
+  },
+  {
+    key: 'non_customers', label: 'Non-customers', icon: UserPlus,
+    blurb: "Everyone who hasn't bought yet — enquiries, quotes, video-guide and brief-builder signups.",
+  },
+];
+const listLabel = (k) => LISTS.find((l) => l.key === k)?.label || k;
+
+// The tags a sender can drop into the subject or body. Mirrors MERGE_TAGS in
+// api/_lib/crm/campaignHtml.js — the server does the substituting.
+const MERGE_TAGS = [
+  { tag: '{{first_name|there}}', label: 'First name' },
+  { tag: '{{name}}', label: 'Full name' },
+  { tag: '{{company|your team}}', label: 'Company' },
+];
+
+const STATUS_STYLE = {
+  draft:     { label: 'Draft',     bg: '#F1F5F9', ink: BRAND.muted, border: BRAND.border },
+  scheduled: { label: 'Scheduled', bg: '#EFF6FF', ink: '#1D4ED8',   border: '#BFDBFE' },
+  sending:   { label: 'Sending',   bg: '#FFF8EB', ink: '#B45309',   border: '#F5C26B' },
+  sent:      { label: 'Sent',      bg: '#ECFDF5', ink: '#15803D',   border: '#A7F3D0' },
+  paused:    { label: 'Paused',    bg: '#FFF8EB', ink: '#B45309',   border: '#F5C26B' },
+  cancelled: { label: 'Cancelled', bg: '#FEF2F2', ink: '#B91C1C',   border: '#FECACA' },
+};
+
+const num = (n) => (Number(n) || 0).toLocaleString('en-GB');
+const pct = (n) => (n == null ? '—' : `${Number(n).toFixed(1)}%`);
+const fmtDateTime = (d) => (d
+  ? new Date(d).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+  : '—');
+
+function StatusPill({ status }) {
+  const s = STATUS_STYLE[status] || STATUS_STYLE.draft;
+  return (
+    <span style={{
+      display: 'inline-block', padding: '2px 9px', borderRadius: 999, fontSize: 11.5,
+      fontWeight: 700, background: s.bg, color: s.ink, border: '1px solid ' + s.border,
+    }}>{s.label}</span>
+  );
+}
+
+// ── the tab ─────────────────────────────────────────────────────────────────
+export function CampaignsTab({ onOpenContact }) {
+  const { showMsg } = useStore();
+  const isMobile = useIsMobile();
+  const [data, setData] = useState(null);          // { campaigns, counts }
+  const [error, setError] = useState(null);
+  const [openId, setOpenId] = useState(null);      // campaign being viewed/edited
+  const [editing, setEditing] = useState(false);
+  const [listPreview, setListPreview] = useState(null); // which list card is open
+
+  const load = useCallback(() => (
+    api.get('/api/crm/campaigns')
+      .then((d) => { setData(d); setError(null); return d; })
+      .catch((e) => { setError(e.message); return null; })
+  ), []);
+
+  useEffect(() => { load(); }, [load]);
+
+  // Anything mid-flight keeps the list refreshing, so the sent count climbs on
+  // screen instead of needing a manual reload.
+  const inFlight = (data?.campaigns || []).some((c) => c.status === 'sending');
+  useEffect(() => {
+    if (!inFlight || openId) return undefined;
+    const t = setInterval(load, 8000);
+    return () => clearInterval(t);
+  }, [inFlight, openId, load]);
+
+  const newCampaign = async () => {
+    try {
+      const created = await api.post('/api/crm/campaigns', { name: 'Untitled campaign', audience: 'everyone' });
+      await load();
+      setOpenId(created.id);
+      setEditing(true);
+    } catch (e) { showMsg(e.message || 'Could not create the campaign'); }
+  };
+
+  if (openId) {
+    return (
+      <CampaignDetail
+        campaignId={openId}
+        startEditing={editing}
+        counts={data?.counts || null}
+        onClose={() => { setOpenId(null); setEditing(false); load(); }}
+        onOpenContact={onOpenContact}
+      />
+    );
+  }
+
+  const campaigns = data?.campaigns || [];
+
+  return (
+    <div>
+      {/* Mailing lists */}
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 10 }}>
+        {LISTS.map((l) => {
+          const Icon = l.icon;
+          const count = data?.counts?.[l.key];
+          return (
+            <button
+              key={l.key}
+              onClick={() => setListPreview(l.key)}
+              style={{
+                flex: '1 1 230px', minWidth: 0, textAlign: 'left', cursor: 'pointer',
+                background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12,
+                padding: '14px 16px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <Icon size={15} color={BRAND.blue} />
+                <span style={{ fontSize: 11.5, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                  {l.label}
+                </span>
+              </div>
+              <div style={{ fontSize: 26, fontWeight: 800, color: BRAND.ink, lineHeight: 1 }}>
+                {count == null ? '—' : num(count)}
+              </div>
+              <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 6, lineHeight: 1.45 }}>{l.blurb}</div>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* The number that explains any gap between these counts and the contacts
+          page — worth stating rather than leaving people to wonder. */}
+      <div style={{ fontSize: 12, color: BRAND.muted, marginBottom: 22, lineHeight: 1.5 }}>
+        Lists are built live from contacts and lead-magnet signups. Our own @squideo addresses are excluded, and so are
+        {' '}<strong>{num(data?.counts?.suppressed || 0)}</strong> unsubscribed or bounced {data?.counts?.suppressed === 1 ? 'address' : 'addresses'}.
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
+        <h2 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: BRAND.ink }}>Campaigns</h2>
+        <div style={{ flex: 1 }} />
+        <button className="btn-primary" onClick={newCampaign} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+          <Plus size={15} /> New campaign
+        </button>
+      </div>
+
+      {error && (
+        <div style={{ padding: 14, border: '1px solid #FECACA', background: '#FEF2F2', borderRadius: 10, color: '#B91C1C', fontSize: 13, marginBottom: 14 }}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 4 }}>
+        <ResponsiveTable
+          keyField="id"
+          onRowClick={(row) => { setOpenId(row.id); setEditing(row.status === 'draft'); }}
+          empty="No campaigns yet. Press “New campaign” to write one."
+          columns={[
+            { key: 'name', label: 'Campaign', render: (r) => (
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 600, color: BRAND.ink }}>{r.name}</div>
+                <div style={{ fontSize: 12, color: BRAND.muted, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {r.subject || 'No subject yet'}
+                </div>
+              </div>
+            ) },
+            { key: 'audience', label: 'List', render: (r) => listLabel(r.audience) },
+            { key: 'status', label: 'Status', render: (r) => (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                <StatusPill status={r.status} />
+                {r.status === 'sending' && r.stats && (
+                  <span style={{ fontSize: 11.5, color: BRAND.muted }}>
+                    {num(r.stats.sent)}/{num(r.stats.total)}
+                  </span>
+                )}
+              </span>
+            ) },
+            { key: 'sent', label: 'Sent', align: 'right', render: (r) => num(r.stats?.sent) },
+            { key: 'openRate', label: 'Opened', align: 'right', render: (r) => (
+              r.stats?.sent ? <span title={`${num(r.stats.opened)} people · ${num(r.stats.opens)} opens`}>{pct(r.stats.openRate)}</span> : '—'
+            ) },
+            { key: 'clickRate', label: 'Clicked', align: 'right', render: (r) => (
+              r.stats?.sent ? <span title={`${num(r.stats.clicked)} people · ${num(r.stats.clicks)} clicks`}>{pct(r.stats.clickRate)}</span> : '—'
+            ) },
+            { key: 'when', label: 'Date', align: 'right', hideOnMobile: true, render: (r) => (
+              <span style={{ fontSize: 12.5, color: BRAND.muted }}>
+                {fmtDateTime(r.completedAt || r.startedAt || r.scheduledAt || r.createdAt)}
+              </span>
+            ) },
+          ]}
+          rows={campaigns}
+        />
+      </div>
+
+      {listPreview && (
+        <ListPreviewModal listKey={listPreview} onClose={() => setListPreview(null)} onOpenContact={onOpenContact} />
+      )}
+    </div>
+  );
+}
+
+// ── who's actually on a list ────────────────────────────────────────────────
+// A count nobody can inspect is a count nobody trusts, and this is the last
+// chance to notice that a list is full of people it shouldn't be.
+function ListPreviewModal({ listKey, onClose, onOpenContact }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
+  useEffect(() => {
+    api.get('/api/crm/campaigns/audience?list=' + encodeURIComponent(listKey))
+      .then(setData).catch((e) => setError(e.message));
+  }, [listKey]);
+
+  return (
+    <Modal onClose={onClose} maxWidth={640}>
+      <h3 style={{ margin: '0 0 4px', fontSize: 17, fontWeight: 700, color: BRAND.ink }}>{listLabel(listKey)}</h3>
+      <div style={{ fontSize: 13, color: BRAND.muted, marginBottom: 16 }}>
+        {data ? `${num(data.total)} ${data.total === 1 ? 'person' : 'people'}` : 'Loading…'}
+        {data && data.total > (data.sample?.length || 0) && ` · showing the first ${num(data.sample.length)}`}
+      </div>
+      {error && <div style={{ color: '#B91C1C', fontSize: 13 }}>{error}</div>}
+      <div style={{ maxHeight: '55vh', overflowY: 'auto', border: '1px solid ' + BRAND.border, borderRadius: 10 }}>
+        {(data?.sample || []).map((p) => (
+          <div
+            key={p.email}
+            onClick={p.contactId && onOpenContact ? () => { onClose(); onOpenContact(p.contactId); } : undefined}
+            style={{
+              display: 'flex', gap: 10, alignItems: 'baseline', padding: '9px 12px',
+              borderBottom: '1px solid ' + BRAND.paper, fontSize: 13,
+              cursor: p.contactId && onOpenContact ? 'pointer' : 'default',
+            }}
+          >
+            <span style={{ fontWeight: 600, color: BRAND.ink, minWidth: 0, flex: '1 1 auto', wordBreak: 'break-word' }}>
+              {p.name || p.email}
+            </span>
+            {p.name && <span style={{ color: BRAND.muted, fontSize: 12 }}>{p.email}</span>}
+            {p.companyName && <span style={{ color: BRAND.muted, fontSize: 12 }}>{p.companyName}</span>}
+            {p.isCustomer && (
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: '#15803D', background: '#ECFDF5', border: '1px solid #A7F3D0', borderRadius: 999, padding: '1px 7px' }}>
+                Customer
+              </span>
+            )}
+          </div>
+        ))}
+        {data && !data.sample?.length && (
+          <div style={{ padding: 20, textAlign: 'center', color: BRAND.muted, fontSize: 13 }}>Nobody on this list yet.</div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+// ── one campaign: composer + report ─────────────────────────────────────────
+function CampaignDetail({ campaignId, startEditing, counts, onClose, onOpenContact }) {
+  const { showMsg } = useStore();
+  const isMobile = useIsMobile();
+  const [state, setState] = useState(null);        // { campaign, stats, links, recipients }
+  const [editing, setEditing] = useState(!!startEditing);
+  const [error, setError] = useState(null);
+
+  const load = useCallback(() => (
+    api.get('/api/crm/campaigns/' + campaignId)
+      .then((d) => { setState(d); setError(null); return d; })
+      .catch((e) => { setError(e.message); return null; })
+  ), [campaignId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const status = state?.campaign?.status;
+  useEffect(() => {
+    if (status !== 'sending') return undefined;
+    const t = setInterval(load, 6000);
+    return () => clearInterval(t);
+  }, [status, load]);
+
+  if (error && !state) {
+    return (
+      <div>
+        <button className="btn-ghost" onClick={onClose} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <ArrowLeft size={16} /> Back
+        </button>
+        <div style={{ marginTop: 16, color: '#B91C1C', fontSize: 13 }}>{error}</div>
+      </div>
+    );
+  }
+  if (!state) return <div style={{ padding: 30, textAlign: 'center', color: BRAND.muted, fontSize: 13 }}>Loading…</div>;
+
+  const { campaign } = state;
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18, flexWrap: 'wrap' }}>
+        <button className="btn-ghost" onClick={onClose} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 8px' }}>
+          <ArrowLeft size={16} /> All campaigns
+        </button>
+        <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: BRAND.ink, minWidth: 0 }}>{campaign.name}</h2>
+        <StatusPill status={campaign.status} />
+        <div style={{ flex: 1 }} />
+        {!editing && (campaign.status === 'draft' || campaign.status === 'scheduled') && (
+          <button className="btn-secondary" onClick={() => setEditing(true)}>Edit</button>
+        )}
+      </div>
+
+      {editing
+        ? (
+          <CampaignEditor
+            campaign={campaign}
+            counts={counts}
+            onSaved={(c) => { setState((s) => ({ ...s, campaign: c })); }}
+            onDone={() => { setEditing(false); load(); }}
+            onDeleted={onClose}
+          />
+        )
+        : (
+          <CampaignReport
+            state={state}
+            onReload={load}
+            onOpenContact={onOpenContact}
+            isMobile={isMobile}
+            showMsg={showMsg}
+          />
+        )}
+    </div>
+  );
+}
+
+// ── composer ────────────────────────────────────────────────────────────────
+function CampaignEditor({ campaign, counts, onSaved, onDone, onDeleted }) {
+  const { showMsg } = useStore();
+  const isMobile = useIsMobile();
+  const editorRef = useRef(null);
+  const [name, setName] = useState(campaign.name);
+  const [audience, setAudience] = useState(campaign.audience);
+  const [subject, setSubject] = useState(campaign.subject);
+  const [preheader, setPreheader] = useState(campaign.preheader || '');
+  const [body, setBody] = useState(campaign.bodyHtml || '');
+  const [replyTo, setReplyTo] = useState(campaign.replyTo || '');
+  const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [testing, setTesting] = useState(false);
+
+  const mark = (setter) => (v) => { setter(v); setDirty(true); };
+
+  const payload = () => ({
+    name, audience, subject, preheader,
+    bodyHtml: sanitizeEmailHtml(body),
+    replyTo: replyTo || null,
+  });
+
+  const save = async ({ quiet = false } = {}) => {
+    setSaving(true);
+    try {
+      const saved = await api.patch('/api/crm/campaigns/' + campaign.id, payload());
+      onSaved(saved);
+      setDirty(false);
+      if (!quiet) showMsg('Campaign saved');
+      return saved;
+    } catch (e) {
+      showMsg(e.message || 'Could not save');
+      return null;
+    } finally { setSaving(false); }
+  };
+
+  const sendTest = async () => {
+    setTesting(true);
+    // Saved first, always: a test of the last saved version rather than what's
+    // on screen is worse than useless — it looks like a check and isn't one.
+    const saved = await save({ quiet: true });
+    if (!saved) { setTesting(false); return; }
+    try {
+      const r = await api.post(`/api/crm/campaigns/${campaign.id}/test`, {});
+      showMsg('Test sent to ' + r.to);
+    } catch (e) { showMsg(e.message || 'Test send failed'); }
+    finally { setTesting(false); }
+  };
+
+  const openPreview = async () => {
+    const saved = await save({ quiet: true });
+    if (!saved) return;
+    try {
+      const r = await api.post(`/api/crm/campaigns/${campaign.id}/preview`, payload());
+      setPreview(r);
+    } catch (e) { showMsg(e.message || 'Could not build the preview'); }
+  };
+
+  const remove = async () => {
+    try {
+      await api.delete('/api/crm/campaigns/' + campaign.id);
+      onDeleted();
+    } catch (e) { showMsg(e.message || 'Could not delete'); }
+  };
+
+  const insertTag = (tag) => {
+    const el = editorRef.current;
+    if (!el) return;
+    el.focus();
+    document.execCommand('insertText', false, tag);
+    setBody(el.innerHTML);
+    setDirty(true);
+  };
+
+  const recipientCount = counts?.[audience];
+  const ready = subject.trim() && !isHtmlEmpty(body);
+
+  const label = { fontSize: 12, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, display: 'block', marginBottom: 6 };
+  const input = { width: '100%', padding: '9px 11px', border: '1px solid ' + BRAND.border, borderRadius: 8, fontSize: 14, color: BRAND.ink, background: 'white' };
+
+  return (
+    <div style={{ display: 'flex', gap: 18, flexDirection: isMobile ? 'column' : 'row', alignItems: 'flex-start' }}>
+      <div style={{ flex: '1 1 auto', minWidth: 0, width: '100%' }}>
+        <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 16 }}>
+          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginBottom: 14 }}>
+            <div style={{ flex: '2 1 260px', minWidth: 0 }}>
+              <label style={label}>Campaign name <span style={{ textTransform: 'none', fontWeight: 500 }}>(internal only)</span></label>
+              <input style={input} value={name} onChange={(e) => mark(setName)(e.target.value)} />
+            </div>
+            <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+              <label style={label}>Send to</label>
+              <select style={input} value={audience} onChange={(e) => mark(setAudience)(e.target.value)}>
+                {LISTS.map((l) => (
+                  <option key={l.key} value={l.key}>
+                    {l.label}{counts?.[l.key] != null ? ` — ${num(counts[l.key])} people` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div style={{ marginBottom: 14 }}>
+            <label style={label}>Subject</label>
+            <input
+              style={input} value={subject} placeholder="The line that decides whether it gets opened"
+              onChange={(e) => mark(setSubject)(e.target.value)}
+            />
+          </div>
+
+          <div style={{ marginBottom: 14 }}>
+            <label style={label}>Preview text <span style={{ textTransform: 'none', fontWeight: 500 }}>(the grey line next to the subject)</span></label>
+            <input
+              style={input} value={preheader} placeholder="Optional — but it's the second thing people read"
+              onChange={(e) => mark(setPreheader)(e.target.value)}
+            />
+          </div>
+
+          <label style={label}>Message</label>
+          <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 8, overflow: 'hidden' }}>
+            <RichTextEditor
+              editorRef={editorRef}
+              initialHtml={campaign.bodyHtml || ''}
+              onChange={(html) => { setBody(html); setDirty(true); }}
+              minHeight={220}
+              maxHeight={560}
+            />
+            <RichTextToolbar editorRef={editorRef} onChange={(html) => { setBody(html); setDirty(true); }} />
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 10 }}>
+            <span style={{ fontSize: 12, color: BRAND.muted }}>Personalise:</span>
+            {MERGE_TAGS.map((t) => (
+              <button
+                key={t.tag} className="btn-ghost" onClick={() => insertTag(t.tag)}
+                style={{ fontSize: 12, padding: '3px 9px', border: '1px solid ' + BRAND.border, borderRadius: 999 }}
+                title={`Inserts ${t.tag} — the text after the | is used when we don't know it`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          <div style={{ marginTop: 16 }}>
+            <label style={label}>Replies go to</label>
+            <input
+              style={{ ...input, maxWidth: 340 }} value={replyTo} placeholder="enquiries@squideo.co.uk (default)"
+              onChange={(e) => mark(setReplyTo)(e.target.value)}
+            />
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, marginTop: 14, flexWrap: 'wrap' }}>
+          <button className="btn-secondary" onClick={() => save()} disabled={saving}>
+            {saving ? 'Saving…' : 'Save draft'}
+          </button>
+          <button className="btn-secondary" onClick={openPreview} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Eye size={15} /> Preview
+          </button>
+          <button className="btn-secondary" onClick={sendTest} disabled={testing} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Mail size={15} /> {testing ? 'Sending…' : 'Send test to me'}
+          </button>
+          <div style={{ flex: 1 }} />
+          <button className="btn-ghost" onClick={remove} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: '#B91C1C' }}>
+            <Trash2 size={15} /> Delete
+          </button>
+          <button
+            className="btn-primary"
+            disabled={!ready}
+            title={ready ? '' : 'Add a subject and some copy first'}
+            onClick={async () => { const saved = await save({ quiet: true }); if (saved) setConfirming(true); }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}
+          >
+            <Send size={15} /> Review &amp; send
+          </button>
+        </div>
+
+        {dirty && (
+          <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 8 }}>Unsaved changes.</div>
+        )}
+      </div>
+
+      {/* What it does to the inbox, stated once, next to the thing it affects. */}
+      <aside style={{
+        flex: isMobile ? '1 1 auto' : '0 0 250px', width: isMobile ? '100%' : 250,
+        background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 14,
+        fontSize: 12.5, color: BRAND.muted, lineHeight: 1.55,
+      }}>
+        <div style={{ fontWeight: 700, color: BRAND.ink, marginBottom: 8, fontSize: 13 }}>Before you send</div>
+        <p style={{ margin: '0 0 10px' }}>
+          Going to <strong style={{ color: BRAND.ink }}>{recipientCount == null ? '…' : num(recipientCount)}</strong> {' '}
+          {listLabel(audience).toLowerCase()} — one email each, addressed individually. Nobody sees anyone else.
+        </p>
+        <p style={{ margin: '0 0 10px' }}>
+          An unsubscribe footer and one-click opt-out header are added automatically. Anyone who opts out is off every
+          future list within seconds.
+        </p>
+        <p style={{ margin: 0 }}>
+          Opens and clicks are tracked per person, so the report tells you who to ring — not just a percentage.
+        </p>
+      </aside>
+
+      {confirming && (
+        <SendConfirmModal
+          campaignId={campaign.id}
+          audience={audience}
+          onClose={() => setConfirming(false)}
+          onSent={() => { setConfirming(false); onDone(); }}
+        />
+      )}
+      {preview && (
+        <Modal onClose={() => setPreview(null)} maxWidth={720}>
+          <div style={{ fontSize: 12, color: BRAND.muted, marginBottom: 4 }}>Subject</div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: BRAND.ink, marginBottom: 14 }}>{preview.subject || '(no subject)'}</div>
+          <iframe
+            title="Email preview"
+            srcDoc={preview.html}
+            sandbox=""
+            style={{ width: '100%', height: '60vh', border: '1px solid ' + BRAND.border, borderRadius: 8, background: 'white' }}
+          />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// The last gate. Shows the real recipient count fetched fresh (not the one
+// cached when the page loaded) — this is the one number that must not be stale,
+// because it's the one the sender is agreeing to.
+function SendConfirmModal({ campaignId, audience, onClose, onSent }) {
+  const { showMsg } = useStore();
+  const [audienceData, setAudienceData] = useState(null);
+  const [when, setWhen] = useState('');
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    api.get('/api/crm/campaigns/audience?list=' + encodeURIComponent(audience))
+      .then(setAudienceData).catch(() => setAudienceData(null));
+  }, [audience]);
+
+  const go = async () => {
+    setSending(true);
+    try {
+      const r = await api.post(`/api/crm/campaigns/${campaignId}/send`, when ? { scheduledAt: new Date(when).toISOString() } : {});
+      showMsg(r.scheduled ? 'Scheduled' : `Sending to ${num(r.queued)} people`);
+      onSent();
+    } catch (e) {
+      showMsg(e.message || 'Could not start the send');
+      setSending(false);
+    }
+  };
+
+  const total = audienceData?.total;
+
+  return (
+    <Modal onClose={onClose} maxWidth={460}>
+      <h3 style={{ margin: '0 0 10px', fontSize: 17, fontWeight: 700, color: BRAND.ink }}>Send this campaign?</h3>
+      <p style={{ margin: '0 0 16px', fontSize: 14, color: BRAND.ink, lineHeight: 1.55 }}>
+        It goes to <strong>{total == null ? '…' : num(total)}</strong> {listLabel(audience).toLowerCase()}
+        {' '}— people who haven't unsubscribed, excluding our own addresses. This can't be undone once it starts,
+        though you can pause it part-way.
+      </p>
+
+      <label style={{ fontSize: 12, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, display: 'block', marginBottom: 6 }}>
+        Send later (optional)
+      </label>
+      <input
+        type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)}
+        style={{ width: '100%', padding: '9px 11px', border: '1px solid ' + BRAND.border, borderRadius: 8, fontSize: 14, marginBottom: 18 }}
+      />
+
+      <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+        <button className="btn-secondary" onClick={onClose}>Cancel</button>
+        <button className="btn-primary" onClick={go} disabled={sending || total === 0} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+          {when ? <Clock size={15} /> : <Send size={15} />}
+          {sending ? 'Starting…' : (when ? 'Schedule' : `Send to ${total == null ? '' : num(total)}`)}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+// ── report ──────────────────────────────────────────────────────────────────
+function CampaignReport({ state, onReload, onOpenContact, isMobile, showMsg }) {
+  const { campaign, stats, links } = state;
+  const [filter, setFilter] = useState('all');
+  const [recipients, setRecipients] = useState(state.recipients || []);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => { setRecipients(state.recipients || []); }, [state.recipients]);
+
+  const shown = useMemo(() => {
+    if (filter === 'opened') return recipients.filter((r) => r.opens > 0);
+    if (filter === 'clicked') return recipients.filter((r) => r.clicks > 0);
+    if (filter === 'unopened') return recipients.filter((r) => r.status === 'sent' && r.opens === 0);
+    if (filter === 'failed') return recipients.filter((r) => r.status === 'failed' || r.status === 'skipped');
+    return recipients;
+  }, [recipients, filter]);
+
+  const control = async (action) => {
+    setBusy(true);
+    try {
+      await api.post(`/api/crm/campaigns/${campaign.id}/${action}`, {});
+      await onReload();
+    } catch (e) { showMsg(e.message || 'That did not work'); }
+    finally { setBusy(false); }
+  };
+
+  const progress = stats?.total ? Math.round(((stats.sent + stats.failed + stats.skipped) / stats.total) * 100) : 0;
+
+  return (
+    <div>
+      {/* Live progress while the queue drains. */}
+      {(campaign.status === 'sending' || campaign.status === 'paused') && (
+        <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 14, marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 13.5, fontWeight: 700, color: BRAND.ink }}>
+              {campaign.status === 'paused' ? 'Paused' : 'Sending'} — {num(stats?.sent)} of {num(stats?.total)}
+            </span>
+            <div style={{ flex: 1 }} />
+            {campaign.status === 'sending'
+              ? <button className="btn-secondary" disabled={busy} onClick={() => control('pause')} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Pause size={14} /> Pause</button>
+              : <button className="btn-primary" disabled={busy} onClick={() => control('resume')} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}><Play size={14} /> Resume</button>}
+            <button className="btn-ghost" disabled={busy} onClick={() => control('cancel')} style={{ color: '#B91C1C', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <Ban size={14} /> Stop
+            </button>
+          </div>
+          <div style={{ height: 8, borderRadius: 999, background: BRAND.paper, overflow: 'hidden' }}>
+            <div style={{ width: progress + '%', height: '100%', background: BRAND.blue, transition: 'width .4s ease' }} />
+          </div>
+        </div>
+      )}
+
+      {campaign.status === 'scheduled' && (
+        <div style={{ background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 12, padding: 14, marginBottom: 16, fontSize: 13.5, color: '#1D4ED8', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <Clock size={16} />
+          <span>Goes out {fmtDateTime(campaign.scheduledAt)}. The list is worked out at that moment, so anyone added between now and then is included.</span>
+          <div style={{ flex: 1 }} />
+          <button className="btn-secondary" disabled={busy} onClick={() => control('cancel')}>Cancel send</button>
+        </div>
+      )}
+
+      {/* Headline numbers. Rate first, headcount underneath — the percentage is
+          what you compare between campaigns, the count is what makes it real. */}
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 20 }}>
+        <Tile icon={Send} label="Sent" value={num(stats?.sent)} hint={stats?.failed ? `${num(stats.failed)} failed` : (stats?.queued ? `${num(stats.queued)} to go` : 'delivered to the mail servers')} />
+        <Tile icon={Eye} label="Opened" value={pct(stats?.openRate)} hint={`${num(stats?.opened)} people · ${num(stats?.opens)} opens`} good={stats?.openRate >= 25} />
+        <Tile icon={MousePointerClick} label="Clicked" value={pct(stats?.clickRate)} hint={`${num(stats?.clicked)} people · ${num(stats?.clicks)} clicks`} good={stats?.clickRate >= 3} />
+        <Tile icon={BarChart3} label="Click-to-open" value={pct(stats?.clickToOpenRate)} hint="of those who read it, who acted" />
+        <Tile icon={X} label="Unsubscribed" value={pct(stats?.unsubscribeRate)} hint={`${num(stats?.unsubscribed)} ${stats?.unsubscribed === 1 ? 'person' : 'people'}`} bad={stats?.unsubscribeRate >= 0.5} />
+      </div>
+
+      <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+        {/* What people clicked. */}
+        <div style={{ flex: '1 1 300px', minWidth: 0, background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <Link2 size={15} color={BRAND.blue} />
+            <span style={{ fontSize: 13.5, fontWeight: 700, color: BRAND.ink }}>Links clicked</span>
+          </div>
+          {links?.length ? links.map((l) => (
+            <div key={l.url} style={{ display: 'flex', gap: 10, alignItems: 'baseline', padding: '7px 0', borderBottom: '1px solid ' + BRAND.paper }}>
+              <a href={l.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12.5, color: BRAND.blue, wordBreak: 'break-all', flex: 1, minWidth: 0 }}>{l.url}</a>
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: BRAND.ink, whiteSpace: 'nowrap' }}>
+                {num(l.people)} {l.people === 1 ? 'person' : 'people'}
+              </span>
+            </div>
+          )) : (
+            <div style={{ fontSize: 12.5, color: BRAND.muted }}>
+              No clicks yet{campaign.status === 'sent' ? '.' : ' — it only just went out.'}
+            </div>
+          )}
+        </div>
+
+        {/* Subject line, kept visible: the report is meaningless without the
+            thing being measured. */}
+        <div style={{ flex: '1 1 260px', minWidth: 0, background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 16 }}>
+          <div style={{ fontSize: 11.5, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>What went out</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink, marginBottom: 4 }}>{campaign.subject}</div>
+          {campaign.preheader && <div style={{ fontSize: 12.5, color: BRAND.muted, marginBottom: 8 }}>{campaign.preheader}</div>}
+          <div style={{ fontSize: 12.5, color: BRAND.muted }}>
+            {listLabel(campaign.audience)} · {fmtDateTime(campaign.completedAt || campaign.startedAt)}
+          </div>
+        </div>
+      </div>
+
+      {/* Per-person engagement — the actionable half. */}
+      <div style={{ marginTop: 22 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12, alignItems: 'center' }}>
+          <span style={{ fontSize: 13.5, fontWeight: 700, color: BRAND.ink, marginRight: 4 }}>Recipients</span>
+          {[
+            ['all', 'All', recipients.length],
+            ['opened', 'Opened', recipients.filter((r) => r.opens > 0).length],
+            ['clicked', 'Clicked', recipients.filter((r) => r.clicks > 0).length],
+            ['unopened', 'Not opened', recipients.filter((r) => r.status === 'sent' && r.opens === 0).length],
+            ['failed', 'Not delivered', recipients.filter((r) => r.status === 'failed' || r.status === 'skipped').length],
+          ].map(([key, text, n]) => (
+            <button
+              key={key} onClick={() => setFilter(key)}
+              style={{
+                padding: '4px 11px', borderRadius: 999, fontSize: 12.5, cursor: 'pointer',
+                border: '1px solid ' + (filter === key ? BRAND.blue : BRAND.border),
+                background: filter === key ? BRAND.blue : 'white',
+                color: filter === key ? 'white' : BRAND.ink, fontWeight: filter === key ? 700 : 500,
+              }}
+            >
+              {text} {n > 0 && <span style={{ opacity: 0.75 }}>{num(n)}</span>}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 4 }}>
+          <ResponsiveTable
+            keyField="id"
+            empty="Nobody in this group."
+            onRowClick={onOpenContact ? (r) => r.contactId && onOpenContact(r.contactId) : undefined}
+            columns={[
+              { key: 'who', label: 'Person', render: (r) => (
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, color: BRAND.ink }}>{r.name || r.email}</div>
+                  <div style={{ fontSize: 12, color: BRAND.muted, wordBreak: 'break-all' }}>
+                    {r.companyName || r.email}
+                  </div>
+                </div>
+              ) },
+              { key: 'opens', label: 'Opens', align: 'right', render: (r) => (
+                r.opens > 0
+                  ? <span style={{ fontWeight: 700, color: '#15803D' }}>{num(r.opens)}</span>
+                  : <span style={{ color: BRAND.muted }}>—</span>
+              ) },
+              { key: 'clicks', label: 'Clicks', align: 'right', render: (r) => (
+                r.clicks > 0
+                  ? <span style={{ fontWeight: 700, color: BRAND.blue }}>{num(r.clicks)}</span>
+                  : <span style={{ color: BRAND.muted }}>—</span>
+              ) },
+              { key: 'firstOpenAt', label: 'First opened', align: 'right', hideOnMobile: true, render: (r) => (
+                <span style={{ fontSize: 12.5, color: BRAND.muted }}>{fmtDateTime(r.firstOpenAt)}</span>
+              ) },
+              { key: 'where', label: 'Where', align: 'right', hideOnMobile: true, render: (r) => (
+                <span style={{ fontSize: 12.5, color: BRAND.muted }}>
+                  {[r.city, r.country].filter(Boolean).join(', ') || '—'}
+                </span>
+              ) },
+              { key: 'status', label: 'Status', align: 'right', render: (r) => (
+                r.status === 'sent'
+                  ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12.5, color: '#15803D' }}><Check size={13} /> Sent</span>
+                  : r.status === 'skipped'
+                    ? <span title={r.error || ''} style={{ fontSize: 12.5, color: BRAND.muted }}>Skipped</span>
+                    : r.status === 'failed'
+                      ? <span title={r.error || ''} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12.5, color: '#B91C1C' }}><AlertTriangle size={13} /> Failed</span>
+                      : <span style={{ fontSize: 12.5, color: BRAND.muted }}>Queued</span>
+              ) },
+            ]}
+            rows={shown}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Tile({ icon: Icon, label, value, hint, good, bad }) {
+  return (
+    <div style={{
+      flex: '1 1 150px', minWidth: 0, background: 'white',
+      border: '1px solid ' + BRAND.border, borderRadius: 10, padding: '12px 14px',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 6 }}>
+        <Icon size={14} color={BRAND.blue} />
+        <span style={{ fontSize: 11.5, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>{label}</span>
+      </div>
+      <div style={{
+        fontSize: 24, fontWeight: 800, lineHeight: 1,
+        color: bad ? '#B91C1C' : (good ? '#15803D' : BRAND.ink),
+      }}>{value}</div>
+      {hint && <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 5, lineHeight: 1.4 }}>{hint}</div>}
+    </div>
+  );
+}

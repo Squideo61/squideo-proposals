@@ -128,6 +128,86 @@ export async function sendMail({
   }
 }
 
+// Bulk marketing send — one API call for up to BATCH_LIMIT individually
+// addressed emails. Used by the campaign queue (Marketing → Email).
+//
+// Why batch rather than a loop of sendMail(): Resend rate-limits by REQUEST,
+// not by recipient. Sending a 500-person campaign one call at a time takes
+// minutes of wall clock and trips the limiter; the batch endpoint carries 100
+// distinct messages — each with its own html, and so its own tracking pixel and
+// its own unsubscribe link — in a single request.
+//
+// Every message still has exactly one recipient. This is NOT a bcc blast, and
+// no recipient can see another.
+//
+// Suppression is applied HERE, the same choke point sendMail uses, so a
+// campaign cannot be the thing that forgets to check the unsubscribe list.
+//
+// Returns one result per input message, IN ORDER, so the caller can mark each
+// recipient row: { ok, id, error, suppressed }. Never throws on a send failure
+// — a failed batch must leave the queue intact for the next run to retry.
+export const BATCH_LIMIT = 100;
+
+export async function sendMarketingBatch(messages = []) {
+  const list = Array.isArray(messages) ? messages : [];
+  if (!list.length) return [];
+  if (list.length > BATCH_LIMIT) throw new Error(`Batch too large: ${list.length} > ${BATCH_LIMIT}`);
+
+  const results = list.map(() => ({ ok: false, id: null, error: null, suppressed: false }));
+
+  // Suppression first — one query for the whole batch.
+  let blocked = new Set();
+  try {
+    const { suppressedAmong } = await import('./emailSuppression.js');
+    blocked = await suppressedAmong(list.map((m) => m.to), 'marketing');
+  } catch (err) {
+    // Fail CLOSED for marketing: if we can't tell who opted out, we don't send.
+    console.error('[email] batch suppression lookup failed', err.message);
+    return results.map(() => ({ ok: false, id: null, error: 'Suppression lookup failed', suppressed: false }));
+  }
+
+  const payload = [];
+  const payloadIndex = [];
+  list.forEach((m, i) => {
+    const to = String(m.to || '').trim().toLowerCase();
+    if (!to) { results[i].error = 'No recipient'; return; }
+    if (blocked.has(to)) { results[i].suppressed = true; results[i].error = 'Unsubscribed'; return; }
+    const msg = {
+      from: MARKETING_FROM,
+      to: [m.to],
+      subject: m.subject,
+      html: m.html,
+      text: m.text,
+      replyTo: m.replyTo || MARKETING_REPLY_TO,
+    };
+    if (m.headers && Object.keys(m.headers).length) msg.headers = m.headers;
+    payloadIndex.push(i);
+    payload.push(msg);
+  });
+  if (!payload.length) return results;
+
+  const c = getClient('marketing');
+  if (!c) {
+    console.warn('[email] RESEND_API_KEY missing — skipping campaign batch', { count: payload.length });
+    payloadIndex.forEach((i) => { results[i].error = 'Email transport not configured'; });
+    return results;
+  }
+
+  try {
+    const { data, error } = await c.batch.send(payload);
+    if (error) throw new Error(error.message || 'Batch send failed');
+    const ids = data?.data || [];
+    payloadIndex.forEach((i, n) => {
+      results[i].ok = true;
+      results[i].id = ids[n]?.id || null;
+    });
+  } catch (err) {
+    console.error('[email] batch send failed', { count: payload.length, err: err.message });
+    payloadIndex.forEach((i) => { results[i].error = err.message || 'Send failed'; });
+  }
+  return results;
+}
+
 const formatGBP = (n) =>
   '£' + (Number(n) || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 

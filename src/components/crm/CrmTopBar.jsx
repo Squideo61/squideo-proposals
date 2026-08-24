@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, BarChart3, Bell, CalendarDays, ChevronDown, Clapperboard, CheckSquare, Coins, FileText, Gauge, Globe, Images, KanbanSquare, LayoutDashboard, LayoutGrid, Mail, MailQuestion, Megaphone, Menu, PoundSterling, Search, Settings, Square, Undo2, Redo2, UserCog, X } from 'lucide-react';
+import { Activity, BarChart3, Bell, CalendarDays, ChevronDown, Clapperboard, CheckSquare, Coins, FileText, Gauge, Globe, Images, KanbanSquare, LayoutDashboard, LayoutGrid, Mail, MailQuestion, Megaphone, Menu, PoundSterling, Search, Send, Settings, Square, Undo2, Redo2, UserCog, X } from 'lucide-react';
 import { BRAND, APP_MAX_WIDTH } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile, formatTaskDue } from '../../utils.js';
@@ -103,6 +103,7 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
         { label: 'Dashboard', icon: LayoutDashboard, go: () => navigate('marketing', 'overview') },
         { label: 'Reports', icon: BarChart3, go: () => navigate('marketing', 'reports') },
         { label: 'Leads', icon: MailQuestion, go: () => navigate('marketing', 'leads') },
+        { label: 'Email', icon: Send, go: () => navigate('marketing', 'email') },
         { label: 'Search', icon: Search, go: () => navigate('marketing', 'search') },
         { label: 'Traffic', icon: Globe, go: () => navigate('marketing', 'traffic') },
         { label: 'Settings', icon: Megaphone, go: () => navigate('marketing', 'settings') },

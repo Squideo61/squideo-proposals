@@ -149,6 +149,10 @@
     {
       "path": "/api/crm/cron/brief-digest",
       "schedule": "10 * * * *"
+    },
+    {
+      "path": "/api/crm/cron/campaign-send",
+      "schedule": "* * * * *"
     }
   ],
   "headers": [
