@@ -119,6 +119,10 @@ export function ensureReviewTables() {
         total_count    INTEGER,
         updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`;
+    // Added after the table shipped, so ALTER rather than a column in the
+    // CREATE — existing installs already have the table and would skip it.
+    await sql`ALTER TABLE google_reviews_meta ADD COLUMN IF NOT EXISTS maps_uri TEXT`;
+    await sql`ALTER TABLE google_reviews_meta ADD COLUMN IF NOT EXISTS new_review_uri TEXT`;
   })().catch((err) => { ensured = null; throw err; });
   return ensured;
 }
@@ -228,6 +232,21 @@ export async function runReviewSync() {
 
   const loc = await discoverLocation();
   const { reviews, averageRating, totalCount } = await fetchAllReviews(loc);
+  // Google's own canonical link to the listing, so the banner can send people
+  // to the real reviews page without us hand-assembling a maps URL from a CID.
+  // Best-effort: a failure here costs a link, not the sync.
+  let mapsUri = null;
+  let newReviewUri = null;
+  try {
+    const info = await apiGet(
+      'https://mybusinessbusinessinformation.googleapis.com/v1/' + loc.locationName +
+      '?readMask=name,title,metadata'
+    );
+    mapsUri = info?.metadata?.mapsUri || null;
+    newReviewUri = info?.metadata?.newReviewUri || null;
+  } catch (err) {
+    console.warn('[google reviews] could not read location metadata', err?.message);
+  }
 
   const seen = [];
   // approved / display_text are deliberately absent from the UPDATE list: a
@@ -268,11 +287,17 @@ export async function runReviewSync() {
   }
 
   await sql`
-    INSERT INTO google_reviews_meta (id, account_name, location_name, location_title, average_rating, total_count, updated_at)
-    VALUES (1, ${loc.accountName}, ${loc.locationName}, ${loc.locationTitle}, ${averageRating}, ${totalCount}, NOW())
+    INSERT INTO google_reviews_meta (id, account_name, location_name, location_title,
+                                     average_rating, total_count, maps_uri, new_review_uri, updated_at)
+    VALUES (1, ${loc.accountName}, ${loc.locationName}, ${loc.locationTitle},
+            ${averageRating}, ${totalCount}, ${mapsUri}, ${newReviewUri}, NOW())
     ON CONFLICT (id) DO UPDATE SET
       average_rating = EXCLUDED.average_rating,
       total_count    = EXCLUDED.total_count,
+      -- COALESCE so a metadata read that failed this run doesn't wipe a link
+      -- we already had.
+      maps_uri       = COALESCE(EXCLUDED.maps_uri, google_reviews_meta.maps_uri),
+      new_review_uri = COALESCE(EXCLUDED.new_review_uri, google_reviews_meta.new_review_uri),
       updated_at     = NOW()`;
 
   const [counts] = await sql`
@@ -295,16 +320,32 @@ const shapePublic = (r) => ({
 
 // What the /reviews embed renders. Approved and still-present only; a review
 // with no words is nothing to show.
-export async function publicReviews() {
+//
+// Capped, because approving a lot and showing a lot are different decisions.
+// A hundred cards is ~2,000 DOM nodes, a composited layer tens of thousands of
+// pixels wide, and a loop that takes a quarter of an hour to come round — on a
+// page every visitor loads, to show reviews almost nobody scrolls far enough to
+// read. So approve as many as you like; this serves a slice.
+//
+// The slice is random per request, and the response is edge-cached for ten
+// minutes, so it re-rolls a few times an hour rather than per visitor. Every
+// approved review gets its turn over a day without any of them costing weight.
+// sort_order still wins where it's set, so a favourite can be pinned.
+const DEFAULT_MAX = 12;
+
+export async function publicReviews({ max = DEFAULT_MAX } = {}) {
   await ensureReviewTables();
+  const limit = Math.min(40, Math.max(1, Number(max) || DEFAULT_MAX));
   const rows = await sql`
     SELECT review_id, reviewer_name, reviewer_photo, star_rating, comment, display_text
       FROM google_reviews
      WHERE approved IS TRUE
        AND gone_at IS NULL
        AND COALESCE(display_text, comment, '') <> ''
-     ORDER BY sort_order NULLS LAST, update_time DESC NULLS LAST`;
-  const [meta] = await sql`SELECT average_rating, total_count FROM google_reviews_meta WHERE id = 1`;
+     ORDER BY sort_order NULLS LAST, random()
+     LIMIT ${limit}`;
+  const [meta] = await sql`
+    SELECT average_rating, total_count, maps_uri FROM google_reviews_meta WHERE id = 1`;
   return {
     reviews: rows.map(shapePublic),
     summary: meta?.total_count
@@ -312,8 +353,12 @@ export async function publicReviews() {
           rating: meta.average_rating == null ? null : Number(meta.average_rating).toFixed(1),
           count: Number(meta.total_count),
           source: 'google',
+          href: meta.maps_uri || null,
         }
       : null,
+    // Every card links here. Google gives no per-review URL, so they all point
+    // at the listing's reviews rather than pretending to deep-link.
+    profileUrl: meta?.maps_uri || null,
   };
 }
 

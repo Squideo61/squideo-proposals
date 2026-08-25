@@ -114,6 +114,11 @@
 
       .card {
         flex: 0 0 auto;
+        /* Cards are anchors to the Google listing when we have its URL. */
+        display: block;
+        text-decoration: none;
+        color: inherit;
+        transition: border-color .15s ease, transform .15s ease;
         box-sizing: border-box;
         width: var(--card-w);
         margin-right: var(--gap);
@@ -123,6 +128,9 @@
         background: var(--card-bg);
         box-shadow: var(--card-shadow);
       }
+
+      a.card:hover { border-color: #2BB8E6; transform: translateY(-1px); }
+      a.card:focus-visible { outline: 2px solid #2BB8E6; outline-offset: 2px; }
 
       .card-head { display: flex; align-items: center; gap: 10px; }
 

@@ -16,7 +16,8 @@ export default async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).end();
 
   try {
-    const data = await publicReviews();
+    const max = req.query?.max;
+    const data = await publicReviews({ max });
     // Cached at the edge: the banner is on every homepage view but the content
     // changes at most once a night.
     res.setHeader('Cache-Control', 'public, s-maxage=600, stale-while-revalidate=86400');
@@ -26,6 +27,6 @@ export default async function handler(req, res) {
     // 200 with an empty list, not a 5xx: the client treats empty as "use the
     // bundled copy", and a 500 here would show up as a console error on a
     // marketing page for no benefit.
-    return res.status(200).json({ reviews: [], summary: null, unavailable: true });
+    return res.status(200).json({ reviews: [], summary: null, profileUrl: null, unavailable: true });
   }
 }

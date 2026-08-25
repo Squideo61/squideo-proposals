@@ -15,6 +15,7 @@
 //   ?speed=45        scroll speed in px/sec                          (default: 45)
 //   ?summary=off     hide the pinned "5.0 / 115 Google reviews" pill (default: on)
 //   ?direction=rtl   scroll left-to-right instead                    (default: right-to-left)
+//   ?max=12          how many cards to show, of everything approved  (default: 12)
 
 import { REVIEWS, SUMMARY } from './reviewsData.js';
 
@@ -23,6 +24,9 @@ const theme = params.get('theme') === 'dark' ? 'dark' : 'light';
 const speed = Math.min(200, Math.max(5, Number(params.get('speed')) || 45));
 const showSummary = params.get('summary') !== 'off';
 const reverse = params.get('direction') === 'rtl';
+// How many cards to show. Approving more in the CRM doesn't make the banner
+// heavier — the API serves a random slice of this size and rotates it.
+const max = Math.min(40, Math.max(1, Number(params.get('max')) || 12));
 
 // Honoured, not merely respected: with reduced motion we drop the animation
 // entirely and hand the user a normal horizontally-scrollable strip.
@@ -91,8 +95,16 @@ const starRow = (stars) => {
 
 /* ------------------------------------------------------------------ cards */
 
-function card(review) {
-  const art = el('article', 'card');
+function card(review, href) {
+  // An anchor when we can link out, a plain article when we can't — rather than
+  // a div with a click handler, which keyboard and middle-click both lose.
+  const art = el(href ? 'a' : 'article', 'card');
+  if (href) {
+    art.href = href;
+    art.target = '_blank';
+    art.rel = 'noopener noreferrer';
+    art.title = 'Read our reviews on Google';
+  }
 
   const head = el('div', 'card-head');
 
@@ -155,7 +167,7 @@ function summaryPill(summary) {
 const root = document.getElementById('reviews-root');
 let cleanup = null;
 
-function render(reviews, summary) {
+function render(reviews, summary, profileUrl) {
   // A re-render replaces the whole strip, so tear down the listeners the last
   // one attached rather than stacking a second set on top.
   if (cleanup) cleanup();
@@ -174,8 +186,14 @@ function render(reviews, summary) {
   function appendCopy() {
     const decorative = copies > 0;
     for (const r of reviews) {
-      const node = card(r);
-      if (decorative) node.setAttribute('aria-hidden', 'true');
+      const node = card(r, profileUrl);
+      if (decorative) {
+        node.setAttribute('aria-hidden', 'true');
+        // Cards are links now, and a focusable element inside aria-hidden is a
+        // trap: a keyboard user tabs into something screen readers insist isn't
+        // there. Take the copies out of the tab order.
+        node.tabIndex = -1;
+      }
       track.appendChild(node);
     }
     copies++;
@@ -223,16 +241,16 @@ function render(reviews, summary) {
 /* ------------------------------------------------------------------- data */
 
 // Bundled copy first, so the strip is never empty while the network happens.
-render(REVIEWS, SUMMARY);
+render(REVIEWS, SUMMARY, SUMMARY.href || null);
 
 // Then upgrade to the live list. An empty or failed response deliberately
 // changes nothing — what's already on screen is the fallback.
-fetch('/api/reviews', { headers: { Accept: 'application/json' } })
+fetch('/api/reviews?max=' + max, { headers: { Accept: 'application/json' } })
   .then((r) => (r.ok ? r.json() : null))
   .then((json) => {
     const live = (json?.reviews || []).filter((r) => r?.name && r?.text);
     if (!live.length) return;
-    render(live, json.summary || SUMMARY);
+    render(live, json.summary || SUMMARY, json.profileUrl || SUMMARY.href || null);
     reportHeight();
   })
   .catch(() => { /* keep the bundled list; nothing useful to do here */ });
