@@ -34,6 +34,14 @@ function navBtn(disabled, big = false) {
   };
 }
 
+// The ‹ › buttons that step through every comment on the draft, in the thread
+// header (light background, unlike the slide navigator's).
+const threadNavBtn = {
+  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+  width: 24, height: 24, borderRadius: 6, border: `1px solid ${BRAND.border}`,
+  background: '#fff', color: BRAND.ink, padding: 0, cursor: 'pointer',
+};
+
 // Slide picker. Vertical column on desktop; on a phone the same thumbnails run
 // as a horizontally-scrolling filmstrip so they cost ~90px of height instead of
 // 148px of width.
@@ -59,9 +67,13 @@ function SlideRail({ pages, pageNumber, goToPage, comments, versionId, pdfUrl, h
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
               color: active ? '#fff' : 'rgba(255,255,255,0.6)', fontSize: 11, marginTop: 3 }}>
               <span>{horizontal ? n : `Slide ${n}`}</span>
+              {/* Filled, not a dim outline: this is the only clue on the rail
+                  that a slide further down holds the feedback. */}
               {count > 0 && (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
-                  <MessageSquare size={11} /> {count}
+                <span title={`${count} comment${count === 1 ? '' : 's'} on this slide`}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 3, padding: '1px 6px',
+                    borderRadius: 999, background: BRAND.blue, color: '#fff', fontWeight: 700 }}>
+                  <MessageSquare size={10} /> {count}
                 </span>
               )}
             </div>
@@ -238,6 +250,50 @@ export function StoryboardRevision({ token, data, api, showMsg, identity = null,
     pageComments.forEach(c => { if (c.anchorX != null && c.anchorY != null) m[c.id] = ++n; });
     return m;
   }, [pageComments]);
+
+  // Every comment on this draft, in slide order.
+  //
+  // The thread beside the slide is per-slide, because that's what pins and the
+  // composer belong to — but that made a draft's feedback invisible until you
+  // happened to land on the slide holding it. A link opening on slide 1 of a
+  // 15-slide deck with everything said on slides 11 and 12 read as "no comments
+  // here" to whoever opened it. This list is what the counter and the ‹ › jumps
+  // below work through, so the whole round is reachable from the first slide.
+  const draftComments = useMemo(() => {
+    if (!version) return [];
+    return comments
+      .filter(c => c.versionId === version.id)
+      .sort((a, b) => ((a.pageNumber || 1) - (b.pageNumber || 1))
+        || (new Date(a.createdAt) - new Date(b.createdAt)));
+  }, [comments, version]);
+  const commentSlides = useMemo(
+    () => [...new Set(draftComments.map(c => c.pageNumber || 1))].sort((a, b) => a - b),
+    [draftComments]);
+
+  // Which comment the ‹ › navigator is sitting on. -1 = none yet.
+  const [navIndex, setNavIndex] = useState(-1);
+  useEffect(() => { setNavIndex(-1); }, [version?.id]);
+  useEffect(() => {
+    if (navIndex >= draftComments.length) setNavIndex(draftComments.length ? draftComments.length - 1 : -1);
+  }, [draftComments.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Jump to a comment wherever it is: switch slide, focus it, scroll it into
+  // view in the thread. Wraps, so ‹ from the first goes to the last.
+  const commentRefs = useRef({});
+  function goToComment(idx) {
+    if (!draftComments.length) return;
+    const i = ((idx % draftComments.length) + draftComments.length) % draftComments.length;
+    const c = draftComments[i];
+    setNavIndex(i);
+    setPageNumber(c.pageNumber || 1);
+    setDraftPin(null);
+    setActiveCommentId(c.id);
+  }
+  useEffect(() => {
+    if (!activeCommentId) return;
+    const el = commentRefs.current[activeCommentId];
+    if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [activeCommentId, pageNumber]);
 
   function placePin(x, y) {
     setDraftPin({ x, y });
@@ -579,12 +635,49 @@ export function StoryboardRevision({ token, data, api, showMsg, identity = null,
           <div style={{ padding: '12px 16px', borderBottom: `1px solid ${BRAND.border}`,
             display: 'flex', alignItems: 'center', gap: 8, color: BRAND.ink, fontWeight: 600, fontSize: 14 }}>
             <MessageSquare size={16} /> Slide {pageNumber} · {pageComments.length} comment{pageComments.length === 1 ? '' : 's'}
+            {/* Draft-level counter + jumps. Without it, feedback left further
+                into the deck is invisible from the slide the link opens on. */}
+            {draftComments.length > 0 && (
+              <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 2,
+                fontSize: 12, fontWeight: 600, color: BRAND.muted }}>
+                <button onClick={() => goToComment(navIndex < 0 ? draftComments.length - 1 : navIndex - 1)}
+                  title="Previous comment on this draft" style={threadNavBtn}>
+                  <ChevronLeft size={14} />
+                </button>
+                <span title={`${draftComments.length} comment${draftComments.length === 1 ? '' : 's'} on this draft`}
+                  style={{ minWidth: 46, textAlign: 'center' }}>
+                  {navIndex < 0 ? '–' : navIndex + 1} / {draftComments.length}
+                </span>
+                <button onClick={() => goToComment(navIndex + 1)}
+                  title="Next comment on this draft" style={threadNavBtn}>
+                  <ChevronRight size={14} />
+                </button>
+              </span>
+            )}
           </div>
 
           <div style={{ flex: 1, overflowY: 'auto', padding: 12 }}>
             {pageComments.length === 0 && (
               <p style={{ color: BRAND.muted, fontSize: 13, textAlign: 'center', marginTop: 24 }}>
                 No comments on this slide yet. Click the slide to pin a note, or just type below to comment on the whole slide.
+              </p>
+            )}
+            {/* Say where the rest of the round actually is, rather than leaving
+                an empty panel to be read as an empty draft. */}
+            {pageComments.length === 0 && draftComments.length > 0 && (
+              <p style={{ color: BRAND.ink, fontSize: 12.5, textAlign: 'center', marginTop: 10, lineHeight: 1.5 }}>
+                {draftComments.length} comment{draftComments.length === 1 ? '' : 's'} on this draft,
+                {' '}on slide{commentSlides.length === 1 ? '' : 's'}{' '}
+                {commentSlides.map((n, i) => (
+                  <React.Fragment key={n}>
+                    {i > 0 && (i === commentSlides.length - 1 ? ' and ' : ', ')}
+                    <button onClick={() => goToComment(draftComments.findIndex(c => (c.pageNumber || 1) === n))}
+                      style={{ background: 'transparent', border: 'none', padding: 0, cursor: 'pointer',
+                        color: BRAND.blue, fontWeight: 700, fontSize: 12.5, fontFamily: 'inherit' }}>
+                      {n}
+                    </button>
+                  </React.Fragment>
+                ))}.
               </p>
             )}
             {pageComments.map(c => {
@@ -594,7 +687,14 @@ export function StoryboardRevision({ token, data, api, showMsg, identity = null,
               const canManage = c.mine && !approvedAt;
               return (
                 <div key={c.id}
-                  onClick={() => !isEditing && setActiveCommentId(c.id)}
+                  ref={(el) => { commentRefs.current[c.id] = el; }}
+                  onClick={() => {
+                    if (isEditing) return;
+                    setActiveCommentId(c.id);
+                    // Keep the ‹ › counter in step with what was clicked.
+                    const i = draftComments.findIndex(x => x.id === c.id);
+                    if (i >= 0) setNavIndex(i);
+                  }}
                   style={{ marginBottom: 14, padding: 8, borderRadius: 8, cursor: isEditing ? 'default' : 'pointer',
                     background: active ? '#EEF7FB' : 'transparent', border: active ? `1px solid ${BRAND.blue}` : '1px solid transparent' }}>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
