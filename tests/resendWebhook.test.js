@@ -147,3 +147,34 @@ describe('everything else', () => {
     expect(res.statusCode).toBe(200);
   });
 });
+
+describe('the complaint path, end to end', () => {
+  it('matches Resend\'s documented event name exactly', async () => {
+    // 'email.complained' — not 'email.complaint'. A near-miss would be silently
+    // ignored with a 200, and the report would read a confident 0.0% forever.
+    const res = makeRes();
+    await handler(makeReq({
+      type: 'email.complained', data: { email_id: 'res_9', to: ['cross@person.com'] },
+    }), res);
+    expect(res.body.handled).toBe('complaint');
+    expect(suppressed[0]).toMatchObject({ email: 'cross@person.com', reason: 'complaint' });
+  });
+
+  it('does not treat a near-miss event name as a complaint', async () => {
+    const res = makeRes();
+    await handler(makeReq({ type: 'email.complaint', data: { to: ['x@y.com'] } }), res);
+    expect(res.body.ignored).toBe('email.complaint');
+    expect(suppressed).toHaveLength(0);
+  });
+
+  it('marks the recipient so the campaign report can count it', async () => {
+    const { getSqlCalls: calls } = await import('./helpers/mockDb.js');
+    await handler(makeReq({
+      type: 'email.complained', data: { email_id: 'res_10', to: ['cross@person.com'] },
+    }), makeRes());
+    // bounce_kind='complaint' is what campaignStats counts for the tile.
+    const marked = calls().find((c) => /bounce_kind/.test(c.text));
+    expect(marked).toBeTruthy();
+    expect(marked.values).toContain('complaint');
+  });
+});

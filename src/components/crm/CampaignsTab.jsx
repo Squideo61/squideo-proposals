@@ -1655,12 +1655,17 @@ function CampaignReport({ state, onReload, onOpenContact, isMobile, showMsg, onR
           bad={bounceTracking !== false && stats?.bounceRate >= 2}
           muted={bounceTracking === false}
         />
+        {/* Deliberately not presented as a clean bill of health. Gmail does not
+            report individual complaints to senders at all — only an aggregate
+            spam rate, and only in Google Postmaster Tools. So this counts the
+            providers that DO report (Yahoo, Microsoft, AOL), and a 0% here
+            cannot tell you what Gmail users did. */}
         <Tile
           icon={Ban} label="Spam reports"
           value={bounceTracking === false ? 'Not tracked' : pct(stats?.complaintRate)}
           hint={bounceTracking === false
             ? 'Complaints aren’t reaching the CRM, so nobody is being suppressed'
-            : `${num(stats?.complaints)} · Google's limit is 0.3%`}
+            : `${num(stats?.complaints)} reported · Gmail doesn’t report these — check Postmaster Tools for the real rate`}
           bad={bounceTracking !== false && stats?.complaintRate >= 0.3}
           muted={bounceTracking === false}
         />

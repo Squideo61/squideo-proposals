@@ -113,6 +113,12 @@ export default async function handler(req, res) {
   const emails = recipientsOf(data);
   const providerId = data.email_id || data.id || null;
 
+  // Every event that arrives is logged, including the ones we ignore.
+  // "Are complaints actually reaching us?" is otherwise unanswerable: a
+  // subscription that was never ticked and a genuine absence of complaints look
+  // identical from the outside, and this endpoint is the only place that knows.
+  console.info('[resend webhook] event', { type, recipients: emails.length });
+
   // Answer immediately whatever happens next: a webhook that times out gets
   // retried, and a retried bounce must not be able to pile up.
   const finish = (body) => res.status(200).json(body);
