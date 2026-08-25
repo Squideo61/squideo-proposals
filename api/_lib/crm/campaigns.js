@@ -151,6 +151,19 @@ export function ensureCampaignTables() {
     await sql`ALTER TABLE email_campaign_recipients ADD COLUMN IF NOT EXISTS bounce_kind TEXT`;
     await sql`CREATE INDEX IF NOT EXISTS email_campaign_recipients_provider_idx
                 ON email_campaign_recipients (provider_id) WHERE provider_id IS NOT NULL`;
+    // The expression indexes these screens live on. Written exactly as the
+    // queries write it — an index on LOWER(TRIM(email)) is not used by a query
+    // saying LOWER(email), and the planner says nothing when it ignores one.
+    await sql`CREATE INDEX IF NOT EXISTS quote_requests_email_lower_idx
+                ON quote_requests (LOWER(TRIM(email)))`;
+    await sql`CREATE INDEX IF NOT EXISTS course_signups_email_lower_idx
+                ON course_signups (LOWER(TRIM(email)))`;
+    await sql`CREATE INDEX IF NOT EXISTS contacts_email_lower_idx
+                ON contacts (LOWER(TRIM(email)))`;
+    await sql`CREATE INDEX IF NOT EXISTS email_campaign_recipients_email_idx
+                ON email_campaign_recipients (email)`;
+    await sql`CREATE INDEX IF NOT EXISTS email_tracking_events_tracking_kind_idx
+                ON email_tracking_events (tracking_id, kind)`;
     return true;
   })().catch((err) => {
     console.warn('[campaigns] ensure failed', err.message);
@@ -1096,6 +1109,53 @@ export async function providerBreakdown(campaignId) {
   };
 }
 
+// Headline numbers for every campaign in the list, in one query.
+//
+// campaignStats() stays as it is for the report page, which needs the full
+// picture for one campaign. This is the list's version: the same figures, all
+// campaigns at once, so the page costs the same whether there is one campaign
+// or fifty.
+async function listStats(ids) {
+  const out = new Map();
+  if (!ids?.length) return out;
+  // EVERY count is DISTINCT on the recipient id, including the ones that look
+  // like they don't need it. Joining to the events table multiplies a recipient
+  // into one row per open and click, so a plain COUNT(*) here reports "111
+  // sent" for 100 people — the engaged ones counted twice. This is exactly why
+  // the report's own stats used three separate queries; doing it in one means
+  // carrying the DISTINCT everywhere instead.
+  const rows = await sql`
+    SELECT r.campaign_id,
+           COUNT(DISTINCT r.id)::int                                      AS total,
+           COUNT(DISTINCT r.id) FILTER (WHERE r.status = 'sent')::int     AS sent,
+           COUNT(DISTINCT r.id) FILTER (WHERE r.status = 'queued')::int   AS queued,
+           COUNT(DISTINCT r.id) FILTER (WHERE r.status = 'failed')::int   AS failed,
+           COUNT(DISTINCT r.id) FILTER (WHERE r.bounce_kind = 'hard')::int AS bounced,
+           COUNT(DISTINCT r.id) FILTER (WHERE e.kind = 'open')::int       AS opened,
+           COUNT(DISTINCT r.id) FILTER (WHERE e.kind = 'click')::int      AS clicked
+      FROM email_campaign_recipients r
+      LEFT JOIN email_tracking_events e ON e.tracking_id = r.tracking_id
+     WHERE r.campaign_id = ANY(${ids})
+     GROUP BY r.campaign_id`;
+  for (const r of rows) {
+    const sent = r.sent || 0;
+    const rate = (n) => (sent > 0 ? Math.round((n / sent) * 1000) / 10 : 0);
+    out.set(r.campaign_id, {
+      total: r.total || 0,
+      sent,
+      queued: r.queued || 0,
+      failed: r.failed || 0,
+      bounced: r.bounced || 0,
+      opened: r.opened || 0,
+      clicked: r.clicked || 0,
+      openRate: rate(r.opened || 0),
+      clickRate: rate(r.clicked || 0),
+      bounceRate: rate(r.bounced || 0),
+    });
+  }
+  return out;
+}
+
 async function campaignLinks(campaignId) {
   const rows = await sql`
     SELECT e.link_url AS url,
@@ -1524,10 +1584,15 @@ export async function campaignsRoute(req, res, id, action, user) {
     // GET /campaigns — the list, each with its headline numbers.
     if (req.method === 'GET') {
       const rows = await sql`SELECT * FROM email_campaigns ORDER BY created_at DESC LIMIT 100`;
-      const campaigns = await Promise.all(rows.map(async (row) => ({
+      // One query for every campaign's numbers, not three each. The list only
+      // needs the headline figures, and asking per campaign meant a round trip
+      // per campaign per metric — the page got slower with every campaign sent,
+      // which is precisely backwards.
+      const summary = await listStats(rows.map((r) => r.id)).catch(() => new Map());
+      const campaigns = rows.map((row) => ({
         ...serialiseCampaign(row),
-        stats: await campaignStats(row.id).catch(() => null),
-      })));
+        stats: summary.get(row.id) || null,
+      }));
       const counts = await audienceSummary().catch(() => null);
       // Which identity campaigns actually go out under.
       //
