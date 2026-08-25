@@ -326,10 +326,10 @@ export async function adminListReviews({ filter = 'pending' } = {}) {
            approved_at, sort_order, gone_at
       FROM google_reviews
      WHERE gone_at IS NULL
-       AND (${filter} = 'all'
-            OR (${filter} = 'pending'  AND approved IS NULL)
-            OR (${filter} = 'approved' AND approved IS TRUE)
-            OR (${filter} = 'rejected' AND approved IS FALSE))
+       AND (${filter}::text = 'all'
+            OR (${filter}::text = 'pending'  AND approved IS NULL)
+            OR (${filter}::text = 'approved' AND approved IS TRUE)
+            OR (${filter}::text = 'rejected' AND approved IS FALSE))
      ORDER BY star_rating DESC, update_time DESC NULLS LAST
      LIMIT 500`;
   const [counts] = await sql`
