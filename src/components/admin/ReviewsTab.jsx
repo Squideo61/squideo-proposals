@@ -130,8 +130,20 @@ export function ReviewsTab() {
           {data?.meta?.total_count ? (
             <> · Google shows {Number(data.meta.average_rating).toFixed(1)} from {data.meta.total_count} reviews.</>
           ) : null}
+          {data?.meta?.location_name ? (
+            <> · Reading <code>{data.meta.location_name}</code>
+              {data.meta.location_title ? ` (${data.meta.location_title})` : ''}.</>
+          ) : null}
         </div>
       </div>
+
+      <LocationPicker
+        onPicked={() => load(filter)}
+        // Discovery guesses the first account and location Google lists. When
+        // that guess is wrong the sync succeeds and returns nothing, so open
+        // this automatically rather than making someone go looking for it.
+        startOpen={!!status?.ok && counts.pending + counts.approved + counts.rejected === 0}
+      />
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
         {FILTERS.map((f) => {
@@ -195,6 +207,110 @@ export function ReviewsTab() {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+// Which Business Profile are we actually reading? Google can return several
+// accounts (a personal one, a location group, an organisation) each with several
+// locations, and the reviews only live under one pairing of the two.
+function LocationPicker({ onPicked, startOpen }) {
+  const { showMsg } = useStore();
+  const [open, setOpen] = useState(false);
+  const [data, setData] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  // startOpen flips once the first sync comes back empty, so honour it when it
+  // arrives rather than only at mount.
+  useEffect(() => { if (startOpen) setOpen(true); }, [startOpen]);
+
+  useEffect(() => {
+    if (!open || data) return;
+    setBusy(true);
+    api.get(`${BASE}/candidates`)
+      .then(setData)
+      .catch((err) => showMsg(err?.message || 'Could not list Business Profiles'))
+      .finally(() => setBusy(false));
+  }, [open, data, showMsg]);
+
+  const pick = async (accountName, loc) => {
+    try {
+      const r = await api.post(`${BASE}/location`, {
+        accountName, locationName: loc.name, locationTitle: loc.title,
+      });
+      if (!r?.ok) return showMsg(r?.error || 'Could not save that location');
+      showMsg('Location set — press Sync from Google');
+      setData(null);
+      onPicked?.();
+    } catch (err) {
+      showMsg(err?.message || 'Could not save that location');
+    }
+  };
+
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)} style={{ ...linkBtn, marginBottom: 14 }}>
+        Reviews not showing up? Choose which Business Profile to read
+      </button>
+    );
+  }
+
+  const total = (data?.accounts || []).reduce((n, a) => n + a.locations.length, 0);
+
+  return (
+    <div style={{
+      background: 'white', border: '1px solid ' + BRAND.border,
+      borderRadius: 10, padding: 16, marginBottom: 16,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+        <strong style={{ fontSize: 14 }}>Which Business Profile?</strong>
+        <button onClick={() => setOpen(false)} style={linkBtn}>Hide</button>
+      </div>
+      <p style={{ margin: '6px 0 12px', fontSize: 12, color: BRAND.muted, lineHeight: 1.6 }}>
+        Everything your Google connection can see. If a sync says OK but finds nothing, it’s
+        reading the wrong listing — pick the right one here and sync again.
+      </p>
+
+      {busy && <p style={{ fontSize: 13, color: BRAND.muted }}>Asking Google…</p>}
+      {data?.ok === false && <p style={{ fontSize: 13, color: '#B4342B' }}>{data.error}</p>}
+      {data?.ok && total === 0 && (
+        <p style={{ fontSize: 13, color: '#B4342B', lineHeight: 1.6 }}>
+          Google returned no locations at all. That usually means you authorised with an account
+          that doesn’t manage the Business Profile — re-run the OAuth flow signed in as the account
+          that does.
+        </p>
+      )}
+
+      {(data?.accounts || []).map((acct) => (
+        <div key={acct.account} style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 12, color: BRAND.muted, marginBottom: 6 }}>
+            {acct.accountName || acct.account}
+            {acct.type ? ` · ${acct.type}` : ''}{acct.role ? ` · ${acct.role}` : ''}
+          </div>
+          {acct.error && <div style={{ fontSize: 12, color: '#B4342B' }}>{acct.error}</div>}
+          {acct.locations.map((loc) => {
+            const current = data.current?.location_name === loc.name
+                         && data.current?.account_name === acct.account;
+            return (
+              <div key={loc.name} style={{
+                display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+                padding: '8px 10px', borderRadius: 8, marginBottom: 6,
+                border: '1px solid ' + (current ? BRAND.blue : BRAND.border),
+              }}>
+                <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{loc.title || loc.name}</div>
+                  <div style={{ fontSize: 11, color: BRAND.muted }}>
+                    {loc.address ? loc.address + ' · ' : ''}{loc.name}
+                  </div>
+                </div>
+                {current
+                  ? <Pill bg="#E6F7EE" fg="#1B7A47">In use</Pill>
+                  : <button onClick={() => pick(acct.account, loc)} style={smallBtn(BRAND.blue, 'white')}>Use this one</button>}
+              </div>
+            );
+          })}
+        </div>
+      ))}
     </div>
   );
 }

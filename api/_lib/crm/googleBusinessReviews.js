@@ -338,7 +338,7 @@ export async function adminListReviews({ filter = 'pending' } = {}) {
            COUNT(*) FILTER (WHERE approved IS FALSE)::int AS rejected
       FROM google_reviews WHERE gone_at IS NULL`;
   const [meta] = await sql`
-    SELECT location_title, average_rating, total_count, updated_at
+    SELECT account_name, location_name, location_title, average_rating, total_count, updated_at
       FROM google_reviews_meta WHERE id = 1`;
   return {
     configured: reviewsConfigured(),
@@ -389,6 +389,71 @@ export async function rediscoverLocation() {
   return { ok: true, ...loc };
 }
 
+// Everything these credentials can actually see. discoverLocation() takes the
+// first account and first location Google lists, which is right for a business
+// with one of each and wrong the moment a personal account, a location group or
+// a second listing is in the way — and the symptom of wrong is a sync that
+// cheerfully reports OK and zero reviews. This turns that into something
+// diagnosable rather than something to guess at.
+export async function listCandidates() {
+  await ensureReviewTables();
+  const accounts = await apiGet('https://mybusinessaccountmanagement.googleapis.com/v1/accounts?pageSize=100');
+  const out = [];
+  for (const account of (accounts?.accounts || []).slice(0, 20)) {
+    let locations = [];
+    let error = null;
+    try {
+      const locs = await apiGet(
+        'https://mybusinessbusinessinformation.googleapis.com/v1/' + account.name + '/locations' +
+        '?readMask=name,title,storefrontAddress&pageSize=100'
+      );
+      locations = (locs?.locations || []).map((l) => ({
+        name: l.name,
+        title: l.title || null,
+        address: [
+          ...(l.storefrontAddress?.addressLines || []),
+          l.storefrontAddress?.locality,
+          l.storefrontAddress?.postalCode,
+        ].filter(Boolean).join(', ') || null,
+      }));
+    } catch (err) {
+      // One account failing to list must not hide the others — a personal
+      // account with no Business Profile attached 403s here quite normally.
+      error = err?.message || 'could not list locations';
+    }
+    out.push({
+      account: account.name,
+      accountName: account.accountName || null,
+      type: account.type || null,
+      role: account.role || null,
+      locations,
+      error,
+    });
+  }
+  const [current] = await sql`SELECT account_name, location_name, location_title FROM google_reviews_meta WHERE id = 1`;
+  return { ok: true, accounts: out, current: current || null };
+}
+
+// Pin the account + location by hand, overriding whatever discovery guessed.
+// Clears the cached rating and count as well: those describe the old listing,
+// and leaving them would put its numbers on the banner above a different
+// listing's reviews.
+export async function setLocation({ accountName, locationName, locationTitle }) {
+  await ensureReviewTables();
+  if (!accountName || !locationName) throw new Error('accountName and locationName are both required');
+  await sql`
+    INSERT INTO google_reviews_meta (id, account_name, location_name, location_title, average_rating, total_count, updated_at)
+    VALUES (1, ${accountName}, ${locationName}, ${locationTitle || null}, NULL, NULL, NOW())
+    ON CONFLICT (id) DO UPDATE SET
+      account_name   = EXCLUDED.account_name,
+      location_name  = EXCLUDED.location_name,
+      location_title = EXCLUDED.location_title,
+      average_rating = NULL,
+      total_count    = NULL,
+      updated_at     = NOW()`;
+  return { ok: true, accountName, locationName };
+}
+
 /* -------------------------------------------------------------------- cron */
 
 export async function cronGoogleReviewsSync(res) {
@@ -432,6 +497,26 @@ export async function reviewsRoute(req, res, id, action, user) {
     } catch (err) {
       await recordSyncStatus('google-reviews', err);
       return res.status(200).json({ ok: false, error: err?.message || 'sync failed' });
+    }
+  }
+
+  // GET /api/crm/reviews/candidates — what the credentials can see.
+  if (id === 'candidates') {
+    if (req.method !== 'GET') return res.status(405).end();
+    try {
+      return res.status(200).json(await listCandidates());
+    } catch (err) {
+      return res.status(200).json({ ok: false, error: err?.message || 'lookup failed' });
+    }
+  }
+
+  // POST /api/crm/reviews/location — pin one by hand.
+  if (id === 'location') {
+    if (req.method !== 'POST') return res.status(405).end();
+    try {
+      return res.status(200).json(await setLocation(req.body || {}));
+    } catch (err) {
+      return res.status(200).json({ ok: false, error: err?.message || 'could not save location' });
     }
   }
 
