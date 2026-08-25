@@ -10,6 +10,7 @@ import { computeRange, rangeHeading, fmtRangeDates, segBtn, RangeControl, thisMo
 import { CourseLeadsTab } from './CourseLeadsTab.jsx';
 import { PortalStatsTab } from './PortalStatsTab.jsx';
 import { CampaignsTab } from './CampaignsTab.jsx';
+import { BriefBuilderTab } from './BriefBuilderTab.jsx';
 
 // Remembers the Marketing page's view state across navigation (mirrors
 // financeViewMemory): the active tab, report grouping, date range and scroll.
@@ -73,7 +74,8 @@ const TABS = [
   { key: 'overview', label: 'Dashboard', icon: LayoutDashboard },
   { key: 'reports', label: 'Reports', icon: BarChart3 },
   { key: 'leads', label: 'Leads', icon: MailQuestion },
-  { key: 'email', label: 'Email', icon: Send },
+  { key: 'email', label: 'Email Marketing', icon: Send },
+  { key: 'briefs', label: 'Brief builder', icon: FileText },
   { key: 'course', label: 'Video guide', icon: GraduationCap },
   { key: 'portal', label: 'Portal', icon: KeyRound },
   { key: 'search', label: 'Search', icon: Search },
@@ -243,6 +245,7 @@ export function MarketingView({ section: sectionProp, onBack, onOpenCompany, onO
       )}
       {section === 'leads' && <LeadsTab data={leads} loading={loading} onOpenCompany={onOpenCompany} onRetry={() => setReload((n) => n + 1)} />}
       {section === 'email' && <CampaignsTab onOpenContact={onOpenContact} />}
+      {section === 'briefs' && <BriefBuilderTab from={from} to={to} onOpenCompany={onOpenCompany} />}
       {section === 'course' && <CourseLeadsTab onOpenContact={onOpenContact} from={from} to={to} />}
       {section === 'portal' && <PortalStatsTab from={from} to={to} />}
       {section === 'search' && <SearchTab data={search} loading={loading} onOpenSettings={() => setSection('settings')} onRetry={() => setReload((n) => n + 1)} />}

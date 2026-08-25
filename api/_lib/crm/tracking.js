@@ -5,6 +5,7 @@
 import sql from '../db.js';
 
 export { instrumentHtml, newTrackingToken, TRANSPARENT_GIF } from './trackingHtml.js';
+import { instrumentHtml, newTrackingToken } from './trackingHtml.js';
 
 // One-time self-heal: the column that gates the "first open" tracking-bell
 // notification to fire once per email. Guarded so it runs at most once per warm
@@ -380,4 +381,42 @@ function buildLocations(cities, countries) {
   for (const c of cities || []) if (c) out.push(c);
   if (!out.length) for (const c of countries || []) if (c) out.push(c);
   return out;
+}
+
+// Instrument an email the SYSTEM sends (the nudge sequences today) so its opens
+// and clicks land in the same tables a CRM send uses, and the marketing reports
+// can quote an open rate for them.
+//
+// user_email is a 'system:...' marker rather than a person: /api/track/open
+// already refuses to ring anyone's tracking bell for those, which is what stops
+// a nudge sequence turning into hundreds of meaningless staff notifications.
+//
+// Returns the ORIGINAL html when the tracking write fails. That matters — the
+// instrumented copy points every link at /api/track/click, and a click row that
+// was never written resolves to nothing, so an untracked email beats one with
+// dead links in it.
+export async function trackSystemEmail({ html, source, userEmail, subject = null, recipient }) {
+  if (!html || !recipient) return { html, trackingId: null };
+  const token = newTrackingToken();
+  const { html: instrumented, links } = instrumentHtml(html, token);
+  try {
+    const rows = await sql`
+      INSERT INTO email_tracking (token, user_email, subject, recipients, source)
+      VALUES (${token}, ${userEmail}, ${subject}, ARRAY[${recipient}]::text[], ${source})
+      ON CONFLICT (token) DO NOTHING
+      RETURNING id`;
+    const trackingId = rows[0]?.id || null;
+    if (!trackingId) return { html, trackingId: null };
+    if (links.length) {
+      await sql`
+        INSERT INTO email_tracking_links (tracking_id, idx, url)
+        SELECT ${trackingId}, x.i, x.u
+          FROM UNNEST(${links.map((_, i) => i)}::int[], ${links}::text[]) AS x(i, u)
+        ON CONFLICT (tracking_id, idx) DO NOTHING`;
+    }
+    return { html: instrumented, trackingId };
+  } catch (err) {
+    console.warn('[tracking] system email tracking failed', err.message);
+    return { html, trackingId: null };
+  }
 }

@@ -71,6 +71,9 @@ export function ensureCourseEmails() {
       await sql`CREATE INDEX IF NOT EXISTS course_emails_signup_idx ON course_emails (course_signup_id)`;
       await sql`CREATE UNIQUE INDEX IF NOT EXISTS course_emails_step_idx
                   ON course_emails (course_signup_id, kind)`;
+      // Set when the nudge goes out, so Marketing can report who opened which
+      // step. Nullable for every row queued before tracking existed.
+      await sql`ALTER TABLE course_emails ADD COLUMN IF NOT EXISTS tracking_id BIGINT`;
     } catch (err) {
       console.warn('[courseEmails] ensure failed', err.message);
     }

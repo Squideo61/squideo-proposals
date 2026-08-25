@@ -19,6 +19,7 @@ import {
 } from '../course/emails.js';
 import { briefProgress } from '../brief/questions.js';
 import { drainCampaigns } from './campaigns.js';
+import { trackSystemEmail } from './tracking.js';
 import { sweepHarvestRun, requeueStaleHarvestWork } from './gmailHarvest.js';
 import { cronGscSync } from './googleSearch.js';
 import { cronGa4Sync } from './googleAnalytics.js';
@@ -1278,18 +1279,31 @@ export async function cronCourseNudges(req, res) {
       });
       if (!built) { skipped++; continue; }
 
+      // Open/click pixel + link rewriting, so Marketing can say how the
+      // sequence is actually performing. Falls back to the plain html if the
+      // tracking write fails — the nudge still goes.
+      const tracked = await trackSystemEmail({
+        html: built.html,
+        source: 'nudge',
+        userEmail: 'system:nudge:' + family,
+        subject: built.subject,
+        recipient: row.email,
+      });
+
       // scope:'marketing' routes this through the suppression list and the
       // marketing sending domain inside sendMail itself.
       await sendMail({
         to: row.email,
         subject: built.subject,
-        html: built.html,
+        html: tracked.html,
         text: built.text,
         scope: 'marketing',
         headers: listUnsubscribeHeaders(row.email, family),
       });
 
-      await sql`UPDATE course_emails SET sent_at = NOW() WHERE id = ${row.id}`;
+      await sql`UPDATE course_emails
+                   SET sent_at = NOW(), tracking_id = ${tracked.trackingId}
+                 WHERE id = ${row.id}`;
       sent++;
     } catch (err) {
       // One bad row must not stop the sweep.

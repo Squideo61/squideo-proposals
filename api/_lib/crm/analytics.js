@@ -18,6 +18,7 @@ import { gscConfigured, runGscSync, runGscBackfill, searchReport } from './googl
 import { ga4Configured, runGa4Sync, trafficReport } from './googleAnalytics.js';
 import { getSyncStatus, recordSyncStatus } from './marketingSyncStatus.js';
 import { isSignedSale } from './signedSale.js';
+import { briefsReport, briefDetail } from './briefAnalytics.js';
 
 // A "sale" uses the shared signed-sale definition (./signedSale.js): an actual
 // signature or a signed/paid stage, a real value, and not a historical import —
@@ -636,6 +637,15 @@ export async function analyticsRoute(req, res, id, action, user) {
   if (id === 'search') {
     const { fromStr, toStr } = parseRange(req);
     return res.status(200).json({ from: fromStr, to: toStr, ...(await searchReport(fromStr, toStr)), lastSync: await getSyncStatus('gsc') });
+  }
+  // The brief builder's own funnel. Its own module because it joins four
+  // unrelated things (briefs, portal users, the nudge queue and email tracking)
+  // and none of them are lead attribution.
+  if (id === 'briefs') return res.status(200).json(await briefsReport(parseRange(req)));
+  if (id === 'brief') {
+    const detail = action ? await briefDetail(action) : null;
+    if (!detail) return res.status(404).json({ error: 'Brief not found' });
+    return res.status(200).json(detail);
   }
   if (id === 'traffic') {
     const { fromStr, toStr } = parseRange(req);
