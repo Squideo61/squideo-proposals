@@ -174,6 +174,7 @@ export function CampaignsTab({ onOpenContact }) {
         campaignId={openId}
         startEditing={editing}
         counts={data?.counts || null}
+        sender={data?.sender || null}
         onClose={() => { setOpenId(null); setEditing(false); load(); }}
         onOpenContact={onOpenContact}
         // A duplicate opens straight into its own editor — the point of
@@ -586,7 +587,7 @@ function ListPreviewModal({ listKey, initialStatus = 'mailable', onClose, onOpen
 }
 
 // ── one campaign: composer + report ─────────────────────────────────────────
-function CampaignDetail({ campaignId, startEditing, counts, onClose, onOpenContact, onOpenCampaign }) {
+function CampaignDetail({ campaignId, startEditing, counts, sender, onClose, onOpenContact, onOpenCampaign }) {
   const { showMsg } = useStore();
   const isMobile = useIsMobile();
   const [state, setState] = useState(null);        // { campaign, stats, links, recipients }
@@ -641,6 +642,7 @@ function CampaignDetail({ campaignId, startEditing, counts, onClose, onOpenConta
           <CampaignEditor
             campaign={campaign}
             counts={counts}
+            sender={sender}
             onSaved={(c) => { setState((s) => ({ ...s, campaign: c })); }}
             onDone={() => { setEditing(false); load(); }}
             onDeleted={onClose}
@@ -664,7 +666,7 @@ function CampaignDetail({ campaignId, startEditing, counts, onClose, onOpenConta
 }
 
 // ── composer ────────────────────────────────────────────────────────────────
-function CampaignEditor({ campaign, counts, onSaved, onDone, onDeleted }) {
+function CampaignEditor({ campaign, counts, sender, onSaved, onDone, onDeleted }) {
   const { showMsg } = useStore();
   const isMobile = useIsMobile();
   const editorRef = useRef(null);
@@ -979,6 +981,23 @@ function CampaignEditor({ campaign, counts, onSaved, onDone, onDeleted }) {
         fontSize: 12.5, color: BRAND.muted, lineHeight: 1.55,
       }}>
         <div style={{ fontWeight: 700, color: BRAND.ink, marginBottom: 8, fontSize: 13 }}>Before you send</div>
+
+        {/* The sending identity, stated plainly. The DOMAIN here is what
+            mailbox providers score, what Google Postmaster Tools reports on,
+            and what needs SPF/DKIM/DMARC — and it is usually NOT the company's
+            main domain, which is exactly the sort of thing you otherwise find
+            out by adding the wrong one to Postmaster Tools. */}
+        {sender?.address && (
+          <p style={{ margin: '0 0 10px' }}>
+            Going out from <strong style={{ color: BRAND.ink }}>{sender.address}</strong>
+            {sender.domain && <>, so the sending domain is <strong style={{ color: BRAND.ink }}>{sender.domain}</strong>
+              {' '}— that's the one to watch in Postmaster Tools.</>}
+            {sender.usingFallback && (
+              <span style={{ color: '#B45309' }}> No separate marketing address is set, so this is going out from the
+                same identity as invoices and password resets.</span>
+            )}
+          </p>
+        )}
         <p style={{ margin: '0 0 10px' }}>
           Going to <strong style={{ color: BRAND.ink }}>{recipientCount == null ? '…' : num(recipientCount)}</strong> {' '}
           {listLabel(audience).toLowerCase()} — one email each, addressed individually. Nobody sees anyone else.

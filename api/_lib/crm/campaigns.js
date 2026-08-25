@@ -1468,12 +1468,33 @@ export async function campaignsRoute(req, res, id, action, user) {
         stats: await campaignStats(row.id).catch(() => null),
       })));
       const counts = await audienceSummary().catch(() => null);
+      // Which identity campaigns actually go out under.
+      //
+      // Not a secret — it is in the header of every email we send — and knowing
+      // it matters: the sending DOMAIN is what mailbox providers score, what
+      // Google Postmaster Tools reports on, and what needs SPF/DKIM/DMARC. It
+      // is frequently NOT the company's main domain, and guessing wrong sends
+      // you looking at statistics for mail you never sent.
+      const marketingFrom = process.env.MAIL_FROM_MARKETING || process.env.MAIL_FROM || null;
+      const address = marketingFrom ? (marketingFrom.match(/<([^>]+)>/)?.[1] || marketingFrom).trim() : null;
+      const sender = {
+        from: marketingFrom,
+        address,
+        domain: address?.includes('@') ? address.split('@')[1].toLowerCase() : null,
+        replyTo: process.env.MAIL_REPLY_TO_MARKETING || 'enquiries@squideo.co.uk',
+        // A separate account keeps a marketing reputation problem away from
+        // invoices and password resets.
+        separateAccount: !!process.env.RESEND_API_KEY_MARKETING,
+        // Unset means marketing is going out from the transactional identity,
+        // which is the thing you least want to find out by accident.
+        usingFallback: !process.env.MAIL_FROM_MARKETING,
+      };
       // The state of the user's last mailbox sweep rides along, so the Email
       // tab can show one running (or just-finished) without anyone having to
       // open the sweep window to find out.
       const { latestHarvestRun } = await import('./gmailHarvest.js');
       const harvest = await latestHarvestRun(user.email).catch(() => null);
-      return res.status(200).json({ campaigns, counts, harvest });
+      return res.status(200).json({ campaigns, counts, harvest, sender });
     }
     // POST /campaigns — a new draft.
     if (req.method === 'POST') {
