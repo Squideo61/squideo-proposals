@@ -1760,6 +1760,7 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
 
         <div style={{ marginTop: 40, paddingTop: 20, borderTop: '1px solid ' + BRAND.border, fontSize: 12, color: BRAND.muted, textAlign: 'center' }}>
           {CONFIG.company.name} · {CONFIG.company.website} · {CONFIG.company.phone}
+          {CONFIG.company.termsUrl ? <> · <a href={CONFIG.company.termsUrl} target="_blank" rel="noreferrer" style={{ color: BRAND.muted, textDecoration: 'underline' }}>Terms &amp; Conditions</a></> : null}
         </div>
       </div>
 

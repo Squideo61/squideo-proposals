@@ -29,7 +29,7 @@ export const BRAND = {
 export const APP_MAX_WIDTH = 1600;
 
 export const CONFIG = {
-  company: { name: 'Squideo', website: 'squideo.com', phone: '01482 738 656', termsUrl: '' },
+  company: { name: 'Squideo', website: 'squideo.com', phone: '01482 738 656', termsUrl: 'https://squideo.com/terms-conditions' },
   defaultTeam: [
     { name: 'Callum', role: 'Production Manager', bio: "Callum has been with Squideo since the very beginning and remains one of the company's greatest assets. With extensive experience managing a wide range of projects across sectors, he ensures every production runs smoothly from start to finish. As your dedicated point of contact, Callum oversees each stage of the process to deliver the best possible outcome.", photo: null },
     { name: 'Chloe', role: 'Copywriter', bio: 'Chloe is our experienced copywriter, responsible for crafting and assisting with the narrative that brings every video to life. Chloe knows how to capture attention, communicate complex ideas clearly, and drive real results. Her creative flair and strategic approach ensure every video resonates with its audience and delivers measurable impact.', photo: null },

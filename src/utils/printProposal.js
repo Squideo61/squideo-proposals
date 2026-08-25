@@ -564,7 +564,7 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
 
   <!-- Footer -->
   <div style="margin-top:40px;padding-top:16px;border-top:1px solid #E5E9EE;font-size:11px;color:#6B7785;text-align:center;">
-    ${esc(CONFIG.company.name)} · ${esc(CONFIG.company.website)} · ${esc(CONFIG.company.phone)}
+    ${esc(CONFIG.company.name)} · ${esc(CONFIG.company.website)} · ${esc(CONFIG.company.phone)}${CONFIG.company.termsUrl ? ` · <a href="${esc(CONFIG.company.termsUrl)}" style="color:#6B7785;">Terms &amp; Conditions</a>` : ''}
   </div>
 </body>
 </html>`;
