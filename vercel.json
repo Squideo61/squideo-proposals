@@ -147,6 +147,10 @@
       "schedule": "30 23 * * *"
     },
     {
+      "path": "/api/crm/cron/google-reviews-sync",
+      "schedule": "45 6 * * *"
+    },
+    {
       "path": "/api/crm/cron/brief-digest",
       "schedule": "10 * * * *"
     },
@@ -303,7 +307,7 @@
       "headers": [
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'self' https://squideo-web.vercel.app https://squideo.com https://*.squideo.com https://squideo.co.uk https://*.squideo.co.uk https://*.duda.co https://*.dudaone.com https://*.multiscreensite.com"
+          "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://*.googleusercontent.com; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'self' https://squideo-web.vercel.app https://squideo.com https://*.squideo.com https://squideo.co.uk https://*.squideo.co.uk https://*.duda.co https://*.dudaone.com https://*.multiscreensite.com"
         },
         {
           "key": "X-Content-Type-Options",

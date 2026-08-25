@@ -22,6 +22,7 @@ import { drainCampaigns } from './campaigns.js';
 import { trackSystemEmail } from './tracking.js';
 import { sweepHarvestRun, requeueStaleHarvestWork } from './gmailHarvest.js';
 import { cronGscSync } from './googleSearch.js';
+import { cronGoogleReviewsSync } from './googleBusinessReviews.js';
 import { cronGa4Sync } from './googleAnalytics.js';
 import { captureCostSnapshot } from './costSnapshot.js';
 import { pruneStaffActivity } from './staffActivity.js';
@@ -63,6 +64,7 @@ export async function cronHandler(req, res, action) {
     case 'client-task-reminders': return cronClientTaskReminders(req, res);
     case 'ad-spend-sync':     return cronAdSpendSync(res);
     case 'gsc-sync':          return cronGscSync(res);
+    case 'google-reviews-sync': return cronGoogleReviewsSync(res);
     case 'ga4-sync':          return cronGa4Sync(res);
     case 'cost-snapshot':     return cronCostSnapshot(res);
     case 'course-nudges':     return cronCourseNudges(req, res);

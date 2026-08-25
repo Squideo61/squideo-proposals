@@ -1,8 +1,13 @@
 // Single-row scrolling reviews banner, built to be iframed into squideo.com.
 //
 // Plain DOM on purpose — this is a ~190px strip on a marketing page, so paying
-// for React on every homepage view would be silly. Content lives in
-// ./reviewsData.js.
+// for React on every homepage view would be silly.
+//
+// Data comes from /api/reviews (our own Google reviews, synced nightly, showing
+// only what someone approved in Admin → Reviews). ./reviewsData.js holds a
+// bundled copy which renders first and stays on screen if the API is empty or
+// unreachable — the banner is on the homepage, so "briefly stale" is a much
+// better failure than "briefly blank".
 //
 // Query params (all optional), so the same embed can be dropped into different
 // sections of the site without a rebuild:
@@ -103,8 +108,8 @@ function card(review) {
     img.alt = '';
     img.loading = 'lazy';
     img.decoding = 'async';
-    // Google rotates profile photo URLs when someone changes their picture,
-    // so these will rot. Drop the img and let the initials show through.
+    // Google reissues profile photo URLs when someone changes their picture,
+    // so these do rot. Drop the img and let the initials show through.
     img.addEventListener('error', () => img.remove());
     av.appendChild(img);
   }
@@ -127,67 +132,76 @@ function card(review) {
   return art;
 }
 
-function summaryPill() {
-  const a = el(SUMMARY.href ? 'a' : 'div', 'summary');
-  if (SUMMARY.href) {
-    a.href = SUMMARY.href;
+function summaryPill(summary) {
+  const a = el(summary.href ? 'a' : 'div', 'summary');
+  if (summary.href) {
+    a.href = summary.href;
     a.target = '_blank';
     a.rel = 'noopener noreferrer';
   }
-  if (SUMMARY.source === 'google') a.appendChild(googleMark(22));
+  if (summary.source === 'google') a.appendChild(googleMark(22));
   const body = el('div', 'summary-body');
   const top = el('div', 'summary-top');
-  top.appendChild(el('span', 'summary-rating', SUMMARY.rating));
+  if (summary.rating) top.appendChild(el('span', 'summary-rating', summary.rating));
   top.appendChild(starRow(5));
   body.appendChild(top);
-  body.appendChild(
-    el('div', 'summary-count', `${SUMMARY.count} reviews`)
-  );
+  body.appendChild(el('div', 'summary-count', `${summary.count} reviews`));
   a.appendChild(body);
   return a;
 }
 
-/* ------------------------------------------------------------------ build */
+/* ----------------------------------------------------------------- render */
 
 const root = document.getElementById('reviews-root');
-const wrap = el('div', 'wrap');
+let cleanup = null;
 
-if (showSummary) wrap.appendChild(summaryPill());
+function render(reviews, summary) {
+  // A re-render replaces the whole strip, so tear down the listeners the last
+  // one attached rather than stacking a second set on top.
+  if (cleanup) cleanup();
+  root.textContent = '';
 
-const marquee = el('div', 'marquee');
-const track = el('div', 'track');
-if (reverse) track.classList.add('reverse');
+  const wrap = el('div', 'wrap');
+  if (showSummary && summary?.count) wrap.appendChild(summaryPill(summary));
 
-// Appends one full copy of the list. Copies after the first are decoration —
-// screen readers should hear each review once.
-let copies = 0;
-function appendCopy() {
-  const decorative = copies > 0;
-  for (const r of REVIEWS) {
-    const node = card(r);
-    if (decorative) node.setAttribute('aria-hidden', 'true');
-    track.appendChild(node);
+  const marquee = el('div', 'marquee');
+  const track = el('div', 'track');
+  if (reverse) track.classList.add('reverse');
+
+  // Appends one full copy of the list. Copies after the first are decoration —
+  // screen readers should hear each review once.
+  let copies = 0;
+  function appendCopy() {
+    const decorative = copies > 0;
+    for (const r of reviews) {
+      const node = card(r);
+      if (decorative) node.setAttribute('aria-hidden', 'true');
+      track.appendChild(node);
+    }
+    copies++;
   }
-  copies++;
-}
 
-appendCopy();
-marquee.appendChild(track);
-wrap.appendChild(marquee);
-root.appendChild(wrap);
+  appendCopy();
+  marquee.appendChild(track);
+  wrap.appendChild(marquee);
+  root.appendChild(wrap);
 
-if (reduceMotion) {
-  marquee.classList.add('static');
-} else {
+  if (reduceMotion) {
+    marquee.classList.add('static');
+    cleanup = null;
+    return;
+  }
+
   appendCopy(); // need at least two so there's something to scroll into view
 
   const layout = () => {
     const cards = track.children;
+    if (cards.length <= reviews.length) return;
     // One period is the distance from a card to its twin in the next copy.
     // Measuring it beats translating by -50%: a card's trailing margin isn't
     // counted consistently in scrollWidth across engines, and being a few px
     // out means a visible jolt on every single pass.
-    const period = cards[REVIEWS.length].offsetLeft - cards[0].offsetLeft;
+    const period = cards[reviews.length].offsetLeft - cards[0].offsetLeft;
     if (!period) return;
 
     // If the strip is wider than one copy, the tail of the last copy scrolls
@@ -203,20 +217,38 @@ if (reduceMotion) {
   // Web fonts landing late changes every card's width, so re-measure.
   if (document.fonts?.ready) document.fonts.ready.then(layout);
   window.addEventListener('resize', layout);
+  cleanup = () => window.removeEventListener('resize', layout);
 }
+
+/* ------------------------------------------------------------------- data */
+
+// Bundled copy first, so the strip is never empty while the network happens.
+render(REVIEWS, SUMMARY);
+
+// Then upgrade to the live list. An empty or failed response deliberately
+// changes nothing — what's already on screen is the fallback.
+fetch('/api/reviews', { headers: { Accept: 'application/json' } })
+  .then((r) => (r.ok ? r.json() : null))
+  .then((json) => {
+    const live = (json?.reviews || []).filter((r) => r?.name && r?.text);
+    if (!live.length) return;
+    render(live, json.summary || SUMMARY);
+    reportHeight();
+  })
+  .catch(() => { /* keep the bundled list; nothing useful to do here */ });
 
 /* ----------------------------------------------- tell the parent our height */
 
 // Duda iframes take a fixed height, but if we're ever embedded somewhere that
 // can listen, let it size us properly.
-const reportHeight = () => {
+function reportHeight() {
   const h = Math.ceil(document.documentElement.getBoundingClientRect().height);
   try {
     parent.postMessage({ type: 'squideo:reviews:height', height: h }, '*');
   } catch {
     /* cross-origin parent that refuses messages — nothing to do */
   }
-};
+}
 reportHeight();
 window.addEventListener('resize', reportHeight);
 if (document.fonts?.ready) document.fonts.ready.then(reportHeight);

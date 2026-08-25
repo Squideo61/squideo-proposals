@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronLeft, Users, Shield, Bell, Wallet, CalendarClock, Percent, Plane, FileText, Mic, BellRing, FlaskConical, Activity, GraduationCap, MonitorPlay } from 'lucide-react';
+import { ChevronLeft, Users, Shield, Bell, Wallet, CalendarClock, Percent, Plane, FileText, Mic, BellRing, FlaskConical, Activity, GraduationCap, MonitorPlay, Star } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
@@ -18,6 +18,7 @@ import { PortalDemoPanel } from './PortalDemoPanel.jsx';
 import { TaskRemindersTab } from './TaskRemindersTab.jsx';
 import { StaffActivityTab } from './StaffActivityTab.jsx';
 import { CourseTab } from './CourseTab.jsx';
+import { ReviewsTab } from './ReviewsTab.jsx';
 
 const TABS = [
   { id: 'users',         label: 'Users + invites',  icon: Users,    perm: 'users.manage' },
@@ -31,6 +32,7 @@ const TABS = [
   { id: 'proposals', label: 'Proposals', icon: FileText, perm: 'settings.manage' },
   { id: 'voiceovers', label: 'Voiceovers', icon: Mic, perm: ['voiceovers.manage', 'settings.manage'] },
   { id: 'course', label: 'Video guide', icon: GraduationCap, perm: 'settings.manage' },
+  { id: 'reviews', label: 'Google reviews', icon: Star, perm: 'settings.manage' },
   { id: 'task-reminders', label: 'Task reminders', icon: BellRing, perm: 'settings.manage' },
   // Its own entry rather than the top half of Testing. 'Testing' reads as
   // set-up-and-tear-down, so nobody looks in there for "what does the client
@@ -199,6 +201,7 @@ export function AdminView({ tab = 'users', onBack, onChangeTab, onEditDefault, o
           {active?.id === 'proposals' && <DefaultProposalTab onEditDefault={onEditDefault} onCreateTemplate={onCreateTemplate} onEditTemplate={onEditTemplate} />}
           {active?.id === 'voiceovers' && <VoiceoverCatalogueTab />}
           {active?.id === 'course' && <CourseTab />}
+          {active?.id === 'reviews' && <ReviewsTab />}
           {active?.id === 'task-reminders' && <TaskRemindersTab />}
           {active?.id === 'portal' && <PortalDemoPanel />}
           {active?.id === 'demo' && <DemoTab />}
