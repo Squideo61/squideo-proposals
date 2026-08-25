@@ -81,6 +81,12 @@ const MERGE_TAGS = [
   { tag: '{{company|your team}}', label: 'Company' },
 ];
 
+// The chip labels, reused by the search summary so the two can't disagree.
+const FILTER_LABELS = {
+  all: 'All', opened: 'Opened', clicked: 'Clicked', unopened: 'Not opened',
+  unsubscribed: 'Opted out since', failed: 'Not delivered',
+};
+
 const STATUS_STYLE = {
   draft:     { label: 'Draft',     bg: '#F1F5F9', ink: BRAND.muted, border: BRAND.border },
   scheduled: { label: 'Scheduled', bg: '#EFF6FF', ink: '#1D4ED8',   border: '#BFDBFE' },
@@ -1447,18 +1453,40 @@ function CampaignReport({ state, onReload, onOpenContact, isMobile, showMsg, onR
   const { campaign, stats, links, pace, bounceTracking, bounceAges } = state;
   const [filter, setFilter] = useState('all');
   const [recipients, setRecipients] = useState(state.recipients || []);
+  const [q, setQ] = useState('');
+  const [searchResults, setSearchResults] = useState(null);
+  const [searching, setSearching] = useState(false);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => { setRecipients(state.recipients || []); }, [state.recipients]);
 
+  // While a search is running the server has already applied both the search
+  // and the filter, so the chip filters must not be applied a second time.
   const shown = useMemo(() => {
+    if (searchResults) return searchResults;
     if (filter === 'opened') return recipients.filter((r) => r.opens > 0);
     if (filter === 'clicked') return recipients.filter((r) => r.clicks > 0);
     if (filter === 'unopened') return recipients.filter((r) => r.status === 'sent' && r.opens === 0);
     if (filter === 'failed') return recipients.filter((r) => r.status === 'failed' || r.status === 'skipped');
     if (filter === 'unsubscribed') return recipients.filter((r) => r.unsubscribed);
     return recipients;
-  }, [recipients, filter]);
+  }, [recipients, filter, searchResults]);
+
+  // Searched on the server, because the list on screen is capped at a thousand
+  // rows and a campaign can be several times that — a search of what's already
+  // loaded would confidently fail to find people who are definitely there.
+  useEffect(() => {
+    const term = q.trim();
+    if (!term) { setSearchResults(null); setSearching(false); return undefined; }
+    setSearching(true);
+    let live = true;
+    const t = setTimeout(() => {
+      api.get(`/api/crm/campaigns/${campaign.id}/recipients?filter=${encodeURIComponent(filter)}&q=${encodeURIComponent(term)}`)
+        .then((d) => { if (live) { setSearchResults(d.recipients || []); setSearching(false); } })
+        .catch((e) => { if (live) { setSearching(false); showMsg(e.message || 'Search failed'); } });
+    }, 250);
+    return () => { live = false; clearTimeout(t); };
+  }, [q, filter, campaign.id, showMsg]);
 
   const control = async (action) => {
     setBusy(true);
@@ -1738,7 +1766,43 @@ function CampaignReport({ state, onReload, onOpenContact, isMobile, showMsg, onR
               {text} {n > 0 && <span style={{ opacity: 0.75 }}>{num(n)}</span>}
             </button>
           ))}
+
+          <div style={{ position: 'relative', marginLeft: 'auto', flex: '0 1 260px', minWidth: 180 }}>
+            <input
+              value={q} onChange={(e) => setQ(e.target.value)}
+              placeholder="Search name, email or company"
+              style={{
+                width: '100%', boxSizing: 'border-box', padding: '5px 10px', paddingRight: searching ? 74 : 10,
+                border: '1px solid ' + BRAND.border, borderRadius: 999, fontSize: 12.5,
+              }}
+            />
+            {searching && (
+              <span style={{
+                position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
+                fontSize: 11.5, color: BRAND.muted, pointerEvents: 'none',
+              }}>Searching…</span>
+            )}
+          </div>
         </div>
+
+        {/* Says which set is on screen. Without this, a search that finds
+            nothing and a filter that contains nothing look identical. */}
+        {q.trim() && (
+          <div style={{ fontSize: 12.5, color: BRAND.muted, marginBottom: 8 }}>
+            {searching
+              ? <>Searching everyone this campaign has reached…</>
+              : <>
+                  <strong style={{ color: BRAND.ink }}>{num(shown.length)}</strong>
+                  {shown.length === 1 ? ' match' : ' matches'} for “{q.trim()}”
+                  {filter !== 'all' && <> within “{FILTER_LABELS[filter] || filter}”</>}
+                  {' '}· searched every recipient, not just the ones listed below.
+                  {' '}<button
+                    className="btn-ghost" onClick={() => setQ('')}
+                    style={{ fontSize: 12, padding: 0, color: BRAND.blue, textDecoration: 'underline' }}
+                  >Clear</button>
+                </>}
+          </div>
+        )}
 
         <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 4 }}>
           <ResponsiveTable

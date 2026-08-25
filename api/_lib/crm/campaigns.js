@@ -1052,7 +1052,14 @@ async function campaignLinks(campaignId) {
 // Per-person engagement. This is the half of the report that's actually
 // actionable: "who opened it three times and clicked the pricing link" is a
 // call worth making, where an open rate is only ever a scoreboard.
-async function campaignRecipients(campaignId, { filter = 'all', limit = 1000 } = {}) {
+async function campaignRecipients(campaignId, { filter = 'all', limit = 1000, q = null } = {}) {
+  // Searching happens in SQL, not in the browser. The list is capped at a
+  // thousand rows and a campaign can be several times that, so a filter applied
+  // to what was already fetched would quietly fail to find people who are
+  // definitely there — the worst kind of search, because it answers
+  // confidently.
+  const term = String(q || '').trim();
+  const like = term ? `%${term.replace(/[%_]/g, (c) => '\\' + c)}%` : null;
   const rows = await sql`
     SELECT r.id, r.email, r.name, r.company_name, r.contact_id, r.is_customer,
            r.status, r.error, r.sent_at,
@@ -1079,6 +1086,10 @@ async function campaignRecipients(campaignId, { filter = 'all', limit = 1000 } =
          ORDER BY cs2.marketing_consent DESC LIMIT 1
       ) cs ON TRUE
      WHERE r.campaign_id = ${campaignId}
+       AND (${like}::text IS NULL
+            OR r.email ILIKE ${like}
+            OR COALESCE(r.name, '') ILIKE ${like}
+            OR COALESCE(r.company_name, '') ILIKE ${like})
      GROUP BY r.id, sup.email, sup.created_at, sup.source, cs.marketing_consent
      ORDER BY clicks DESC, opens DESC, r.email
      LIMIT ${Math.min(Number(limit) || 1000, 2000)}`;
@@ -1920,8 +1931,11 @@ export async function campaignsRoute(req, res, id, action, user) {
 
   // GET /campaigns/:id/recipients?filter=opened|clicked|unopened|failed
   if (action === 'recipients' && req.method === 'GET') {
-    const recipients = await campaignRecipients(id, { filter: req.query.filter || 'all' });
-    return res.status(200).json({ recipients });
+    const recipients = await campaignRecipients(id, {
+      filter: req.query.filter || 'all',
+      q: req.query.q || null,
+    });
+    return res.status(200).json({ recipients, query: req.query.q || null });
   }
 
   return res.status(404).json({ error: 'Unknown campaign action' });
