@@ -79,7 +79,13 @@ export async function suppressedAmong(emails, scope = 'marketing') {
     // opted out, not sending is the safe answer. Transactional already
     // returned above, so no invoice is ever at risk from a database blip.
     console.warn('[suppression] lookup failed', err.message);
-    return new Set(list);
+    const blocked = new Set(list);
+    // …but say WHY everyone came back blocked. Without this the caller cannot
+    // tell "these people opted out" from "I couldn't find out", and a campaign
+    // would permanently mark a whole batch as unsubscribed — recording a
+    // decision those people never made — because the database blinked.
+    blocked.degraded = true;
+    return blocked;
   }
 }
 

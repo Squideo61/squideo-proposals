@@ -166,6 +166,16 @@ export async function sendMarketingBatch(messages = []) {
     return results.map(() => ({ ok: false, id: null, error: 'Suppression lookup failed', suppressed: false }));
   }
 
+  // The lookup fell back to blocking everyone because it couldn't read the
+  // list. Nothing is sent — but these go back on the queue rather than being
+  // recorded as opt-outs, because "I don't know" is not "they unsubscribed".
+  if (blocked.degraded) {
+    return results.map(() => ({
+      ok: false, id: null, suppressed: false, retryable: true,
+      error: 'Could not check the unsubscribe list',
+    }));
+  }
+
   const payload = [];
   const payloadIndex = [];
   list.forEach((m, i) => {
