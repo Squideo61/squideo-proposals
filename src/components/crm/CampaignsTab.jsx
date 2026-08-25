@@ -1469,7 +1469,7 @@ function SendConfirmModal({ campaignId, audience, excluded = 0, speed = null, on
 
 // ── report ──────────────────────────────────────────────────────────────────
 function CampaignReport({ state, onReload, onOpenContact, isMobile, showMsg, onReopened, onOpenCampaign }) {
-  const { campaign, stats, links, pace, bounceTracking, bounceAges } = state;
+  const { campaign, stats, links, pace, bounceTracking, bounceAges, providers } = state;
   const [filter, setFilter] = useState('all');
   const [recipients, setRecipients] = useState(state.recipients || []);
   const [q, setQ] = useState('');
@@ -1729,6 +1729,51 @@ function CampaignReport({ state, onReload, onOpenContact, isMobile, showMsg, onR
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* What Postmaster Tools would tell you about Gmail, inferred from the
+          one thing Gmail can't hide: whether people opened it. */}
+      {providers?.providers?.length > 1 && (
+        <div style={{
+          background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12,
+          padding: 16, marginBottom: 20,
+        }}>
+          <div style={{ fontSize: 13.5, fontWeight: 700, color: BRAND.ink, marginBottom: 4 }}>
+            How each mailbox provider is treating it
+          </div>
+          <div style={{ fontSize: 12.5, color: BRAND.muted, marginBottom: 12, lineHeight: 1.5 }}>
+            Opens as a share of what got through, per provider. No provider tells you it sent your mail to spam — but
+            one opening far below the rest ({pct(providers.overallOpenRate)} across the campaign) is what that looks
+            like from the outside.
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {providers.providers.map((p) => (
+              <div key={p.domain} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5, flexWrap: 'wrap' }}>
+                <span style={{ width: 150, flexShrink: 0, fontWeight: 600, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {p.domain}
+                </span>
+                <span style={{ flex: 1, minWidth: 60, height: 8, background: BRAND.paper, borderRadius: 999, overflow: 'hidden', border: '1px solid ' + BRAND.border }}>
+                  <span style={{
+                    display: 'block', height: '100%', width: Math.min(100, p.openRate) + '%',
+                    background: p.likelyFiltered ? '#B91C1C' : BRAND.blue,
+                  }} />
+                </span>
+                <span style={{ width: 52, textAlign: 'right', fontWeight: 700, color: p.likelyFiltered ? '#B91C1C' : BRAND.ink }}>
+                  {p.openRate.toFixed(1)}%
+                </span>
+                <span style={{ width: 150, textAlign: 'right', color: BRAND.muted }}>
+                  {num(p.delivered)} delivered
+                  {p.bounced > 0 && ` · ${num(p.bounced)} bounced`}
+                </span>
+                {p.likelyFiltered && (
+                  <span style={{ fontSize: 11, fontWeight: 700, color: '#B91C1C', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 999, padding: '1px 7px' }}>
+                    Possibly filtered
+                  </span>
+                )}
+              </div>
+            ))}
           </div>
         </div>
       )}

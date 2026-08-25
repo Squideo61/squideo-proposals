@@ -1035,6 +1035,67 @@ export async function predictedBounceRate(audience) {
   }
 }
 
+// How each mailbox provider is treating this campaign.
+//
+// A stand-in for Postmaster Tools, and in one way a better one: it needs no
+// Google account, no DNS record and no waiting. Gmail never tells a sender
+// "this went to spam" — but if Gmail opens 4% while everyone else opens 30%,
+// that gap IS the answer, because the only thing that differs is the provider
+// deciding where to put it.
+//
+// Bounces are shown per provider too: a provider whose bounce rate is far above
+// the rest is usually rejecting rather than the addresses being dead.
+export async function providerBreakdown(campaignId) {
+  const rows = await sql`
+    SELECT LOWER(SPLIT_PART(r.email, '@', 2)) AS domain,
+           COUNT(*)::int AS sent,
+           COUNT(DISTINCT r.id) FILTER (WHERE e.kind = 'open')::int AS opened,
+           COUNT(DISTINCT r.id) FILTER (WHERE r.bounce_kind = 'hard')::int AS bounced
+      FROM email_campaign_recipients r
+      LEFT JOIN email_tracking_events e ON e.tracking_id = r.tracking_id
+     WHERE r.campaign_id = ${campaignId}
+       AND (r.status IN ('sent', 'bounced') OR r.bounced_at IS NOT NULL)
+     GROUP BY 1
+     HAVING COUNT(*) >= 20
+     ORDER BY sent DESC
+     LIMIT 12
+  `.catch((err) => {
+    console.warn('[campaigns] provider breakdown failed', err.message);
+    return [];
+  });
+
+  const mapped = rows.map((r) => {
+    const delivered = Math.max(0, (r.sent || 0) - (r.bounced || 0));
+    return {
+      domain: r.domain,
+      sent: r.sent || 0,
+      delivered,
+      opened: r.opened || 0,
+      bounced: r.bounced || 0,
+      // Opens as a share of what actually got through — a provider that
+      // bounced half the batch would otherwise look like a bad audience.
+      openRate: delivered ? Math.round(((r.opened || 0) / delivered) * 1000) / 10 : 0,
+      bounceRate: r.sent ? Math.round(((r.bounced || 0) / r.sent) * 1000) / 10 : 0,
+    };
+  });
+
+  // The benchmark every row is judged against: how the campaign did overall.
+  const totals = mapped.reduce((a, r) => ({
+    delivered: a.delivered + r.delivered, opened: a.opened + r.opened,
+  }), { delivered: 0, opened: 0 });
+  const overallOpen = totals.delivered ? (totals.opened / totals.delivered) * 100 : 0;
+
+  return {
+    overallOpenRate: Math.round(overallOpen * 10) / 10,
+    providers: mapped.map((r) => ({
+      ...r,
+      // Half the average or worse, with enough messages to mean something, is
+      // the shape of mail being filtered rather than ignored.
+      likelyFiltered: overallOpen > 5 && r.delivered >= 50 && r.openRate < overallOpen / 2,
+    })),
+  };
+}
+
 async function campaignLinks(campaignId) {
   const rows = await sql`
     SELECT e.link_url AS url,
@@ -1679,7 +1740,11 @@ export async function campaignsRoute(req, res, id, action, user) {
     // Only worth computing once something has actually bounced — otherwise it's
     // a table of zeroes taking up the most valuable part of the report.
     const bounceAges = stats?.bounced > 0 ? await bounceByAge(id).catch(() => []) : [];
-    return res.status(200).json({ campaign, stats, links, recipients, pace, bounceTracking, bounceAges });
+    // Needs enough sent for a per-provider figure to mean anything.
+    const providers = stats?.sent >= 100 ? await providerBreakdown(id).catch(() => null) : null;
+    return res.status(200).json({
+      campaign, stats, links, recipients, pace, bounceTracking, bounceAges, providers,
+    });
   }
 
   // PATCH /campaigns/:id — edit a draft. A campaign that has started is frozen:
