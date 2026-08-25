@@ -57,7 +57,17 @@ const GROUP_OPTIONS = [
   { key: 'source', label: 'Source' },
   { key: 'medium', label: 'Medium' },
   { key: 'channel', label: 'Channel' },
+  // Which page they first landed on. Answers "which pages actually bring in
+  // work" — the same lead/sale/revenue columns as every other grouping.
+  { key: 'page', label: 'Landing page' },
 ];
+
+// Search Console reports fully-qualified URLs and every row shares the same
+// origin, so show the path and keep the whole URL on the link.
+const pagePath = (url) => {
+  try { const u = new URL(url); return (u.pathname || '/') + (u.search || ''); }
+  catch { return url; }
+};
 
 const TABS = [
   { key: 'overview', label: 'Dashboard', icon: LayoutDashboard },
@@ -563,6 +573,11 @@ function ReportsTab({ data, loading, groupBy, setGroupBy, adsConfigured, basis, 
                 <tr key={r.key} style={{ borderTop: '1px solid ' + BRAND.border }}>
                   <Td title={r.label}>
                     {groupBy === 'channel' ? prettyChannel(r.key)
+                      : groupBy === 'page' ? (
+                        r.url
+                          ? <a href={r.url} target="_blank" rel="noreferrer" style={{ color: BRAND.blue }}>{r.label}</a>
+                          : (r.label || '—')
+                      )
                       : groupBy === 'campaign' ? (
                         <div>
                           <div>{r.label || '—'}</div>
@@ -1160,6 +1175,7 @@ function SearchTab({ data, loading, onOpenSettings, onRetry }) {
   }
   const t = data.totals || { clicks: 0, impressions: 0, ctr: 0, position: null };
   const queries = data.queries || [];
+  const pages = data.pages || [];
   return (
     <div>
       {data.lastSync && (
@@ -1190,6 +1206,31 @@ function SearchTab({ data, loading, onOpenSettings, onRetry }) {
                   <Td right>{fmtNum(q.impressions)}</Td>
                   <Td right>{fmtPct(q.ctr)}</Td>
                   <Td right>{q.position == null ? '—' : q.position.toFixed(1)}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <h2 style={{ fontSize: 16, fontWeight: 600, margin: '24px 0 12px' }}>Top pages</h2>
+      {pages.length === 0 ? <Empty>No page data for this period yet.</Empty> : (
+        <div style={{ overflowX: 'auto', border: '1px solid ' + BRAND.border, borderRadius: 12 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+            <thead>
+              <tr style={{ background: BRAND.paper, textAlign: 'left' }}>
+                <Th>Page</Th><Th right>Clicks</Th><Th right>Impressions</Th><Th right>CTR</Th><Th right>Avg pos.</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {pages.map((p) => (
+                <tr key={p.page} style={{ borderTop: '1px solid ' + BRAND.border }}>
+                  <Td title={p.page}>
+                    <a href={p.page} target="_blank" rel="noreferrer" style={{ color: BRAND.blue }}>{pagePath(p.page)}</a>
+                  </Td>
+                  <Td right>{fmtNum(p.clicks)}</Td>
+                  <Td right>{fmtNum(p.impressions)}</Td>
+                  <Td right>{fmtPct(p.ctr)}</Td>
+                  <Td right>{p.position == null ? '—' : p.position.toFixed(1)}</Td>
                 </tr>
               ))}
             </tbody>

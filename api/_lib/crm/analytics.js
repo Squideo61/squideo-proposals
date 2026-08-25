@@ -217,6 +217,30 @@ async function campaignNameMap() {
 // {campaignid} by our tracking suffix, so it's usually numeric).
 const nonNumeric = (v) => (v && !/^\d+$/.test(v) ? v : null);
 
+// The stored landing URL is the full first-touch address, query string and all
+// (gclid, utm_*, ...), so grouping on it raw would split a single page into
+// dozens of one-lead rows. Key on host + path instead, and hand back a clean
+// URL for the report row to link to. The key is lowercased for grouping; the
+// label keeps the URL as it was in case a path is case-sensitive.
+function landingPage(url) {
+  if (!url) return null;
+  let host, path;
+  try {
+    const u = new URL(String(url));
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+    host = u.hostname.toLowerCase();
+    if (host.startsWith('www.')) host = host.slice(4);
+    path = u.pathname || '/';
+  } catch {
+    return null;
+  }
+  // A trailing slash is the same page to a web server but a different string
+  // to us, so /pricing/ and /pricing must not become two rows.
+  while (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1);
+  const shown = host + path;
+  return { key: shown.toLowerCase(), label: shown, url: 'https://' + shown };
+}
+
 // GET /api/crm/analytics/leads — one row per lead with attribution + the deal it
 // became + the revenue it generated.
 async function leadsLog(req) {
@@ -295,7 +319,7 @@ async function leadsLog(req) {
 // campaign/keyword/channel. ?basis=event (default) counts each milestone in the
 // period it happened; ?basis=lead is the cohort view (see parseBasis).
 async function reports(req, groupBy) {
-  const dim = ['source', 'medium', 'campaign', 'keyword', 'channel'].includes(groupBy) ? groupBy : 'campaign';
+  const dim = ['source', 'medium', 'campaign', 'keyword', 'channel', 'page'].includes(groupBy) ? groupBy : 'campaign';
   const { fromDate, toExcl, fromStr, toStr } = await leadRange(req);
   const basis = parseBasis(req);
 
@@ -310,7 +334,8 @@ async function reports(req, groupBy) {
   const rows = await sql`
     SELECT qr.id, qr.status, qr.deal_id, qr.created_at, qr.reviewed_at,
            qr.attr_channel, qr.attr_source, qr.attr_medium,
-           qr.attr_campaign, qr.attr_campaign_id, qr.attr_keyword, qr.attr_term
+           qr.attr_campaign, qr.attr_campaign_id, qr.attr_keyword, qr.attr_term,
+           qr.attr_landing_url
       FROM quote_requests qr
      WHERE qr.created_at >= ${scanFrom} AND qr.created_at < ${toExcl}`;
   const info = await dealInfoMap(rows.map((r) => r.deal_id));
@@ -325,6 +350,11 @@ async function reports(req, groupBy) {
     if (dim === 'medium') return { key: r.attr_medium || '(none)', label: r.attr_medium || '(none)' };
     if (dim === 'channel') return { key: r.attr_channel || 'direct', label: r.attr_channel || 'direct' };
     if (dim === 'keyword') { const k = r.attr_keyword || r.attr_term; return { key: (k || '(none)').toLowerCase(), label: k || '(none)' }; }
+    // Leads with no landing URL — added by hand, backfilled from email, or from
+    // before the tracker went live — collect in one (none) row rather than being
+    // dropped, so the Leads column still sums to the same total as it does under
+    // every other grouping.
+    if (dim === 'page') return landingPage(r.attr_landing_url) || { key: '(none)', label: '(none)' };
     // campaign — prefer the friendly name, then a non-numeric utm_campaign, then the id.
     const id = r.attr_campaign_id || null;
     const label = (id && names.get(id)) || nonNumeric(r.attr_campaign) || id || '(none)';
@@ -375,9 +405,9 @@ async function reports(req, groupBy) {
     // contribute nothing to the selected period.
     if (!m.lead && !m.qualified && !m.disqualified && !m.proposal && !m.sale) continue;
 
-    const { key, label, campaignId } = keyFor(r);
+    const { key, label, campaignId, url } = keyFor(r);
     let g = groups.get(key);
-    if (!g) { g = { key, label, campaignId: campaignId || null, leads: 0, qualified: 0, disqualified: 0, proposals: 0, sales: 0, revenue: 0, proposalValue: 0 }; groups.set(key, g); }
+    if (!g) { g = { key, label, campaignId: campaignId || null, url: url || null, leads: 0, qualified: 0, disqualified: 0, proposals: 0, sales: 0, revenue: 0, proposalValue: 0 }; groups.set(key, g); }
     if (m.lead) g.leads += 1;
     if (m.qualified) g.qualified += 1;
     if (m.disqualified) g.disqualified += 1;
@@ -406,6 +436,7 @@ async function reports(req, groupBy) {
       key: g.key,
       label: g.label,
       campaignId: g.campaignId,
+      url: g.url,
       leads: g.leads,
       qualified: g.qualified,
       disqualified: g.disqualified,
