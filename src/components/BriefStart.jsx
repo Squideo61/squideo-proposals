@@ -14,9 +14,8 @@
 // like this, and the asset is a planning tool, not a bank account.
 
 import React, { useState } from 'react';
-import { ArrowRight, Check, Star } from 'lucide-react';
+import { ArrowRight, Check } from 'lucide-react';
 import { BRAND } from '../theme.js';
-import { SUMMARY } from '../reviewsData.js';
 import { MARKETING_CONSENT_TEXT, consentRecord } from '../lib/courseConsent.js';
 
 const PORTAL_ORIGIN = window.location.origin;
@@ -156,6 +155,10 @@ function BriefPromo({ children }) {
  * headings are a separate document anyway. Give the Duda page a real heading —
  * nothing in here can do that job for it.
  *
+ * WHY NO REVIEW STRIP: the Duda page runs the normal review widget in its own
+ * section below this embed. Two star ratings stacked on top of each other read
+ * as filler, so the proof lives out there rather than in here.
+ *
  * Each band paints its own background. The page background stays transparent
  * (see brief-start.html), which is right for the other two variants and
  * invisible here because the bands cover the frame edge to edge.
@@ -221,35 +224,6 @@ function BriefLanding({ children }) {
               </li>
             ))}
           </ol>
-        </div>
-      </section>
-
-      {/* ── Proof ──────────────────────────────────────────────────────────── */}
-      <section style={{ background: BRAND.paper, borderTop: `1px solid ${BRAND.border}`, padding: '30px 22px' }}>
-        <div style={{
-          maxWidth: 1060, margin: '0 auto', display: 'flex', flexWrap: 'wrap',
-          alignItems: 'center', gap: '10px 16px', justifyContent: 'center',
-          textAlign: 'center', fontSize: 14.5, color: '#5A7382',
-        }}>
-          <span style={{ display: 'inline-flex', gap: 2 }} aria-hidden>
-            {[0, 1, 2, 3, 4].map((i) => (
-              <Star key={i} size={17} strokeWidth={0} style={{ fill: '#F5A623' }} />
-            ))}
-          </span>
-          <span>
-            <strong style={{ color: BRAND.ink, fontWeight: 700 }}>{SUMMARY.rating}</strong>
-            {' '}from {SUMMARY.count} reviews ·{' '}
-            {/* _blank, not _top: reading a review should not throw away the
-                half-filled form behind it. */}
-            <a
-              href={SUMMARY.href}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ color: BRAND.blue, fontWeight: 600 }}
-            >
-              read them
-            </a>
-          </span>
         </div>
       </section>
     </div>
