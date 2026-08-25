@@ -2137,32 +2137,37 @@ function ExpandedMessage({ email, dealId = null, defaultOpen = false, isLast = f
       {open && (
         // overflowX is explicit (not left to the visible→auto fallback) so a
         // sender's fixed-width signature table scrolls inside this box rather
-        // than widening the column the thread sits in.
-        <div style={{ borderTop: '1px solid ' + BRAND.border, paddingTop: 8, fontSize: 13, lineHeight: 1.5, maxHeight: 320, overflowY: 'auto', overflowX: 'auto', wordBreak: 'break-word' }}>
-          {/* Full recipient list so every addressee — including everyone Cc'd —
-              is visible, not just the first To. */}
-          <div style={{ fontSize: 11.5, color: BRAND.muted, marginBottom: 8, lineHeight: 1.5 }}>
-            {email.fromEmail && <div><span style={{ fontWeight: 600 }}>From:</span> {email.fromEmail}</div>}
-            {email.toEmails?.length > 0 && <div><span style={{ fontWeight: 600 }}>To:</span> {email.toEmails.join(', ')}</div>}
-            {email.ccEmails?.length > 0 && <div><span style={{ fontWeight: 600 }}>Cc:</span> {email.ccEmails.join(', ')}</div>}
+        // than widening the column the thread sits in. The attachment cards sit
+        // OUTSIDE that box on purpose: inside it a long body pushed them past
+        // the 320px fold, so they flashed up while the body was still loading
+        // and then scrolled out of sight.
+        <>
+          <div style={{ borderTop: '1px solid ' + BRAND.border, paddingTop: 8, fontSize: 13, lineHeight: 1.5, maxHeight: 320, overflowY: 'auto', overflowX: 'auto', wordBreak: 'break-word' }}>
+            {/* Full recipient list so every addressee — including everyone Cc'd —
+                is visible, not just the first To. */}
+            <div style={{ fontSize: 11.5, color: BRAND.muted, marginBottom: 8, lineHeight: 1.5 }}>
+              {email.fromEmail && <div><span style={{ fontWeight: 600 }}>From:</span> {email.fromEmail}</div>}
+              {email.toEmails?.length > 0 && <div><span style={{ fontWeight: 600 }}>To:</span> {email.toEmails.join(', ')}</div>}
+              {email.ccEmails?.length > 0 && <div><span style={{ fontWeight: 600 }}>Cc:</span> {email.ccEmails.join(', ')}</div>}
+            </div>
+            {loading && <div style={{ color: BRAND.muted, fontSize: 12 }}>Loading…</div>}
+            {error && <div style={{ color: '#DC2626', fontSize: 12 }}>{error}</div>}
+            {!loading && !error && data && (
+              sanitized
+                ? <div className="email-body" dangerouslySetInnerHTML={{ __html: sanitized }} />
+                : data.bodyText
+                  ? <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'inherit', margin: 0 }}>{data.bodyText}</pre>
+                  : <div style={{ color: BRAND.muted, fontStyle: 'italic', fontSize: 12 }}>(no body stored — open in Gmail to read)</div>
+            )}
           </div>
-          {loading && <div style={{ color: BRAND.muted, fontSize: 12 }}>Loading…</div>}
-          {error && <div style={{ color: '#DC2626', fontSize: 12 }}>{error}</div>}
-          {!loading && !error && data && (
-            sanitized
-              ? <div className="email-body" dangerouslySetInnerHTML={{ __html: sanitized }} />
-              : data.bodyText
-                ? <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'inherit', margin: 0 }}>{data.bodyText}</pre>
-                : <div style={{ color: BRAND.muted, fontStyle: 'italic', fontSize: 12 }}>(no body stored — open in Gmail to read)</div>
-          )}
           {hasAttachments && (
-            <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid ' + BRAND.border, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+            <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid ' + BRAND.border, display: 'flex', flexWrap: 'wrap', gap: 10 }}>
               {attachments.map((a, i) => (
                 <EmailAttachmentCard key={i} att={a} messageId={email.gmailMessageId} connected={connected} dealId={dealId} />
               ))}
             </div>
           )}
-        </div>
+        </>
       )}
     </div>
   );
