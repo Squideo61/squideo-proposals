@@ -1119,7 +1119,11 @@ async function selfServeSignup(req, res, body, source) {
     `;
     if ((recent[0]?.n || 0) < MAGIC_SENDS_PER_10MIN) {
       const raw = await issueLoginToken(result.user.id, 'magic_link', 15);
-      const loginUrl = `${PORTAL_URL}?login=${encodeURIComponent(raw)}`;
+      // The hash matters: they asked for the brief builder (or the guide), so
+      // that is where the link has to land. Without it they arrive on the portal
+      // home and have to go find the thing they just signed in for. Fragment
+      // last — after the ?login= the boot code consumes and strips.
+      const loginUrl = `${PORTAL_URL}?login=${encodeURIComponent(raw)}${landing.to}`;
       try {
         await sendMail({
           to: result.user.email,
