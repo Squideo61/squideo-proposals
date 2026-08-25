@@ -964,6 +964,77 @@ export async function bounceByAge(campaignId) {
   }));
 }
 
+// What a list is likely to bounce at, before a single email goes out.
+//
+// Built from what past sends actually did, by cohort: if 2018 addresses bounced
+// at 38% last time and this list is a third 2018 addresses, that is knowable in
+// advance. The alternative is finding out at 890 emails in, which is the
+// expensive way and the way it has already been learned once.
+//
+// Improves on its own over time: bounced addresses are suppressed, so they drop
+// out of the audience, so the same query on the same list predicts lower next
+// month. That is the list cleaning itself, made visible.
+export async function predictedBounceRate(audience) {
+  try {
+    const history = await sql`
+      SELECT EXTRACT(YEAR FROM q.last_at)::int AS year,
+             COUNT(*)::int AS attempted,
+             COUNT(*) FILTER (WHERE r.bounce_kind = 'hard')::int AS bounced
+        FROM email_campaign_recipients r
+        LEFT JOIN LATERAL (
+          SELECT MAX(q2.created_at) AS last_at
+            FROM quote_requests q2
+           WHERE LOWER(TRIM(q2.email)) = r.email
+             AND COALESCE(q2.status, 'new') <> 'spam'
+        ) q ON TRUE
+       WHERE r.status IN ('sent', 'bounced') OR r.bounced_at IS NOT NULL
+       GROUP BY 1`;
+    // Nothing has ever been sent — no basis for a guess, so don't make one.
+    const attempted = history.reduce((a, r) => a + (r.attempted || 0), 0);
+    if (attempted < 100) return null;
+
+    const rateFor = new Map(history.map((r) => [
+      r.year ?? null,
+      r.attempted ? (r.bounced || 0) / r.attempted : 0,
+    ]));
+    const overall = history.reduce((a, r) => a + (r.bounced || 0), 0) / attempted;
+
+    const people = await audienceRows(audience);
+    if (!people.length) return null;
+
+    let expected = 0;
+    const worstYears = new Map();
+    for (const p of people) {
+      const year = p.lastEnquiryAt ? new Date(p.lastEnquiryAt).getUTCFullYear() : null;
+      // A cohort we have never sent to falls back to the overall rate rather
+      // than to zero — an unknown is not a clean bill of health.
+      const rate = rateFor.has(year) ? rateFor.get(year) : overall;
+      expected += rate;
+      if (year && rate >= 0.05) {
+        const w = worstYears.get(year) || { year, people: 0, rate };
+        w.people += 1;
+        worstYears.set(year, w);
+      }
+    }
+
+    const rate = Math.round((expected / people.length) * 1000) / 10;
+    return {
+      rate,
+      expectedBounces: Math.round(expected),
+      audienceSize: people.length,
+      basedOn: attempted,
+      // The years dragging it up, worst first — the cutoff suggests itself.
+      worst: [...worstYears.values()]
+        .sort((a, b) => b.rate - a.rate)
+        .slice(0, 4)
+        .map((w) => ({ year: w.year, people: w.people, rate: Math.round(w.rate * 1000) / 10 })),
+    };
+  } catch (err) {
+    console.warn('[campaigns] bounce prediction failed', err.message);
+    return null;
+  }
+}
+
 async function campaignLinks(campaignId) {
   const rows = await sql`
     SELECT e.link_url AS url,
@@ -1495,6 +1566,7 @@ export async function campaignsRoute(req, res, id, action, user) {
         sample: openOnList.slice(0, 8),
       },
       byAge: audienceByAge(people, skip),
+      predictedBounce: await predictedBounceRate(campaign.audience).catch(() => null),
     });
   }
 

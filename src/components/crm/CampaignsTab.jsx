@@ -981,9 +981,35 @@ function CampaignEditor({ campaign, counts, onSaved, onDone, onDeleted }) {
           An unsubscribe footer and one-click opt-out header are added automatically. Anyone who opts out is off every
           future list within seconds.
         </p>
-        <p style={{ margin: 0 }}>
+        <p style={{ margin: '0 0 10px' }}>
           Opens and clicks are tracked per person, so the report tells you who to ring — not just a percentage.
         </p>
+
+        {/* What this list did last time, applied to this one. The number that
+            was missing when it mattered: 890 emails in is an expensive place to
+            learn a list's bounce rate. */}
+        {exclusions?.predictedBounce && (
+          <div style={{
+            marginTop: 12, paddingTop: 12, borderTop: '1px solid ' + BRAND.border,
+            color: exclusions.predictedBounce.rate >= 2 ? '#B91C1C' : '#15803D',
+          }}>
+            <strong>Likely to bounce: about {exclusions.predictedBounce.rate.toFixed(1)}%</strong>
+            <span style={{ color: BRAND.muted }}>
+              {' '}(~{num(exclusions.predictedBounce.expectedBounces)} addresses), based on
+              {' '}{num(exclusions.predictedBounce.basedOn)} previously sent.
+              {exclusions.predictedBounce.rate >= 2
+                ? ' Anything over 2% damages the sending domain.'
+                : ' Comfortably inside the 2% limit.'}
+            </span>
+            {exclusions.predictedBounce.worst?.length > 0 && (
+              <div style={{ marginTop: 6, color: BRAND.muted }}>
+                Worst: {exclusions.predictedBounce.worst
+                  .map((w) => `${w.year} (${w.rate.toFixed(0)}% of ${num(w.people)})`)
+                  .join(', ')}. Leave those years out under “Leave someone out”.
+              </div>
+            )}
+          </div>
+        )}
       </aside>
 
       {excluding && (
