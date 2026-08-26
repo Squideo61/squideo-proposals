@@ -59,6 +59,66 @@ function StatusPill({ brief }) {
   );
 }
 
+// The brief, laid out so it can be read rather than decoded.
+//
+// renderBriefText() (api/_lib/brief/questions.js) emits a fixed shape, and the
+// same string goes into the quote request and the team email — so this parses
+// it here rather than the server sending HTML, keeping ONE rendering of a
+// brief across all three.
+//
+//   ── SCREEN TITLE ──
+//   The question
+//     the answer, indented
+//
+// Split on blank lines and take the first line of each block as the question,
+// the rest as the answer. That survives an answer containing its own newlines,
+// which indentation alone does not: a client who presses Enter mid-answer would
+// otherwise have half their paragraph rendered as bold questions.
+function BriefText({ text }) {
+  const blocks = String(text || '').split(/\n\s*\n/).filter((b) => b.trim());
+  return (
+    <div style={{
+      fontSize: 12.5, lineHeight: 1.55, color: BRAND.ink,
+      background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 8,
+      padding: '10px 12px', maxHeight: 340, overflowY: 'auto',
+    }}>
+      {blocks.map((block, i) => {
+        const heading = block.trim().match(/^──\s*(.+?)\s*──$/);
+        if (heading) {
+          return (
+            <div key={i} style={{
+              fontSize: 10.5, fontWeight: 800, letterSpacing: 0.5, textTransform: 'uppercase',
+              color: BRAND.muted, margin: i === 0 ? '0 0 8px' : '16px 0 8px',
+            }}>{heading[1]}</div>
+          );
+        }
+        const lines = block.split('\n');
+        // A block starting indented is the tail of an answer that had a blank
+        // line in it — not a new question, so don't embolden it into one.
+        const continuation = /^\s/.test(lines[0]);
+        const question = continuation ? null : lines[0].trim();
+        // Strip only the standard two-space answer indent. A script table nests
+        // its "[visual]" lines deeper on purpose, and dedenting those to the
+        // margin would lose which shot each one belongs to.
+        const answer = (continuation ? lines : lines.slice(1))
+          .map((l) => l.replace(/^ {1,2}/, ''))
+          .join('\n')
+          .trimEnd();
+        return (
+          <div key={i} style={{ margin: '0 0 10px' }}>
+            {question && (
+              <div style={{ fontWeight: 700, color: BRAND.ink }}>{question}</div>
+            )}
+            {answer && (
+              <div style={{ whiteSpace: 'pre-wrap', color: BRAND.ink }}>{answer}</div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // The same answer, on the COLLAPSED section header — because "is the brief in
 // yet, and how far?" is the question you open this card to settle, and having
 // to expand two levels to find out defeats a summary row.
@@ -165,11 +225,7 @@ function BriefRow({ brief, videos = [], onSetVideo, busy = false }) {
           )}
 
           {brief.text ? (
-            <div style={{
-              whiteSpace: 'pre-wrap', fontSize: 12.5, lineHeight: 1.55, color: BRAND.ink,
-              background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 8,
-              padding: '10px 12px', maxHeight: 340, overflowY: 'auto',
-            }}>{brief.text}</div>
+            <BriefText text={brief.text} />
           ) : (
             <div style={{ fontSize: 12.5, color: BRAND.muted, fontStyle: 'italic' }}>
               Started, but nothing answered yet.
@@ -266,7 +322,10 @@ export function ClientBriefBlock({ briefs = [], unfiled = [], videos = [], onAtt
         <ClipboardList size={12} />
         Client brief
         {briefs.length > 0 && <span style={{ opacity: 0.75 }}>· {briefs.length}</span>}
-        <span style={{ marginLeft: 'auto', textTransform: 'none', letterSpacing: 0 }}>
+        {/* Beside the label, not flung to the right margin: the state belongs
+            with the thing it describes, and across a wide card the eye has to
+            travel back to work out what a lone pill refers to. */}
+        <span style={{ marginLeft: 6, textTransform: 'none', letterSpacing: 0 }}>
           {/* An unfiled brief is the thing worth saying on a collapsed row: a
               draft you already know about is just progress, but a brief sitting
               on the company with no project named is one nobody has read. */}
