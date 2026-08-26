@@ -59,6 +59,27 @@ function StatusPill({ brief }) {
   );
 }
 
+// The same answer, on the COLLAPSED section header — because "is the brief in
+// yet, and how far?" is the question you open this card to settle, and having
+// to expand two levels to find out defeats a summary row.
+//
+// One brief (nearly always) shows its own pill verbatim, fraction included, so
+// the header says exactly what the row would. Several collapse to counts —
+// listing four pills side by side is noisier than the thing it summarises.
+function BriefSummary({ briefs = [] }) {
+  if (!briefs.length) return null;
+  if (briefs.length === 1) return <StatusPill brief={briefs[0]} />;
+
+  const counts = {};
+  for (const b of briefs) counts[b.status] = (counts[b.status] || 0) + 1;
+  const parts = ['completed', 'answered', 'part', 'empty']
+    .filter((k) => counts[k])
+    .map((k) => `${counts[k]} ${STATUS_PILL[k].label.toLowerCase()}`);
+  return (
+    <span style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted }}>{parts.join(' · ')}</span>
+  );
+}
+
 function BriefRow({ brief, videos = [], onSetVideo, busy = false }) {
   const [open, setOpen] = useState(false);
   const [showActivity, setShowActivity] = useState(false);
@@ -226,7 +247,6 @@ export function ClientBriefBlock({ briefs = [], unfiled = [], videos = [], onAtt
   const [open, setOpen] = useState(false);
   if (!briefs.length && !unfiled.length) return null;
 
-  const drafts = briefs.filter((b) => !b.locked).length;
 
   return (
     <div style={{ marginTop: 12, borderTop: '1px solid ' + BRAND.border, paddingTop: 4 }}>
@@ -254,9 +274,9 @@ export function ClientBriefBlock({ briefs = [], unfiled = [], videos = [], onAtt
             <span style={{ color: BRAND.blue, fontWeight: 700 }}>
               {unfiled.length} unfiled — could be this project
             </span>
-          ) : drafts > 0 ? (
-            <span style={{ color: '#B45309' }}>{drafts} still a draft</span>
-          ) : null}
+          ) : (
+            <BriefSummary briefs={briefs} />
+          )}
         </span>
       </button>
 
