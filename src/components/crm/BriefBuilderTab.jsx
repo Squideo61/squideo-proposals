@@ -67,6 +67,7 @@ export function BriefBuilderTab({ from, to, onOpenCompany }) {
   const [reload, setReload] = useState(0);
   const [filter, setFilter] = useState('all');
   const [openId, setOpenId] = useState(null);
+  const [busyId, setBusyId] = useState(null);
 
   useEffect(() => {
     setError(null);
@@ -79,12 +80,31 @@ export function BriefBuilderTab({ from, to, onOpenCompany }) {
       .catch((e) => setError(e.message));
   }, [from, to, reload]);
 
+  // Scrubbed briefs are returned so they can be put back, but they're behind
+  // their own filter — they're excluded from every number on this page, so
+  // listing them beside real leads would undo the point of scrubbing them.
   const rows = useMemo(() => {
     const all = data?.rows || [];
-    if (filter === 'all') return all;
-    if (filter === 'live') return all.filter((r) => r.status === 'in_progress' || r.status === 'complete');
-    return all.filter((r) => r.status === filter);
+    if (filter === 'scrubbed') return all.filter((r) => r.excluded);
+    const live = all.filter((r) => !r.excluded);
+    if (filter === 'all') return live;
+    if (filter === 'live') return live.filter((r) => r.status === 'in_progress' || r.status === 'complete');
+    return live.filter((r) => r.status === filter);
   }, [data, filter]);
+
+  // "This isn't a real lead" — reversible, and it moves the funnel above, so
+  // reload rather than patching the row in place.
+  const toggleExcluded = async (r) => {
+    setBusyId(r.id);
+    try {
+      await api.post(`/api/crm/analytics/brief/${encodeURIComponent(r.id)}`, { excluded: !r.excluded });
+      setReload((n) => n + 1);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   if (error) {
     return (
@@ -131,7 +151,7 @@ export function BriefBuilderTab({ from, to, onOpenCompany }) {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '26px 0 12px', flexWrap: 'wrap' }}>
         <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: BRAND.ink }}>
-          Briefs ({data.rows.length})
+          Briefs ({data.rows.filter((r) => !r.excluded).length})
         </h3>
         <div style={{ flex: 1 }} />
         {[
@@ -139,6 +159,9 @@ export function BriefBuilderTab({ from, to, onOpenCompany }) {
           ['live', 'Open'],
           ['submitted', 'Sent to us'],
           ['empty', 'Not started'],
+          // Only offered once there's something in it — an empty bin is a
+          // filter that always disappoints.
+          ...(data.excluded?.scrubbed ? [['scrubbed', `Scrubbed (${data.excluded.scrubbed})`]] : []),
         ].map(([key, label]) => (
           <button
             key={key}
@@ -199,6 +222,26 @@ export function BriefBuilderTab({ from, to, onOpenCompany }) {
             ),
           },
           { key: 'updatedAt', label: 'Last touched', render: (r) => <span style={{ color: BRAND.muted }}>{ago(r.updatedAt)}</span> },
+          {
+            key: 'scrub',
+            label: '',
+            render: (r) => (
+              <button
+                className="btn-ghost"
+                disabled={busyId === r.id}
+                title={r.excluded
+                  ? 'Count this brief in the numbers again'
+                  : 'Not a real lead — leave it out of these numbers'}
+                // The row itself opens the brief, so this must not bubble.
+                onClick={(e) => { e.stopPropagation(); toggleExcluded(r); }}
+                style={{ fontSize: 11.5, padding: '3px 9px', whiteSpace: 'nowrap' }}
+              >
+                {r.excluded
+                  ? 'Restore'
+                  : <><Ban size={12} style={{ verticalAlign: -2, marginRight: 4 }} />Scrub</>}
+              </button>
+            ),
+          },
         ]}
         rows={rows}
         onRowClick={(r) => setOpenId(r.id)}
@@ -206,6 +249,8 @@ export function BriefBuilderTab({ from, to, onOpenCompany }) {
           ? 'No briefs started in this period yet.'
           : 'Nothing in that filter.'}
       />
+
+      <ExcludedNote excluded={data.excluded} />
 
       <Questions questions={data.questions} started={f.started} />
 
@@ -485,6 +530,26 @@ function Questions({ questions, started }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// What this page deliberately left out. Without it, someone who knows a brief
+// exists sees it missing and reasonably assumes the report is broken — the
+// whole reason a filter should announce itself.
+function ExcludedNote({ excluded }) {
+  if (!excluded) return null;
+  const parts = [];
+  if (excluded.linkedToProject) {
+    parts.push(`${excluded.linkedToProject} on a project (read them on the deal)`);
+  }
+  if (excluded.internal) parts.push(`${excluded.internal} from our own accounts`);
+  if (excluded.demo) parts.push(`${excluded.demo} from the demo project`);
+  if (excluded.scrubbed) parts.push(`${excluded.scrubbed} scrubbed by hand`);
+  if (!parts.length) return null;
+  return (
+    <div style={{ marginTop: 10, fontSize: 12, color: BRAND.muted, lineHeight: 1.5 }}>
+      Not shown here: {parts.join(' · ')}. Only the project-linked ones still count in the figures above.
     </div>
   );
 }

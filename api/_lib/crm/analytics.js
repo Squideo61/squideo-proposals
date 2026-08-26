@@ -18,7 +18,7 @@ import { gscConfigured, runGscSync, runGscBackfill, searchReport } from './googl
 import { ga4Configured, runGa4Sync, trafficReport } from './googleAnalytics.js';
 import { getSyncStatus, recordSyncStatus } from './marketingSyncStatus.js';
 import { isSignedSale } from './signedSale.js';
-import { briefsReport, briefDetail } from './briefAnalytics.js';
+import { briefsReport, briefDetail, setBriefExcluded } from './briefAnalytics.js';
 
 // A "sale" uses the shared signed-sale definition (./signedSale.js): an actual
 // signature or a signed/paid stage, a real value, and not a historical import —
@@ -626,6 +626,15 @@ export async function analyticsRoute(req, res, id, action, user) {
       return res.status(200).json({ leadsFrom: v });
     }
     return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  // Scrubbing a brief out of the report (or putting it back) is a WRITE, so it
+  // sits ahead of the GET-only guard below — same shape as `settings` above.
+  if (id === 'brief' && action && req.method === 'POST') {
+    const excluded = req.body?.excluded !== false;
+    const ok = await setBriefExcluded(action, excluded, user?.email || null);
+    if (!ok) return res.status(404).json({ error: 'Brief not found' });
+    return res.status(200).json({ id: action, excluded });
   }
 
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });

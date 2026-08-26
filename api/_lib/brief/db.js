@@ -53,6 +53,15 @@ export function ensureClientBriefs() {
       await sql`ALTER TABLE client_briefs ADD COLUMN IF NOT EXISTS carried_from TEXT`;
       await sql`ALTER TABLE client_briefs ADD COLUMN IF NOT EXISTS carried JSONB`;
 
+      // Scrubbed from the Marketing report by a human. Our own accounts and the
+      // seeded demo are detected automatically; this is for the ones nothing can
+      // infer — a test run under a personal address, a throwaway "test" brief.
+      // Non-destructive and reversible: the brief is untouched and still
+      // readable, it just stops skewing the lead-magnet conversion rates.
+      // See db/migrations/20260826_brief_reporting_exclusions.sql.
+      await sql`ALTER TABLE client_briefs ADD COLUMN IF NOT EXISTS excluded_at TIMESTAMPTZ`;
+      await sql`ALTER TABLE client_briefs ADD COLUMN IF NOT EXISTS excluded_by TEXT`;
+
       // A brief belongs to the ORGANISATION now, so the old "one open draft per
       // person" rule is wrong — and dropping it is safe in a way that replacing
       // it wouldn't be: an org whose people each started a draft has several

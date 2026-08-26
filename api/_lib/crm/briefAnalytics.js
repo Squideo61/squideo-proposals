@@ -17,6 +17,8 @@
 import sql from '../db.js';
 import { ensureClientBriefs } from '../brief/db.js';
 import { ensureCourseEmails, BRIEF_SEQUENCE } from '../course/emails.js';
+import { internalPortalUserIds } from '../internalAccounts.js';
+import { demoScope } from './demoScope.js';
 import {
   SCREENS, ALL_QUESTIONS, briefProgress, renderBriefText, answerLabel,
 } from '../brief/questions.js';
@@ -65,6 +67,7 @@ export async function briefsReport({ fromDate, toExcl, fromStr, toStr }) {
   const rows = await sql`
     SELECT b.id, b.title, b.answers, b.created_at, b.updated_at, b.submitted_at,
            b.next_step, b.next_step_at, b.contributor_count, b.deal_id,
+           b.excluded_at,
            b.quote_request_id, b.portal_user_id, b.company_id,
            pu.name  AS user_name,
            pu.email AS user_email,
@@ -104,12 +107,65 @@ export async function briefsReport({ fromDate, toExcl, fromStr, toStr }) {
   // How many people arrived through the builder at all, whether or not they got
   // as far as opening a brief. The gap between this and `started` is the
   // signup-to-first-answer drop, which no other number here shows.
-  const [signupRow] = await sql`
-    SELECT COUNT(*)::int AS n
-      FROM course_signups
-     WHERE signup_source = 'brief'
-       AND created_at >= ${fromDate} AND created_at < ${toExcl}
-  `.catch(() => [{ n: 0 }]);
+  // Internal accounts are excluded here too. This is the top of the same funnel
+  // whose other end drops them, and a denominator counting our own test signups
+  // against a numerator that doesn't understates every rate below it.
+  const internalIds = new Set(await internalPortalUserIds().catch(() => []));
+  const internalList = [...internalIds];
+  // Two forms rather than one with an empty array: `<> ALL('{}')` needs a typed
+  // array to infer, and this query swallows its own errors — so a parameter the
+  // driver couldn't type would show as zero signups rather than as a failure.
+  // Same reason the nudge query above guards on `puids.length`.
+  const [signupRow] = await (internalList.length
+    ? sql`
+      SELECT COUNT(*)::int AS n
+        FROM course_signups
+       WHERE signup_source = 'brief'
+         AND created_at >= ${fromDate} AND created_at < ${toExcl}
+         AND (portal_user_id IS NULL OR portal_user_id <> ALL(${internalList}))`
+    : sql`
+      SELECT COUNT(*)::int AS n
+        FROM course_signups
+       WHERE signup_source = 'brief'
+         AND created_at >= ${fromDate} AND created_at < ${toExcl}`
+  ).catch(() => [{ n: 0 }]);
+
+  // ── who counts ─────────────────────────────────────────────────────────────
+  // This report measures a lead magnet, so it should only ever count strangers.
+  // Three things are not strangers, and each is dropped from the numbers AND the
+  // list — a test run left in is worse than a missing row, because it quietly
+  // moves every conversion rate on the page:
+  //
+  //   internal — our own accounts (the @squideo domains + portal_users.internal)
+  //   demo     — the seeded demo project, identified exactly as Finance does
+  //   scrubbed — a human said so, for the ones nothing can infer
+  //
+  // Best-effort on purpose: if either lookup fails, the report still renders
+  // with nothing excluded rather than 500ing over a filter.
+  const demo = await demoScope().catch(() => null);
+  const hiddenReason = (b) => {
+    if (b.excluded_at) return 'scrubbed';
+    if (b.portal_user_id && internalIds.has(b.portal_user_id)) return 'internal';
+    if (demo?.isDemo(b)) return 'demo';
+    return null;
+  };
+
+  const excluded = { internal: 0, demo: 0, scrubbed: 0, linkedToProject: 0 };
+  // leadRows = what the funnel is measured on. `shown` = what the list renders,
+  // which also carries the scrubbed ones, flagged. Internal and demo never
+  // appear at all — nobody needs to review those — but a scrubbed brief stays
+  // visible behind a filter, so a wrong call is one click to undo rather than a
+  // row that has vanished with no way back.
+  const leadRows = [];
+  const shown = [];
+  for (const b of rows) {
+    const reason = hiddenReason(b);
+    if (reason) excluded[reason] += 1;
+    if (reason === 'internal' || reason === 'demo') continue;
+    if (reason === 'scrubbed') { shown.push([b, true]); continue; }
+    leadRows.push(b);
+    shown.push([b, false]);
+  }
 
   // Per-question answer rates — the "mechanics" view. Which questions everyone
   // fills in, and which ones they leave blank or quit on.
@@ -121,26 +177,35 @@ export async function briefsReport({ fromDate, toExcl, fromStr, toStr }) {
   let pctSum = 0, finished = 0, submitted = 0, withDeal = 0, becameEnquiry = 0, touched = 0;
   const nextSteps = { call: 0, quote: 0, none: 0 };
 
-  for (const b of rows) {
+  for (const [b, scrubbed] of shown) {
     const answers = b.answers || {};
     const p = briefProgress(answers);
     const status = statusOf(b, p.pct);
 
-    pctSum += p.pct;
-    if (p.pct > 0) touched += 1;
-    if (p.pct >= 100) finished += 1;
-    if (b.submitted_at) submitted += 1;
-    if (b.deal_id) withDeal += 1;
-    if (b.quote_request_id) becameEnquiry += 1;
-    bandCount[BANDS.find((x) => x.test(p.pct)).key] += 1;
-    if (b.next_step === 'call') nextSteps.call += 1;
-    else if (b.next_step === 'quote') nextSteps.quote += 1;
-    else nextSteps.none += 1;
+    if (!scrubbed) {
+      pctSum += p.pct;
+      if (p.pct > 0) touched += 1;
+      if (p.pct >= 100) finished += 1;
+      if (b.submitted_at) submitted += 1;
+      if (b.deal_id) withDeal += 1;
+      if (b.quote_request_id) becameEnquiry += 1;
+      bandCount[BANDS.find((x) => x.test(p.pct)).key] += 1;
+      if (b.next_step === 'call') nextSteps.call += 1;
+      else if (b.next_step === 'quote') nextSteps.quote += 1;
+      else nextSteps.none += 1;
 
-    for (const q of counted) {
-      if (answeredCount.has(q.key) && !isBlank(answers[q.key])) {
-        answeredCount.set(q.key, answeredCount.get(q.key) + 1);
+      for (const q of counted) {
+        if (answeredCount.has(q.key) && !isBlank(answers[q.key])) {
+          answeredCount.set(q.key, answeredCount.get(q.key) + 1);
+        }
       }
+
+      // A brief attached to a deal still COUNTS above — "ended up attached to a
+      // deal" is the best outcome the magnet has, and dropping it from the
+      // funnel would hide the magnet's own best result. It just doesn't belong
+      // in this LIST, which is a queue of leads to work: that brief is
+      // production input, and the deal page's brief card is where it's read.
+      if (b.deal_id) { excluded.linkedToProject += 1; continue; }
     }
 
     const mine = nudgeByUser.get(b.portal_user_id) || [];
@@ -164,6 +229,7 @@ export async function briefsReport({ fromDate, toExcl, fromStr, toStr }) {
       dealId: b.deal_id || null,
       dealTitle: b.deal_title || null,
       quoteRequestId: b.quote_request_id || null,
+      excluded: scrubbed,
       nudgesSent: sentNudges.length,
       nudgesOpened: sentNudges.filter((n) => n.opened_at).length,
       nudgesQueued: mine.filter((n) => !n.sent_at && !n.cancelled_at).length,
@@ -177,14 +243,18 @@ export async function briefsReport({ fromDate, toExcl, fromStr, toStr }) {
     to: toStr,
     funnel: {
       signups: signupRow?.n || 0,
-      started: rows.length,
+      started: leadRows.length,
       touched,              // at least one question answered
       finished,             // every counted question answered
       submitted,            // sent to us — the moment it becomes a lead
       becameEnquiry,        // raised a quote request
       withDeal,             // ended up attached to a deal
-      avgPct: rows.length ? round1(pctSum / rows.length) : 0,
+      avgPct: leadRows.length ? round1(pctSum / leadRows.length) : 0,
     },
+    // What the numbers above deliberately leave out, so a missing row reads as
+    // a decision rather than a bug. linkedToProject is the odd one: those still
+    // count in the funnel and are only held back from the list.
+    excluded,
     bands: BANDS.map((b) => ({ key: b.key, label: b.label, count: bandCount[b.key] })),
     nextSteps,
     questions: counted.map((q) => ({
@@ -194,7 +264,7 @@ export async function briefsReport({ fromDate, toExcl, fromStr, toStr }) {
       screenTitle: q.screenTitle,
       required: !!q.required,
       answered: answeredCount.get(q.key) || 0,
-      pct: rows.length ? Math.round(((answeredCount.get(q.key) || 0) / rows.length) * 100) : 0,
+      pct: leadRows.length ? Math.round(((answeredCount.get(q.key) || 0) / leadRows.length) * 100) : 0,
     })),
     nudges: await nudgeSummary(fromDate, toExcl),
     rows: out,
@@ -268,6 +338,29 @@ async function nudgeSummary(fromDate, toExcl) {
 // Everything they typed, plus the sequence chasing them. The unanswered
 // questions are included rather than filtered out — the gaps are the point of
 // looking, and a list of only the answers hides where someone stopped.
+// Scrub one brief out of this report, or put it back.
+//
+// Deliberately a flag rather than a delete: the brief is real, the client may
+// still be in it, and the deal side reads the same row. Excluding only means
+// "don't count this as a lead" — the same thing portal_users.internal means for
+// an account, and reversible in one click for when a "test" turns out to be a
+// real person who typed the word test.
+//
+// Returns false when there's no such brief, so the route can 404 rather than
+// silently reporting success on a typo'd id.
+export async function setBriefExcluded(id, excluded, byEmail = null) {
+  await ensureClientBriefs();
+  const rows = await sql`
+    UPDATE client_briefs
+       SET excluded_at = ${excluded ? new Date().toISOString() : null},
+           excluded_by = ${excluded ? byEmail : null},
+           updated_at  = updated_at
+     WHERE id = ${id}
+     RETURNING id
+  `.catch((err) => { console.warn('[briefAnalytics] exclude failed', err.message); return []; });
+  return rows.length > 0;
+}
+
 export async function briefDetail(id) {
   await ensureClientBriefs();
 
