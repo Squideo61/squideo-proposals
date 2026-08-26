@@ -105,6 +105,35 @@ async function backfillFinanceTaxLinks(email) {
   return fixed;
 }
 
+// Both lead magnets notify on the same `course.signup` key, and both used to
+// link to Marketing → Video guide — so clicking a brief-builder signup opened a
+// page about the other magnet. New signups carry the right link; these are the
+// ones already sitting in a bell.
+//
+// Matched on the TITLE, because the key genuinely cannot tell the two magnets
+// apart and a video-guide signup SHOULD go to the Video guide tab. Keying off
+// `course.signup` alone would drag those to the wrong tab — the same bug in
+// reverse. Idempotent, and only ever touches rows still on the old link.
+const BRIEF_SIGNUP_LINK = '#/marketing/briefs';
+const isStaleBriefSignup = (it) => it.key === 'course.signup'
+  && typeof it.title === 'string'
+  && it.title.startsWith('Brief builder signup')
+  && (!it.link || it.link === '#/marketing/course');
+
+async function backfillBriefSignupLinks(email) {
+  const fixed = new Map();
+  try {
+    const rows = await sql`
+      UPDATE in_app_notifications SET link = ${BRIEF_SIGNUP_LINK}
+       WHERE user_email = ${email} AND notification_key = 'course.signup'
+         AND title LIKE 'Brief builder signup%'
+         AND (link IS NULL OR link = '#/marketing/course')
+       RETURNING id`;
+    for (const r of rows) fixed.set(String(r.id), BRIEF_SIGNUP_LINK);
+  } catch { /* ignore — never break the feed to repair a link */ }
+  return fixed;
+}
+
 const mapRow = (r) => ({
   id: String(r.id),
   key: r.notification_key,
@@ -184,6 +213,15 @@ export default async function handler(req, res) {
       // click without waiting for the next poll.
       if (finance.items.some((it) => FINANCE_LINK_UPGRADES[it.key] && (!it.link || it.link === '#/finance'))) {
         const fixed = await backfillFinanceTaxLinks(email);
+        if (fixed.size) {
+          finance.items = finance.items.map((it) => (fixed.has(it.id) ? { ...it, link: fixed.get(it.id) } : it));
+        }
+      }
+      // Same again for brief-builder signups still pointing at the Video guide
+      // tab (no-op once healed), patched into this response so the very next
+      // click lands correctly rather than the one after the next poll.
+      if (finance.items.some(isStaleBriefSignup)) {
+        const fixed = await backfillBriefSignupLinks(email);
         if (fixed.size) {
           finance.items = finance.items.map((it) => (fixed.has(it.id) ? { ...it, link: fixed.get(it.id) } : it));
         }
