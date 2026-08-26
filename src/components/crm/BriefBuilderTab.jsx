@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { api } from '../../api.js';
+import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
 import { ResponsiveTable, Modal } from '../ui.jsx';
 
@@ -62,6 +63,7 @@ const CLAMP_2 = {
 
 export function BriefBuilderTab({ from, to, onOpenCompany }) {
   const isMobile = useIsMobile();
+  const { actions, showMsg } = useStore();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [reload, setReload] = useState(0);
@@ -94,11 +96,28 @@ export function BriefBuilderTab({ from, to, onOpenCompany }) {
 
   // "This isn't a real lead" — reversible, and it moves the funnel above, so
   // reload rather than patching the row in place.
+  //
+  // Registered with the CRM-wide history, so scrubbing the wrong row is Ctrl+Z
+  // like any other mistake. The Scrubbed filter can always put one back, but
+  // that only helps someone who knows it's there — and the moment you need undo
+  // is the moment the row has just vanished from in front of you.
   const toggleExcluded = async (r) => {
+    const next = !r.excluded;
+    const set = (v) => api
+      .post(`/api/crm/analytics/brief/${encodeURIComponent(r.id)}`, { excluded: v })
+      .then(() => setReload((n) => n + 1));
+    const who = r.name || r.email || r.companyName || 'brief';
     setBusyId(r.id);
     try {
-      await api.post(`/api/crm/analytics/brief/${encodeURIComponent(r.id)}`, { excluded: !r.excluded });
-      setReload((n) => n + 1);
+      await set(next);
+      actions.recordUndo({
+        label: next ? `Scrub “${who}”` : `Restore “${who}”`,
+        undo: () => set(!next),
+        redo: () => set(next),
+      });
+      showMsg(next
+        ? `Scrubbed “${who}” — undo with Ctrl+Z, or the Scrubbed filter`
+        : `Restored “${who}”`);
     } catch (e) {
       setError(e.message);
     } finally {
