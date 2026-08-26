@@ -9,6 +9,44 @@ import { computeProposalTotalExVat } from '../_lib/crm/deals.js';
 import { voidInvoice } from '../_lib/xero.js';
 import { sendPortalWelcome } from '../_lib/portal/onboarding.js';
 
+// "£2,500" — whole pounds stay whole, because the pence on a quote are noise in
+// a notification, and a trailing ".00" on every one of them trains people to
+// stop reading the number.
+function formatMoneyGBP(n) {
+  // null/''/undefined must not become £0 — Number(null) is 0, and a proposal we
+  // couldn't price would otherwise announce a £0 sale to the whole team.
+  if (n == null || n === '') return null;
+  const v = Number(n);
+  if (!Number.isFinite(v)) return null;
+  return '£' + v.toLocaleString('en-GB', {
+    minimumFractionDigits: Number.isInteger(v) ? 0 : 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+// "£2,500 +VAT", or plain "£2,500" where the proposal charges no VAT. The value
+// passed in is always ex-VAT; the suffix says whether more is coming on top, so
+// nobody reads a net figure as the invoice total.
+function signedValueLabel(exVat, vatRate) {
+  const money = formatMoneyGBP(exVat);
+  if (!money) return null;
+  return Number(vatRate) > 0 ? `${money} +VAT` : money;
+}
+
+// A signing time a person can read. The raw ISO string was going out in the
+// push body ("...on 2026-08-26T14:12:02.400Z"), which is the machine's format,
+// not ours. Fixed to UK time — that's where the team reads it.
+function formatSignedWhen(iso) {
+  try {
+    return new Date(iso).toLocaleString('en-GB', {
+      day: 'numeric', month: 'short', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', timeZone: 'Europe/London',
+    });
+  } catch {
+    return iso;
+  }
+}
+
 // Allowlist of fields from `signatures.data` that the public client view
 // actually consumes (SignedBlock, ClientView post-sign branch, ThankYouView,
 // printProposal/Receipt, stripeCheckout). The full `data` JSONB is auth-only —
@@ -272,13 +310,28 @@ export default async function handler(req, res) {
       const proposal = proposals[0]?.data || {};
       const title = proposal.proposalTitle || proposal.clientName || id;
       const link = `${APP_URL}/?proposal=${id}`;
+      // The number everyone wants off a "signed" alert, and the one thing it
+      // didn't say. Ex-VAT, because that's the sale — with "+VAT" appended only
+      // where the proposal charges it, since a bare ex-VAT figure reads as the
+      // amount being invoiced, which it isn't.
+      const priceLabel = signedValueLabel(
+        computeProposalTotalExVat(proposal, rest),
+        Number(proposal.vatRate) || 0,
+      );
+      const headline = priceLabel ? `${title} — ${priceLabel}` : title;
       await sendNotification('proposal.signed', {
-        subject: `🎉 Signed: ${title}`,
+        subject: `🎉 Signed: ${headline}`,
         html: signedHtml({ proposal, signature: rest, signerName: name, signerEmail: email, signedAt, link }),
-        text: `${name || 'Someone'} (${email || ''}) signed "${title}" on ${signedAt}. ${link}`,
-        // Bell click deep-links to the deal/project page (in-app hash route,
-        // distinct from the absolute APP_URL link used in the email).
-        inApp: dealId ? { link: `#/deal/${dealId}` } : null,
+        text: `${name || 'Someone'} (${email || ''}) signed "${title}"${priceLabel ? ` for ${priceLabel}` : ''} on ${formatSignedWhen(signedAt)}. ${link}`,
+        // Spelled out rather than left to fall back to subject/text: this is the
+        // line a phone shows on the lock screen, and the fallback put a raw ISO
+        // timestamp in it. Bell click deep-links to the deal/project page
+        // (in-app hash route, distinct from the absolute APP_URL email link).
+        inApp: dealId ? {
+          title: `🎉 Signed: ${headline}`,
+          body: `${name || 'Someone'}${email ? ` · ${email}` : ''}`,
+          link: `#/deal/${dealId}`,
+        } : null,
       });
 
       if (email) {
