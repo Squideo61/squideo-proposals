@@ -81,11 +81,23 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal, on
   return (
     <div style={{ padding: isMobile ? '16px 12px' : '32px 24px' }}>
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
-        <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Production</button>
+        {/* Back goes UP one level — to the project this video belongs to, not
+            to the board. A video is one of a project's videos, and the board is
+            where you happened to come from at most once; from a deep link, or
+            from the project itself, "Production" was somewhere you had never
+            been. Falls back to whatever the caller passed if the video somehow
+            has no deal. */}
+        <button
+          onClick={() => (video.dealId && onOpenProject ? onOpenProject(video.dealId) : onBack())}
+          className="btn-ghost"
+          title={video.dealId ? 'Back to this video’s project' : 'Back'}
+        >
+          <ArrowLeft size={14} /> {video.dealId ? (video.projectTitle || 'Project') : 'Back'}
+        </button>
+        {/* The old "Open project" button lived here. Back now goes there and
+            says the project's name, so a second control to the same place was
+            just noise. */}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {onOpenProject && video.dealId && (
-            <button onClick={() => onOpenProject(video.dealId)} className="btn-ghost"><FolderOpen size={14} /> Open project</button>
-          )}
           <button onClick={sendStoryboard} className="btn-ghost">
             {video.storyboardId ? <><ExternalLink size={14} /> Storyboard Review Link</> : <><Send size={14} /> Storyboard review</>}
           </button>
