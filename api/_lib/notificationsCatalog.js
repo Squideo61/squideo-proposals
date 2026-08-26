@@ -165,16 +165,16 @@ export const NOTIFICATIONS = [
   {
     key: 'course.signup',
     label: 'Lead magnet signup',
-    description: 'Someone gives us their email address for a lead magnet — the Online Brief Builder or the 6-Min Video Guide. Defaults to the bell only (which is what raises a desktop/phone push) rather than email — a lead magnet is meant to be high volume, and an inbox copy of each one stops being read. Only reaches people who can open Marketing, since that is where it lands.',
+    description: 'Someone gives us their email address for a lead magnet — the Online Brief Builder or the 6-Min Video Guide — or starts a brief without finishing it. Admins only: a part-finished brief is a marketing signal, not a job, and it is high volume. The team hears about a brief when it is FINISHED, via "Client finalised a video brief".',
     audience: 'broadcast',
     group: 'Leads',
     channel: 'finance',
-    // A signup is a name and an email address and nothing else yet: the only
-    // thing to do with one is read it in Marketing → Brief builder. The default
-    // is inherited from quote_request.new, which put it in front of the whole
-    // sales-and-delivery team, so project managers were being pinged into a
-    // "you don't have access to this page" wall several times a day.
-    requiresPermission: 'marketing.access',
+    // Admins only ('*' is the admin role's whole permission set, so requiring
+    // it requires an admin). A signup is a name, an email address and a
+    // half-typed brief — there is nothing for the delivery team to do with one,
+    // and it lands in Marketing, which most of them cannot open. The default was
+    // inherited from quote_request.new, which put it in front of everybody.
+    requiresPermission: '*',
   },
   {
     key: 'portal.sample_project',

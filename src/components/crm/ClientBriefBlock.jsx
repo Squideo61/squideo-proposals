@@ -42,7 +42,18 @@ function BriefRow({ brief }) {
         }}
       >
         {open ? <ChevronDown size={13} color={BRAND.muted} /> : <ChevronRight size={13} color={BRAND.muted} />}
-        <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: BRAND.ink }}>
+        {/* One line, always. A brief's title is whatever the client typed as
+            the project name, and people paste a whole script in there — which
+            would push the FINAL pill and the progress count off a row that is
+            meant to be the collapsed summary. The full text is in the answers
+            below, one click away. */}
+        <span
+          title={brief.title || ''}
+          style={{
+            flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: BRAND.ink,
+            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          }}
+        >
           {brief.title}
         </span>
         {brief.locked ? (

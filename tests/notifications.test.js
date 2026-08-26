@@ -103,21 +103,24 @@ describe('resolveRecipients — broadcast', () => {
     expect(out).toEqual([]);
   });
 
-  // A broadcast that names a permission only reaches people who can open where
-  // it points. Lead-magnet signups land in Marketing, so a project manager was
-  // being pinged several times a day into "you don't have access to this page".
+  // A broadcast that names a permission only reaches people who hold it. A
+  // part-finished brief is a marketing signal and high volume, so it goes to
+  // admins alone — the delivery team hears about a brief when it is FINISHED.
   it('drops subscribers who lack the permission a broadcast requires', async () => {
     setSqlHandler(() => [
+      { email: 'admin@example.com', enabled: true, role_permissions: ['*'] },
       { email: 'marketing@example.com', enabled: true, role_permissions: ['marketing.access'] },
       { email: 'pm@example.com', enabled: true, role_permissions: ['portal.manage', 'production.access'] },
     ]);
     const out = await resolveRecipients('course.signup', {});
-    expect(out).toEqual(['marketing@example.com']);
+    expect(out).toEqual(['admin@example.com']);
   });
 
-  it('lets the admin wildcard through a permission-gated broadcast', async () => {
-    setSqlHandler(() => [{ email: 'admin@example.com', enabled: true, role_permissions: ['*'] }]);
-    expect(await resolveRecipients('course.signup', {})).toEqual(['admin@example.com']);
+  // Being subscribed is not enough on a gated broadcast — the permission is
+  // checked on top of the pref, not instead of it.
+  it('still requires the pref to be on for an admin', async () => {
+    setSqlHandler(() => [{ email: 'admin@example.com', enabled: false, role_permissions: ['*'] }]);
+    expect(await resolveRecipients('course.signup', {})).toEqual([]);
   });
 
   it('drops a subscriber with no role at all from a gated broadcast', async () => {

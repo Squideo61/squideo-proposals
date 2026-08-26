@@ -38,6 +38,28 @@ const ago = (d) => {
 };
 const pctText = (v) => (v == null ? '—' : `${Number(v).toFixed(1)}%`);
 
+// A brief's "title" is whatever the client typed as the project name, and
+// people paste an entire script into that box. Left alone it turns one table
+// row into a full page of text — burying every other row, and defeating the
+// point of a row, which is to summarise. The full text is never lost: it's the
+// project-name answer, listed under "What they've written" when you open it.
+const TITLE_MAX = 110;
+const shortTitle = (t, max = TITLE_MAX) => {
+  const s = typeof t === 'string' ? t.replace(/\s+/g, ' ').trim() : '';
+  if (!s) return 'Untitled brief';
+  return s.length > max ? `${s.slice(0, max).trimEnd()}…` : s;
+};
+
+// Belt and braces with shortTitle: the string is cut so the layout can't blow
+// up, and the box is clamped so a cut string still can't wrap past two lines.
+const CLAMP_2 = {
+  display: '-webkit-box',
+  WebkitLineClamp: 2,
+  WebkitBoxOrient: 'vertical',
+  overflow: 'hidden',
+  overflowWrap: 'anywhere',
+};
+
 export function BriefBuilderTab({ from, to, onOpenCompany }) {
   const isMobile = useIsMobile();
   const [data, setData] = useState(null);
@@ -150,8 +172,10 @@ export function BriefBuilderTab({ from, to, onOpenCompany }) {
             key: 'title',
             label: 'Brief',
             render: (r) => (
-              <div>
-                <div style={{ color: BRAND.ink }}>{r.title}</div>
+              <div style={{ maxWidth: 360 }}>
+                <div style={{ color: BRAND.ink, ...CLAMP_2 }} title={r.title || ''}>
+                  {shortTitle(r.title)}
+                </div>
                 {r.contributors > 1 && (
                   <div style={{ fontSize: 11.5, color: BRAND.muted }}>{r.contributors} people</div>
                 )}
@@ -210,8 +234,12 @@ function BriefDetail({ id, onClose, onOpenCompany }) {
         <div style={{ padding: 24, color: BRAND.muted }}>Loading…</div>
       ) : (
         <div style={{ padding: 4 }}>
-          <h2 style={{ margin: '0 0 4px', fontSize: 19, fontWeight: 700, color: BRAND.ink, paddingRight: 30 }}>
-            {b.title}
+          {/* Clamped here too. A heading made of someone's entire pasted script
+              pushes everything worth reading — progress, the deal link, the
+              answers themselves — below the fold of the modal. */}
+          <h2 style={{ margin: '0 0 4px', fontSize: 19, fontWeight: 700, color: BRAND.ink, paddingRight: 30, ...CLAMP_2 }}
+              title={b.title || ''}>
+            {shortTitle(b.title, 160)}
           </h2>
           <div style={{ fontSize: 13, color: BRAND.muted, marginBottom: 14 }}>
             {b.name || b.email}

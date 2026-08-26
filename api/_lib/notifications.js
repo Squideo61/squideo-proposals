@@ -184,6 +184,8 @@ async function _resolveWithChannel(key, opts = {}) {
 // ignore the bell. Only broadcasts are filtered: owner and assignee audiences
 // are addressed to a specific person for a reason, and silently dropping one is
 // worse than a dead-end link.
+// '*' is a valid value and means "admins only" — the wildcard IS the admin
+// role's entire permission set, so requiring it requires an admin.
 function canActOn(meta, rolePermissions) {
   if (!meta?.requiresPermission) return true;
   return permissionsInclude(rolePermissions, meta.requiresPermission);
