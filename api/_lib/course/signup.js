@@ -53,7 +53,14 @@ const SIGNUP_SOURCES = {
     invitedBy: 'system:course',
     consentSource: 'course_landing',
     tag: { slug: 'course-signup', label: 'Course signup', colour: '#2BB8E6' },
-    notify: { emoji: '🎓', noun: 'Video guide signup', verb: 'signed up for the 6-Min Video Guide' },
+    notify: {
+      emoji: '🎓',
+      noun: 'Video guide signup',
+      verb: 'signed up for the 6-Min Video Guide',
+      // Each magnet reports on its own Marketing tab. Both used to point at the
+      // course tab, so a brief signup opened a page about the other magnet.
+      link: '#/marketing/course',
+    },
   },
   brief: {
     companySource: 'brief',
@@ -61,7 +68,12 @@ const SIGNUP_SOURCES = {
     invitedBy: 'system:brief',
     consentSource: 'brief_landing',
     tag: { slug: 'brief-signup', label: 'Brief builder', colour: '#7C5CD1' },
-    notify: { emoji: '📝', noun: 'Brief builder signup', verb: 'started a video brief' },
+    notify: {
+      emoji: '📝',
+      noun: 'Brief builder signup',
+      verb: 'started a video brief',
+      link: '#/marketing/briefs',
+    },
   },
 };
 
@@ -309,7 +321,7 @@ async function notifyNewSignup({ signupId, email, name, companyName, attr, cfg }
         title: `${cfg.notify.noun} — ${who}`,
         // Kept short: this is the line a phone shows on the lock screen.
         body: [companyName, where].filter(Boolean).join(' · ') || email,
-        link: '#/marketing/course',
+        link: cfg.notify.link || '#/marketing/course',
       },
     });
   } catch (err) {

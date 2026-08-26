@@ -20,6 +20,7 @@ import sql from './db.js';
 import { sendMail } from './email.js';
 import { sendWebPush } from './push.js';
 import { NOTIFICATIONS, isValidNotificationKey, getNotificationMeta } from './notificationsCatalog.js';
+import { permissionsInclude } from './permissions.js';
 
 export { NOTIFICATIONS, isValidNotificationKey, getNotificationMeta };
 
@@ -155,7 +156,7 @@ async function _resolveWithChannel(key, opts = {}) {
   // external contractor who only ever hears about their own assigned work
   // (the owner/assignee audiences), never team broadcasts.
   const rows = await sql`
-    SELECT u.email,
+    SELECT u.email, r.permissions AS role_permissions,
            COALESCE(o.enabled, (r.notification_defaults->>${key})::boolean, false) AS enabled,
            COALESCE(o.channel, r.notification_channel_defaults->>${key}, 'both') AS channel
       FROM users u
@@ -168,12 +169,24 @@ async function _resolveWithChannel(key, opts = {}) {
   const seen = new Set();
   for (const row of rows) {
     if (!row.enabled) continue;
+    if (!canActOn(meta, row.role_permissions)) continue;
     const e = String(row.email).toLowerCase();
     if (exclude.has(e) || seen.has(e)) continue;
     seen.add(e);
     out.push({ email: e, channel: normChannel(row.channel) });
   }
   return out;
+}
+
+// A broadcast can name the permission its destination needs. Without one, a
+// notification lands on people whose only possible next move is to click it and
+// be told they don't have access to this page — which teaches the whole team to
+// ignore the bell. Only broadcasts are filtered: owner and assignee audiences
+// are addressed to a specific person for a reason, and silently dropping one is
+// worse than a dead-end link.
+function canActOn(meta, rolePermissions) {
+  if (!meta?.requiresPermission) return true;
+  return permissionsInclude(rolePermissions, meta.requiresPermission);
 }
 
 // Original enabled-only resolution (no channel columns). Used as the safety-net
@@ -199,7 +212,8 @@ async function _resolveLegacy(key, opts = {}) {
     return Array.from(new Set(filtered));
   }
   const rows = await sql`
-    SELECT u.email, COALESCE(o.enabled, (r.notification_defaults->>${key})::boolean, false) AS enabled
+    SELECT u.email, r.permissions AS role_permissions,
+           COALESCE(o.enabled, (r.notification_defaults->>${key})::boolean, false) AS enabled
       FROM users u
       LEFT JOIN roles r ON r.id = u.role
       LEFT JOIN user_notification_overrides o ON o.user_email = u.email AND o.notification_key = ${key}
@@ -207,6 +221,10 @@ async function _resolveLegacy(key, opts = {}) {
   const out = [];
   for (const row of rows) {
     if (!row.enabled) continue;
+    // Mirrors the main resolver — this is the fallback path when the channel
+    // columns are missing, and it must not become a way to receive a broadcast
+    // the permission filter was meant to stop.
+    if (!canActOn(meta, row.role_permissions)) continue;
     const e = String(row.email).toLowerCase();
     if (exclude.has(e)) continue;
     out.push(e);

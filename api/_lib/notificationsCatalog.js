@@ -164,11 +164,17 @@ export const NOTIFICATIONS = [
   },
   {
     key: 'course.signup',
-    label: 'Video guide signup',
-    description: 'Someone gives us their email address for the 6-Min Video Guide. Defaults to the bell only (which is what raises a desktop/phone push) rather than email — a lead magnet is meant to be high volume, and an inbox copy of each one stops being read.',
+    label: 'Lead magnet signup',
+    description: 'Someone gives us their email address for a lead magnet — the Online Brief Builder or the 6-Min Video Guide. Defaults to the bell only (which is what raises a desktop/phone push) rather than email — a lead magnet is meant to be high volume, and an inbox copy of each one stops being read. Only reaches people who can open Marketing, since that is where it lands.',
     audience: 'broadcast',
     group: 'Leads',
     channel: 'finance',
+    // A signup is a name and an email address and nothing else yet: the only
+    // thing to do with one is read it in Marketing → Brief builder. The default
+    // is inherited from quote_request.new, which put it in front of the whole
+    // sales-and-delivery team, so project managers were being pinged into a
+    // "you don't have access to this page" wall several times a day.
+    requiresPermission: 'marketing.access',
   },
   {
     key: 'portal.sample_project',

@@ -15,6 +15,7 @@ import {
   isValidNotificationKey,
   getNotificationMeta,
 } from '../api/_lib/notificationsCatalog.js';
+import { isValidPermission } from '../api/_lib/permissions.js';
 import {
   resolveRecipients,
   isEnabledForUser,
@@ -43,6 +44,18 @@ describe('NOTIFICATIONS catalog', () => {
       expect(n.label).toBeTruthy();
       expect(n.description).toBeTruthy();
       expect(n.group).toBeTruthy();
+    }
+  });
+
+  // A typo here fails silently and expensively: an unknown slug matches nobody,
+  // so the notification simply stops arriving for the whole team with no error.
+  it('every requiresPermission names a real permission slug', () => {
+    for (const n of NOTIFICATIONS) {
+      if (!n.requiresPermission) continue;
+      expect(isValidPermission(n.requiresPermission), `${n.key} → ${n.requiresPermission}`).toBe(true);
+      // Only a broadcast is filtered — gating a directed alert would silently
+      // drop a message addressed to one person on purpose.
+      expect(n.audience, `${n.key} is gated but not a broadcast`).toBe('broadcast');
     }
   });
 });
@@ -88,6 +101,35 @@ describe('resolveRecipients — broadcast', () => {
   it('returns empty for unknown notification key', async () => {
     const out = await resolveRecipients('not.a.real.key', {});
     expect(out).toEqual([]);
+  });
+
+  // A broadcast that names a permission only reaches people who can open where
+  // it points. Lead-magnet signups land in Marketing, so a project manager was
+  // being pinged several times a day into "you don't have access to this page".
+  it('drops subscribers who lack the permission a broadcast requires', async () => {
+    setSqlHandler(() => [
+      { email: 'marketing@example.com', enabled: true, role_permissions: ['marketing.access'] },
+      { email: 'pm@example.com', enabled: true, role_permissions: ['portal.manage', 'production.access'] },
+    ]);
+    const out = await resolveRecipients('course.signup', {});
+    expect(out).toEqual(['marketing@example.com']);
+  });
+
+  it('lets the admin wildcard through a permission-gated broadcast', async () => {
+    setSqlHandler(() => [{ email: 'admin@example.com', enabled: true, role_permissions: ['*'] }]);
+    expect(await resolveRecipients('course.signup', {})).toEqual(['admin@example.com']);
+  });
+
+  it('drops a subscriber with no role at all from a gated broadcast', async () => {
+    setSqlHandler(() => [{ email: 'nobody@example.com', enabled: true, role_permissions: null }]);
+    expect(await resolveRecipients('course.signup', {})).toEqual([]);
+  });
+
+  // The rows above carry no role_permissions, which is exactly the point: a
+  // notification that names no permission must not start filtering anyone.
+  it('leaves an ungated broadcast alone', async () => {
+    setSqlHandler(() => [{ email: 'anyone@example.com', enabled: true }]);
+    expect(await resolveRecipients('proposal.signed', {})).toEqual(['anyone@example.com']);
   });
 });
 
