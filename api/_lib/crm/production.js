@@ -30,6 +30,7 @@ import { isValidStage } from '../dealStage.js';
 import { isValidProductionStage, isValidVideoStatus, isValidPaymentTerms, isValidMilestone, VIDEO_MILESTONE_BY_ID, stageOrderIndex, previewKindForStage, FIRST_PRODUCTION } from '../productionStages.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
+import { briefsForDeal } from '../brief/dealBriefs.js';
 import { archiveRecord } from './recycleBin.js';
 import { getDealCreditProject } from './retainers.js';
 import { isFreelancer, userOnDeal, userOnVideo } from './access.js';
@@ -455,6 +456,16 @@ async function moveVideo(req, res, videoId, user) {
 // video. Only used on the single-video paths (the board list stays lean).
 async function withVideoExtras(video) {
   await ensureClientSubmitColumns();
+
+  // The client's own brief for THIS video. Same resolution the deal page uses,
+  // so a brief that reads "Video 1" over there turns up here — see
+  // api/_lib/brief/dealBriefs.js. Best-effort: a producer opening a video must
+  // not be blocked by the brief tables.
+  video.clientBriefs = video.dealId
+    ? await briefsForDeal(video.dealId)
+        .then(({ briefs }) => briefs.filter((b) => b.videoId === video.id))
+        .catch(() => [])
+    : [];
   const [milestones, assets] = await Promise.all([
     sql`SELECT milestone, approved_at, approved_by FROM video_milestones WHERE video_id = ${video.id}`,
     sql`SELECT id, milestone, filename, mime_type, size_bytes, blob_url, web_view_link, uploaded_by, created_at

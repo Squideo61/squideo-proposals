@@ -35,6 +35,7 @@ import { isFinalReleaseUnlocked } from '../_lib/crm/delivery.js';
 import { computePortalOffers } from '../_lib/portal/extrasOffers.js';
 import { ensureClientBriefs } from '../_lib/brief/db.js';
 import { briefProgress, renderBriefText } from '../_lib/brief/questions.js';
+import { briefsForDeal, setBriefVideo } from '../_lib/brief/dealBriefs.js';
 import { loadBriefActivity, recordBriefEvents } from '../_lib/brief/collab.js';
 import { ensureProductionSchema } from '../_lib/production.js';
 import { logStaffActivity } from '../_lib/crm/staffActivity.js';
@@ -490,31 +491,9 @@ export default async function handler(req, res) {
         // on that project is exactly who should be reading it — including while
         // it is still a draft, which is when a wrong assumption is cheap to fix.
         await ensureClientBriefs();
-        const briefRows = await sql`
-          SELECT b.id, b.title, b.answers, b.completed_at, b.submitted_at, b.updated_at,
-                 b.contributor_count, b.reopened_at,
-                 pu.name AS submitted_by_name, pu.email AS submitted_by_email
-            FROM client_briefs b
-            LEFT JOIN portal_users pu ON pu.id = b.submitted_by
-           WHERE b.deal_id = ${dealId}
-           ORDER BY (b.submitted_at IS NULL) DESC, b.updated_at DESC
-        `.catch(() => []);
-        const briefs = await Promise.all(briefRows.map(async (b) => ({
-          id: b.id,
-          title: b.title || (b.answers || {}).projectName || 'Video brief',
-          locked: !!b.submitted_at,
-          submittedAt: b.submitted_at || null,
-          submittedBy: b.submitted_by_name || b.submitted_by_email || null,
-          reopenedAt: b.reopened_at || null,
-          updatedAt: b.updated_at || null,
-          contributors: Math.max(1, Number(b.contributor_count) || 1),
-          // Rendered server-side by the same function that writes the quote
-          // request, so what the team reads here is what they would have read
-          // in the enquiry — one document, one rendering.
-          text: renderBriefText(b.answers || {}),
-          activity: await loadBriefActivity(b.id, 12),
-          ...briefProgress(b.answers || {}),
-        })));
+        // Shared with the video page so the two can't disagree about which
+        // video a brief is for — see api/_lib/brief/dealBriefs.js.
+        const { briefs, videos: briefVideos } = await briefsForDeal(dealId, { withActivity: true });
 
         // Briefs this COMPANY has written that name no project. Every brief that
         // predates briefs-know-their-job is one of these, and the migration
@@ -556,6 +535,7 @@ export default async function handler(req, res) {
           })),
           derived,
           briefs,
+          briefVideos,
           unfiledBriefs,
         });
       }
@@ -997,6 +977,18 @@ export default async function handler(req, res) {
       await recordBriefEvents(briefId,
         { portalUserId: null, staffEmail: user.email, name: 'Squideo' },
         [{ eventKey: 'brief.attached', after: deal.title || 'a project' }]);
+      return res.status(200).json({ ok: true });
+    }
+
+    // Which video on the deal this brief describes. Null clears the choice and
+    // sends it back to the default (the deal's first video). setBriefVideo
+    // refuses a video from another deal, so this can't file one client's brief
+    // against another project.
+    if (op === 'brief-video') {
+      const briefId = trimOrNull(body.briefId);
+      if (!briefId) return res.status(400).json({ error: 'briefId is required' });
+      const ok = await setBriefVideo(briefId, trimOrNull(body.videoId));
+      if (!ok) return res.status(404).json({ error: 'Brief or video not found on this project' });
       return res.status(200).json({ ok: true });
     }
 

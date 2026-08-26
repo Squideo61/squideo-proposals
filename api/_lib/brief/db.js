@@ -62,6 +62,12 @@ export function ensureClientBriefs() {
       await sql`ALTER TABLE client_briefs ADD COLUMN IF NOT EXISTS excluded_at TIMESTAMPTZ`;
       await sql`ALTER TABLE client_briefs ADD COLUMN IF NOT EXISTS excluded_by TEXT`;
 
+      // Which VIDEO the brief is for. A deal can carry several, and a brief
+      // that names only the deal makes the team guess. Unset resolves to the
+      // deal's first video — see dealBriefVideos() in ./dealBriefs.js and
+      // db/migrations/20260826_brief_video.sql.
+      await sql`ALTER TABLE client_briefs ADD COLUMN IF NOT EXISTS video_id TEXT`;
+
       // A brief belongs to the ORGANISATION now, so the old "one open draft per
       // person" rule is wrong — and dropping it is safe in a way that replacing
       // it wouldn't be: an org whose people each started a draft has several

@@ -20,12 +20,46 @@
 // /api/crm/portal-admin?dealId=…, which the Client portal card already loads.
 import React, { useState } from 'react';
 import {
-  ClipboardList, ChevronDown, ChevronRight, Lock, Users, History, Link2,
+  ClipboardList, ChevronDown, ChevronRight, Lock, Users, History, Link2, Clapperboard,
 } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { formatRelativeTime } from '../../utils.js';
 
-function BriefRow({ brief }) {
+// How far through, at a glance. "22/25" is precise and unreadable — what you
+// need off a collapsed row is whether this is finished enough to work from, so
+// the fraction stays but only as detail behind a word.
+const STATUS_PILL = {
+  completed: { label: 'Completed',     bg: '#F0FDF4', border: '#BBF7D0', ink: '#15803D' },
+  answered:  { label: 'All answered',  bg: '#EFF6FF', border: '#BFDBFE', ink: '#1D4ED8' },
+  part:      { label: 'Part completed', bg: '#FFF8EB', border: '#F5C26B', ink: '#B45309' },
+  empty:     { label: 'Not started',   bg: '#F1F5F9', border: BRAND.border, ink: BRAND.muted },
+};
+
+function StatusPill({ brief }) {
+  const s = STATUS_PILL[brief.status] || STATUS_PILL.empty;
+  // The fraction earns its place only mid-way through; on a finished brief it
+  // just repeats the word, and on an empty one it reads as 0 of something.
+  const detail = brief.status === 'part' ? ` · ${brief.done}/${brief.total}` : '';
+  return (
+    <span
+      title={brief.status === 'completed'
+        ? 'The client finalised and sent this brief'
+        : brief.status === 'answered'
+          ? 'Every question answered, but the client hasn’t sent it yet'
+          : `${brief.done} of ${brief.total} questions answered`}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px',
+        borderRadius: 999, background: s.bg, border: `1px solid ${s.border}`,
+        fontSize: 10.5, fontWeight: 800, color: s.ink, letterSpacing: 0.2, whiteSpace: 'nowrap',
+      }}
+    >
+      {brief.status === 'completed' && <Lock size={9} />}
+      {s.label}{detail}
+    </span>
+  );
+}
+
+function BriefRow({ brief, videos = [], onSetVideo, busy = false }) {
   const [open, setOpen] = useState(false);
   const [showActivity, setShowActivity] = useState(false);
 
@@ -56,15 +90,23 @@ function BriefRow({ brief }) {
         >
           {brief.title}
         </span>
-        {brief.locked ? (
-          <span style={{
-            display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 7px',
-            borderRadius: 999, background: '#F0FDF4', border: '1px solid #BBF7D0',
-            fontSize: 10, fontWeight: 800, color: '#15803D', letterSpacing: 0.3,
-          }}><Lock size={9} /> FINAL</span>
-        ) : (
-          <span style={{ fontSize: 11.5, color: BRAND.muted }}>{brief.done}/{brief.total}</span>
+        {/* Which video this brief describes. A single-video project shows it
+            too — it costs a few characters and removes the question. */}
+        {brief.videoTitle && (
+          <span
+            title={brief.videoAssumed
+              ? 'Nobody has said which video this brief is for, so it’s shown against the first one'
+              : `This brief is for ${brief.videoTitle}`}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11,
+              color: BRAND.muted, whiteSpace: 'nowrap', fontWeight: 600,
+            }}
+          >
+            <Clapperboard size={11} />
+            {brief.videoTitle}{brief.videoAssumed ? '?' : ''}
+          </span>
         )}
+        <StatusPill brief={brief} />
         {brief.contributors > 1 && (
           <span style={{ fontSize: 11.5, color: BRAND.muted, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
             <Users size={11} />{brief.contributors}
@@ -80,6 +122,26 @@ function BriefRow({ brief }) {
               : `Still a draft — last edited ${formatRelativeTime(brief.updatedAt)}. This may still change.`}
             {brief.reopenedAt && ' · reopened by Squideo'}
           </div>
+
+          {/* Which video it's for. Only offered when there's a choice to make —
+              on a single-video project the label above already says it, and a
+              dropdown with one option is a question with one answer. */}
+          {onSetVideo && videos.length > 1 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 8, fontSize: 11.5 }}>
+              <Clapperboard size={12} color={BRAND.muted} />
+              <span style={{ color: BRAND.muted }}>This brief is for</span>
+              <select
+                className="input"
+                disabled={busy}
+                value={brief.videoAssumed ? '' : (brief.videoId || '')}
+                onChange={(e) => onSetVideo(brief, e.target.value || null)}
+                style={{ fontSize: 11.5, padding: '2px 6px', width: 'auto' }}
+              >
+                <option value="">Not said — assuming {videos[0]?.title}</option>
+                {videos.map((v) => <option key={v.id} value={v.id}>{v.title}</option>)}
+              </select>
+            </div>
+          )}
 
           {brief.text ? (
             <div style={{
@@ -160,7 +222,7 @@ function UnfiledRow({ brief, onAttach, busy }) {
   );
 }
 
-export function ClientBriefBlock({ briefs = [], unfiled = [], onAttach, busy = false }) {
+export function ClientBriefBlock({ briefs = [], unfiled = [], videos = [], onAttach, onSetVideo, busy = false }) {
   const [open, setOpen] = useState(false);
   if (!briefs.length && !unfiled.length) return null;
 
@@ -200,7 +262,9 @@ export function ClientBriefBlock({ briefs = [], unfiled = [], onAttach, busy = f
 
       {open && (
         <>
-          {briefs.map((b) => <BriefRow key={b.id} brief={b} />)}
+          {briefs.map((b) => (
+            <BriefRow key={b.id} brief={b} videos={videos} onSetVideo={onSetVideo} busy={busy} />
+          ))}
 
           {/* Filing a stray brief onto this deal is a WRITE, so the whole
               section depends on being handed a handler. A read-only viewer

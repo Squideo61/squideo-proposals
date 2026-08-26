@@ -638,6 +638,14 @@ export function PortalDealCard({ dealId, dealTitle = null }) {
           <ClientBriefBlock
             briefs={data.briefs || []}
             unfiled={data.unfiledBriefs || []}
+            videos={data.briefVideos || []}
+            // Saying which video a brief describes is a portal-admin write, so
+            // it's gated with the rest of them — a reader still sees the video
+            // the brief resolves to, just can't change it.
+            onSetVideo={canManage ? (b, videoId) => run(
+              () => api.post('/api/crm/portal-admin?op=brief-video', { briefId: b.id, videoId }),
+              videoId ? 'Brief filed against that video' : 'Back to the default video',
+            ) : null}
             busy={busy}
             onAttach={canManage ? (b) => run(
               () => api.post('/api/crm/portal-admin?op=brief-attach', { briefId: b.id, dealId }),

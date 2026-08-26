@@ -15,6 +15,7 @@ import { DealConversation } from './DealConversation.jsx';
 import { AssigneePicker } from './TaskFormModal.jsx';
 import { PdfPage } from '../storyboard/PdfPage.jsx';
 import ReviewEmailComposer from './ReviewEmailComposer.jsx';
+import { ClientBriefBlock } from './ClientBriefBlock.jsx';
 
 const sectionCard = {
   background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 20, marginTop: 18,
@@ -220,6 +221,15 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal, on
             <ScheduleCard video={video} onOpen={() => setShowSchedule(true)} />
           </div>
           <MilestonesCard video={video} videoId={videoId} onOpenReview={onOpenReview} onOpenStoryboardReview={onOpenStoryboardReview} />
+          {/* The client's own brief for THIS video — the same block the deal
+              page shows, so the two read identically. Read-only here: which
+              video a brief belongs to is decided on the deal, where you can see
+              all of them at once. */}
+          {video.clientBriefs?.length > 0 && (
+            <div style={{ ...sectionCard, paddingTop: 8 }}>
+              <ClientBriefBlock briefs={video.clientBriefs} />
+            </div>
+          )}
           {/* Emails + Comments sit side-by-side, full width, growing with their
               content — so the team can read a long comment thread without the
               cramped scroll the old right-column panel forced.
