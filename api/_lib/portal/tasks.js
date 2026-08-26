@@ -56,21 +56,39 @@ const TASK_PRODUCERS = [
   // they've asked us to write it. Never locks — they can send a new version at
   // any point. 'refining' is the middle ground: they gave us a draft and want a
   // hand polishing it, so it outranks the plain "we've got it" wording.
+  //
+  // The TITLE changes with the route, not just the detail line. A settled step
+  // renders as a green tick on both surfaces (the client's task card and the
+  // CRM "steps completed" checklist, which reuses this title as its label) —
+  // and a tick against "Send us your script" reads as "the client sent us a
+  // script" even when the truth is the opposite and we're the ones writing it.
+  // Saying which route it went down is the whole point of the step once it's
+  // no longer a to-do.
   ({ deal, scriptStatus, scriptFileCount = 0 }) => {
     const uploaded = scriptFileCount > 0;
     const done = uploaded || scriptStatus === 'received' || scriptStatus === 'refining' || scriptStatus === 'squideo';
+    // 'squideo' means they asked US to write it — but an upload trumps it,
+    // since a file in hand is the thing we'd actually work from.
+    const oursToWrite = scriptStatus === 'squideo' && !uploaded;
     const detail = scriptStatus === 'refining'
       ? 'We’re refining your draft — we’ll share it back for your approval.'
-      : scriptStatus === 'squideo' && !uploaded
+      : oursToWrite
         ? 'You’ve asked us to write it — we’ll share a draft for your approval.'
         : uploaded
           ? `We’ve got ${scriptFileCount} file${scriptFileCount === 1 ? '' : 's'} from you — send an updated version any time.`
           : scriptStatus === 'received'
             ? 'We already have your script — thank you. Send an updated version any time.'
             : 'Share your script and any visual direction — or ask us to write it for you.';
+    const title = !done
+      ? 'Send us your script & visual direction'
+      : scriptStatus === 'refining'
+        ? 'We’re refining your script'
+        : oursToWrite
+          ? 'We’re writing your script'
+          : 'Script & visual direction received';
     return {
       key: 'script',
-      title: 'Send us your script & visual direction',
+      title,
       detail,
       status: done ? 'done' : 'todo',
       cta: { label: done ? 'View or update' : 'Send script', href: `#/script/${deal.id}` },
@@ -78,14 +96,24 @@ const TASK_PRODUCERS = [
   },
   // Choose a voiceover artist for each video. Only when the project actually
   // includes a voiceover (the standard AI VO can be removed from the proposal).
+  //
+  // Two ways to settle it, so neither leaves the client nagged for something
+  // they've already done: pick a named voice, or describe the one you want and
+  // let us match it (voiceover_brief). A described voice still needs a producer
+  // to choose the actual artist, but that's OUR job, not theirs — so it counts
+  // as done here and says so.
   ({ deal, videos, hasVoiceover }) => {
     if (!hasVoiceover || !videos.length) return null;
-    const remaining = videos.filter((v) => !v.voiceover_artist_id).length;
+    const settled = videos.filter((v) => v.voiceover_artist_id || v.voiceover_brief);
+    const remaining = videos.length - settled.length;
+    const anyDescribed = settled.some((v) => !v.voiceover_artist_id && v.voiceover_brief);
     return {
       key: 'voiceover',
       title: 'Choose your voiceover',
       detail: remaining === 0
-        ? 'A voice is picked for every video.'
+        ? (anyDescribed
+            ? 'We’re matching a voice to what you described.'
+            : 'A voice is picked for every video.')
         : videos.length > 1
           ? `Pick a voice for ${remaining} of your ${videos.length} videos.`
           : 'Have a listen and pick the voice for your video.',

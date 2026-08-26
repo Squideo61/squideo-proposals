@@ -38,7 +38,7 @@ export async function computeDealTasks(dealId) {
        LIMIT 1
     `,
     sql`
-      SELECT v.id, v.voiceover_artist_id
+      SELECT v.id, v.voiceover_artist_id, v.voiceover_brief
         FROM project_videos v
        WHERE v.deal_id = ${dealId}
        ORDER BY v.sort_order ASC, v.created_at ASC

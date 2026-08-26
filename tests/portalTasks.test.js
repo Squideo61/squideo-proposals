@@ -79,6 +79,45 @@ describe('deriveProjectTasks — voiceover task', () => {
     });
     expect(all.find((t) => t.key === 'voiceover').status).toBe('done');
   });
+
+  // "Other — describe the voice you want": the client's side is finished even
+  // though no artist is set, so the step must not keep nagging them for one.
+  it('counts a described voice as settled, and says we’re matching it', () => {
+    const deal = { ...launched, payment_terms: null };
+    const tasks = deriveProjectTasks({
+      deal,
+      videos: [{ id: 'v1', voiceover_artist_id: null, voiceover_brief: 'Warm, female, British' }],
+      hasVoiceover: true,
+    });
+    const vo = tasks.find((t) => t.key === 'voiceover');
+    expect(vo.status).toBe('done');
+    expect(vo.detail).toContain('matching');
+  });
+
+  it('still chases the videos that have neither an artist nor a description', () => {
+    const deal = { ...launched, payment_terms: null };
+    const tasks = deriveProjectTasks({
+      deal,
+      videos: [
+        { id: 'v1', voiceover_artist_id: null, voiceover_brief: 'Warm, female, British' },
+        { id: 'v2', voiceover_artist_id: null, voiceover_brief: null },
+      ],
+      hasVoiceover: true,
+    });
+    const vo = tasks.find((t) => t.key === 'voiceover');
+    expect(vo.status).toBe('todo');
+    expect(vo.detail).toContain('1 of your 2 videos');
+  });
+
+  it('reports a plain pick without the "matching" wording', () => {
+    const deal = { ...launched, payment_terms: null };
+    const tasks = deriveProjectTasks({
+      deal,
+      videos: [{ id: 'v1', voiceover_artist_id: 'a1' }],
+      hasVoiceover: true,
+    });
+    expect(tasks.find((t) => t.key === 'voiceover').detail).not.toContain('matching');
+  });
 });
 
 describe('deriveProjectTasks — brand assets task', () => {
@@ -146,6 +185,34 @@ describe('deriveProjectTasks — script & visual direction task', () => {
   it('lets an upload override "we’ll write it"', () => {
     const t = scriptTask({ scriptStatus: 'squideo', scriptFileCount: 1 });
     expect(t.detail).toContain('1 file');
+  });
+
+  // The title is reused as the CRM "steps completed" label, where a green tick
+  // against "Send us your script" read as "the client sent us a script" even
+  // when we were the ones writing it.
+  it('still asks for the script in the title while it is a to-do', () => {
+    expect(scriptTask({}).title).toBe('Send us your script & visual direction');
+  });
+
+  it('says WE are writing it, not that the client sent something', () => {
+    const t = scriptTask({ scriptStatus: 'squideo' });
+    expect(t.title).toBe('We’re writing your script');
+    expect(t.title).not.toContain('Send us');
+  });
+
+  it('says we are refining when staff tick that', () => {
+    expect(scriptTask({ scriptStatus: 'refining' }).title).toBe('We’re refining your script');
+  });
+
+  it('confirms receipt when the script actually came from the client', () => {
+    expect(scriptTask({ scriptFileCount: 1 }).title).toBe('Script & visual direction received');
+    expect(scriptTask({ scriptStatus: 'received' }).title).toBe('Script & visual direction received');
+  });
+
+  it('treats an upload on a "we’ll write it" deal as received, not as ours', () => {
+    // The upload already wins the detail line; the title has to agree with it.
+    expect(scriptTask({ scriptStatus: 'squideo', scriptFileCount: 1 }).title)
+      .toBe('Script & visual direction received');
   });
 });
 

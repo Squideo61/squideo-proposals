@@ -267,7 +267,7 @@ const STATE = {
     nextStep: { court: 'you', title: 'Your storyboard is ready to review', detail: 'Pin notes to any frame, then sign it off.', cta: 'Review the storyboard', href: `#/project/${DEAL_ID}` },
     tasks: [
       { key: 'brand', title: 'Upload your brand guidelines & logo', status: 'done', detailDone: '3 files' },
-      { key: 'script', title: 'Send us your script & visual direction', status: 'done', detailDone: 'Received 4 Aug' },
+      { key: 'script', title: 'Script & visual direction received', status: 'done', detailDone: 'Received 4 Aug' },
       { key: 'voiceover', title: 'Choose your voiceover', status: 'done', detailDone: 'Erin — warm, British' },
       { key: 'storyboard', title: 'Review the storyboard', detail: 'Change it here and it costs nothing.', status: 'todo', cta: { action: 'storyboard', label: 'Review' } },
     ],

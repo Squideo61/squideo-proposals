@@ -162,12 +162,27 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal, on
           </div>
           <div>
             <label style={labelStyle}>Voiceover</label>
-            <div style={{ ...ctrl, display: 'flex', alignItems: 'center', background: '#F8FAFC', color: video.voiceoverArtistName ? BRAND.ink : BRAND.muted }}
-              title={video.voiceoverArtistName ? 'Chosen by the client in their portal' : 'The client hasn’t chosen a voiceover yet'}>
+            {/* Three states, not two. A client who used "Other — describe the
+                voice you want" has finished their side, and this is the brief
+                we owe them a voice against — so it can't read "Not chosen yet",
+                which is what we'd say if they'd done nothing at all. */}
+            <div style={{ ...ctrl, display: 'flex', alignItems: 'center', background: '#F8FAFC', color: video.voiceoverArtistName || video.voiceoverBrief ? BRAND.ink : BRAND.muted }}
+              title={video.voiceoverArtistName
+                ? 'Chosen by the client in their portal'
+                : video.voiceoverBrief
+                  ? `The client described the voice they want:\n\n“${video.voiceoverBrief}”\n\nPick an AI voice that matches and set it here.`
+                  : 'The client hasn’t chosen a voiceover yet'}>
               {video.voiceoverArtistName
                 ? `${video.voiceoverArtistName}${video.voiceoverCategory === 'ai' ? ' (AI)' : ''}`
-                : 'Not chosen yet'}
+                : video.voiceoverBrief
+                  ? 'Described — needs matching'
+                  : 'Not chosen yet'}
             </div>
+            {video.voiceoverBrief && (
+              <div style={{ fontSize: 11.5, color: BRAND.muted, lineHeight: 1.45, marginTop: 4, whiteSpace: 'pre-wrap' }}>
+                “{video.voiceoverBrief}”
+              </div>
+            )}
           </div>
           <div>
             <label style={labelStyle}>Video length</label>

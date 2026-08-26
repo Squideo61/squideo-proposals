@@ -60,6 +60,13 @@ export function ensureVoiceoverCatalogue() {
     await sql`ALTER TABLE project_videos ADD COLUMN IF NOT EXISTS voiceover_artist_id TEXT`;
     await sql`ALTER TABLE project_videos ADD COLUMN IF NOT EXISTS voiceover_selected_at TIMESTAMPTZ`;
     await sql`ALTER TABLE project_videos ADD COLUMN IF NOT EXISTS voiceover_selected_by TEXT`;
+    // "Other — describe the voice you want", the AI alternative to picking a
+    // named voice. A brief settles the step without licensing anything, so it
+    // is a sibling of voiceover_artist_id, never a substitute artist row.
+    // See db/migrations/20260826_voiceover_brief.sql.
+    await sql`ALTER TABLE project_videos ADD COLUMN IF NOT EXISTS voiceover_brief TEXT`;
+    await sql`ALTER TABLE project_videos ADD COLUMN IF NOT EXISTS voiceover_brief_at TIMESTAMPTZ`;
+    await sql`ALTER TABLE project_videos ADD COLUMN IF NOT EXISTS voiceover_brief_by TEXT`;
   })().catch((err) => { catalogueEnsured = null; throw err; });
   return catalogueEnsured;
 }
@@ -169,6 +176,10 @@ export async function resolveVoiceoverContext(deal) {
 
 // The portal shape for a video + its voiceover pick (shared by every route that
 // returns the video list).
+//
+// `voiceover` (a named artist) and `voiceoverBrief` (a described voice we'll
+// match) are mutually exclusive and both settle the step. A chosen artist wins
+// if some older row somehow carries both, since that's the one that's locked.
 export function shapePortalVoiceoverVideo(v) {
   return {
     id: v.id,
@@ -176,6 +187,9 @@ export function shapePortalVoiceoverVideo(v) {
     videoNumber: v.video_number ?? null,
     voiceover: v.voiceover_artist_id
       ? { artistId: v.voiceover_artist_id, artistName: v.voiceover_artist_name || 'Selected artist', category: v.voiceover_category || null, locked: true }
+      : null,
+    voiceoverBrief: !v.voiceover_artist_id && v.voiceover_brief
+      ? { text: v.voiceover_brief, at: v.voiceover_brief_at || null }
       : null,
   };
 }
@@ -185,11 +199,14 @@ export function shapePortalVoiceoverVideo(v) {
 // path AND the Stripe webhook (after a paid upgrade).
 export async function applyVoiceoverSelection({ dealId, videoId, artistId, applyToAll, portalUserId = null }) {
   if (applyToAll) {
+    // "Use this artist for all videos" sweeps up whatever is still unsettled —
+    // but a video whose voice the client DESCRIBED is settled, so it's excluded
+    // rather than having that description silently overwritten by this pick.
     await sql`
       UPDATE project_videos
          SET voiceover_artist_id = ${artistId}, voiceover_selected_at = NOW(),
              voiceover_selected_by = ${portalUserId}, updated_at = NOW()
-       WHERE deal_id = ${dealId} AND voiceover_artist_id IS NULL`;
+       WHERE deal_id = ${dealId} AND voiceover_artist_id IS NULL AND voiceover_brief IS NULL`;
   } else {
     await sql`
       UPDATE project_videos
@@ -197,14 +214,66 @@ export async function applyVoiceoverSelection({ dealId, videoId, artistId, apply
              voiceover_selected_by = ${portalUserId}, updated_at = NOW()
        WHERE id = ${videoId} AND deal_id = ${dealId} AND voiceover_artist_id IS NULL`;
   }
+  return listPortalVoiceoverVideos(dealId);
+}
+
+// The portal-shaped video list for a deal. Shared by every path that returns it
+// (select, brief, the Stripe webhook) so they can't drift on which columns the
+// shape needs — omitting the brief columns here silently blanks a client's
+// described voice in the response.
+export async function listPortalVoiceoverVideos(dealId) {
   const videos = await sql`
     SELECT v.id, v.title, v.video_number,
-           v.voiceover_artist_id, va.name AS voiceover_artist_name, va.category AS voiceover_category
+           v.voiceover_artist_id, v.voiceover_brief, v.voiceover_brief_at,
+           va.name AS voiceover_artist_name, va.category AS voiceover_category
       FROM project_videos v
       LEFT JOIN voiceover_artists va ON va.id = v.voiceover_artist_id
      WHERE v.deal_id = ${dealId}
      ORDER BY v.sort_order ASC, v.created_at ASC`;
   return videos.map(shapePortalVoiceoverVideo);
+}
+
+// Store "here's the voice I want" against one video, or every unsettled video
+// when applyToAll. Returns the refreshed, portal-shaped list. Nothing is
+// licensed or charged here — a producer still picks the actual voice.
+export async function applyVoiceoverBrief({ dealId, videoId, brief, applyToAll, portalUserId = null }) {
+  if (applyToAll) {
+    await sql`
+      UPDATE project_videos
+         SET voiceover_brief = ${brief}, voiceover_brief_at = NOW(),
+             voiceover_brief_by = ${portalUserId}, updated_at = NOW()
+       WHERE deal_id = ${dealId} AND voiceover_artist_id IS NULL AND voiceover_brief IS NULL`;
+  } else {
+    await sql`
+      UPDATE project_videos
+         SET voiceover_brief = ${brief}, voiceover_brief_at = NOW(),
+             voiceover_brief_by = ${portalUserId}, updated_at = NOW()
+       WHERE id = ${videoId} AND deal_id = ${dealId} AND voiceover_artist_id IS NULL`;
+  }
+  return listPortalVoiceoverVideos(dealId);
+}
+
+// Team alert when a client describes the voice they want instead of picking
+// one. Deliberately the same notification key as a normal pick: it's the same
+// people, the same moment in the project, and the same thing they need to know
+// — except this one needs a producer to act, so the copy says so.
+export async function notifyVoiceoverBrief({ deal, actorName, brief, videoLabel, applyToAll }) {
+  try {
+    await ensurePortalNotificationDefaults();
+    const scope = applyToAll ? 'all videos' : videoLabel;
+    await sendNotification('portal.voiceover_selected', {
+      subject: `🎙️ Voice brief: ${deal.title} — needs matching`,
+      text: `${actorName} described the voice they want for ${scope} on ${deal.title} instead of picking one:\n\n“${brief}”\n\nPick an AI voice that matches and set it on the video.`,
+      inApp: {
+        title: 'Voice described — needs matching 🎙️',
+        body: `${actorName} · ${scope} · ${deal.title}`,
+        link: `#/deal/${deal.id}`,
+      },
+      inAppOnly: true,
+    });
+  } catch (err) {
+    console.warn('[voiceover] brief notify failed', err.message);
+  }
 }
 
 // Record a voiceover-upgrade charge on the deal's extras. `paid` distinguishes a

@@ -6,12 +6,17 @@
 // A £0 pick locks immediately; a paid pick either rides the final invoice (PO
 // deals) or takes a card payment now (full / 50-50). One pick per video, with a
 // "use this artist for all videos" shortcut (charged once).
+//
+// The AI section also offers "Other — describe the voice you want". The fixed
+// list is a constraint of HUMAN artists, who cost real money per voice; an AI
+// voice doesn't, so a client who wants something outside the four names can
+// describe the tone, accent and gender instead and we match it.
 import React, { useEffect, useState } from 'react';
 import { BRAND } from '../../theme.js';
 import { portalApi, mediaUrl } from '../api.js';
 import { usePortal } from '../PortalContext.jsx';
 import { Card, EmptyState, SectionHeading, StatusPill } from '../components.jsx';
-import { ArrowLeft, Check, Mic, Lock, CreditCard } from 'lucide-react';
+import { ArrowLeft, Check, Mic, Lock, CreditCard, Wand2 } from 'lucide-react';
 import { sectionFor } from '../../lib/voiceoverSections.js';
 
 const money = (n) => '£' + (Number.isInteger(Number(n)) ? Number(n) : Number(n).toFixed(2));
@@ -44,11 +49,37 @@ function ArtistCard({ artist, section, charge, onChoose, disabled }) {
   );
 }
 
+// "None of these? Tell us what you're after." Sits at the foot of the AI
+// section only — see the note at the top of this file for why it isn't offered
+// on the human sections.
+function DescribeCard({ section, onDescribe, disabled }) {
+  return (
+    <div style={{ border: `1px dashed ${section.border}`, borderRadius: 12, padding: '12px 14px', background: '#fff', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+      <div style={{ flex: '1 1 240px', minWidth: 200 }}>
+        <div style={{ fontWeight: 600, fontSize: 14, color: BRAND.ink }}>Other — describe the voice you want</div>
+        <div style={{ fontSize: 12, color: BRAND.muted, lineHeight: 1.4, marginTop: 1 }}>
+          Not quite right? Tell us the tone, accent and gender you have in mind and we’ll match it.
+        </div>
+      </div>
+      <button
+        className="btn"
+        disabled={disabled}
+        onClick={onDescribe}
+        style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, background: '#fff', color: section.accent, borderColor: section.accent }}
+      >
+        <Wand2 size={14} /> Describe a voice
+      </button>
+    </div>
+  );
+}
+
 export default function Voiceover({ dealId }) {
   const { showToast, refreshOverview } = usePortal();
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [choosing, setChoosing] = useState(null);   // { artist, section, charge }
+  const [describing, setDescribing] = useState(null); // { section }
+  const [brief, setBrief] = useState('');
   const [targetVideo, setTargetVideo] = useState(null);
   const [applyToAll, setApplyToAll] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -73,7 +104,10 @@ export default function Voiceover({ dealId }) {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const videos = data?.videos || [];
-  const unpicked = videos.filter((v) => !v.voiceover);
+  // "Unpicked" means nothing has settled this video's voice yet — a named
+  // artist and a described voice both count, so a client who described one
+  // isn't asked to choose again.
+  const unpicked = videos.filter((v) => !v.voiceover && !v.voiceoverBrief);
   const multiVideo = videos.length > 1;
 
   const openChoose = (artist, section, charge) => {
@@ -81,6 +115,36 @@ export default function Voiceover({ dealId }) {
     setChoosing({ artist, section, charge });
     setTargetVideo(unpicked[0].id);
     setApplyToAll(false);
+  };
+
+  const openDescribe = (section) => {
+    if (!unpicked.length) return;
+    setDescribing({ section });
+    setBrief('');
+    setTargetVideo(unpicked[0].id);
+    setApplyToAll(false);
+  };
+
+  const submitBrief = async () => {
+    const text = brief.trim();
+    if (!text) return;
+    setBusy(true);
+    try {
+      const res = await portalApi.post('voiceover-brief', {
+        dealId,
+        videoId: applyToAll ? unpicked[0].id : targetVideo,
+        brief: text,
+        applyToAll,
+      });
+      setData((d) => ({ ...d, videos: res.videos }));
+      showToast('Thanks — we’ll match a voice to your description 🎙️');
+      setDescribing(null);
+      refreshOverview().catch(() => {});
+    } catch (err) {
+      showToast(err.message);
+    } finally {
+      setBusy(false);
+    }
   };
 
   const confirm = async () => {
@@ -139,6 +203,7 @@ export default function Voiceover({ dealId }) {
   }
 
   const allPicked = videos.length > 0 && unpicked.length === 0;
+  const anyDescribed = videos.some((v) => !v.voiceover && v.voiceoverBrief);
   const payNow = data.paymentMode === 'now';
 
   return (
@@ -165,6 +230,17 @@ export default function Voiceover({ dealId }) {
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, fontWeight: 700, color: '#16A34A' }}>
                     <Lock size={13} /> {v.voiceover.artistName}
                   </span>
+                ) : v.voiceoverBrief ? (
+                  // Described, not chosen: the client's part is done, ours isn't.
+                  // Their own words go in the tooltip so they can check what we
+                  // have on file without leaving the page.
+                  <span
+                    title={v.voiceoverBrief.text}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, fontWeight: 700, color: '#2563EB', maxWidth: 260 }}
+                  >
+                    <Wand2 size={13} style={{ flexShrink: 0 }} />
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Matching your description</span>
+                  </span>
                 ) : (
                   <StatusPill label="Not chosen yet" color="#F59E0B" />
                 )}
@@ -176,7 +252,14 @@ export default function Voiceover({ dealId }) {
 
       {allPicked ? (
         <Card>
-          <EmptyState title="All set — voiceovers chosen ✅" body="You've picked a voice for every video. Need a change? Just message your producer." />
+          {anyDescribed ? (
+            <EmptyState
+              title="All set — leave the voice with us ✅"
+              body="We're matching a voice to what you described and you'll hear it in your first draft. Need a change? Just message your producer."
+            />
+          ) : (
+            <EmptyState title="All set — voiceovers chosen ✅" body="You've picked a voice for every video. Need a change? Just message your producer." />
+          )}
         </Card>
       ) : (
         (data.sections || []).map((s) => {
@@ -196,6 +279,7 @@ export default function Voiceover({ dealId }) {
                 {s.artists.map((a) => (
                   <ArtistCard key={a.id} artist={a} section={meta} charge={s.charge} disabled={busy} onChoose={openChoose} />
                 ))}
+                {s.key === 'ai' && <DescribeCard section={meta} disabled={busy} onDescribe={() => openDescribe(meta)} />}
               </div>
             </div>
           );
@@ -249,6 +333,59 @@ export default function Voiceover({ dealId }) {
               <button className="btn-ghost" onClick={() => setChoosing(null)} disabled={busy}>Cancel</button>
               <button className="btn" disabled={busy} onClick={confirm}>
                 {busy ? 'Saving…' : choosing.charge > 0 && payNow ? (<><CreditCard size={14} /> Pay {money(choosing.charge)}</>) : (<><Check size={14} /> Confirm choice</>)}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {describing && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,42,61,0.5)', zIndex: 60, display: 'grid', placeItems: 'center', padding: 16 }}>
+          <div style={{ background: '#fff', borderRadius: 14, padding: 24, maxWidth: 440, width: '100%' }}>
+            <h3 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 800, color: BRAND.ink }}>Describe the voice you want</h3>
+            <p style={{ margin: '0 0 14px', fontSize: 12.5, color: BRAND.muted, lineHeight: 1.5 }}>
+              Tell us the tone, accent and gender you’re after — plus rough age if you have one in mind. We’ll use our best judgement to match it.
+            </p>
+
+            <textarea
+              value={brief}
+              onChange={(e) => setBrief(e.target.value)}
+              maxLength={1000}
+              rows={4}
+              autoFocus
+              placeholder="e.g. Warm and friendly, female, British — around 30s. Conversational rather than corporate."
+              style={{ width: '100%', boxSizing: 'border-box', padding: '10px 12px', borderRadius: 8, border: `1px solid ${BRAND.border}`, fontSize: 13.5, fontFamily: 'inherit', lineHeight: 1.5, resize: 'vertical' }}
+            />
+
+            {multiVideo && !applyToAll && (
+              <div style={{ margin: '14px 0 0' }}>
+                <div style={{ fontSize: 12.5, fontWeight: 600, color: BRAND.muted, marginBottom: 6 }}>For which video?</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {unpicked.map((v) => (
+                    <label key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, cursor: 'pointer' }}>
+                      <input type="radio" name="vo-brief-target" checked={targetVideo === v.id} onChange={() => setTargetVideo(v.id)} />
+                      <span>{v.title}{data.reference && v.videoNumber ? ` (${videoLabel(v, data.reference)})` : ''}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {multiVideo && unpicked.length > 1 && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13.5, cursor: 'pointer', margin: '14px 0 0', padding: '10px 12px', background: '#F1F4F7', borderRadius: 8 }}>
+                <input type="checkbox" checked={applyToAll} onChange={(e) => setApplyToAll(e.target.checked)} />
+                <span style={{ fontWeight: 600 }}>Use this description for all {unpicked.length} remaining videos</span>
+              </label>
+            )}
+
+            <p style={{ margin: '14px 0 16px', fontSize: 12.5, color: BRAND.muted, lineHeight: 1.5 }}>
+              Nothing to pay — this uses your project’s standard AI voice. You’ll hear the result in your first draft.
+            </p>
+
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button className="btn-ghost" onClick={() => setDescribing(null)} disabled={busy}>Cancel</button>
+              <button className="btn" disabled={busy || !brief.trim()} onClick={submitBrief}>
+                {busy ? 'Sending…' : (<><Check size={14} /> Send description</>)}
               </button>
             </div>
           </div>

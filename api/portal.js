@@ -99,9 +99,11 @@ import {
   streamVoiceoverSample,
   resolveVoiceoverContext,
   applyVoiceoverSelection,
+  applyVoiceoverBrief,
   shapePortalVoiceoverVideo,
   recordVoiceoverExtra,
   notifyVoiceoverChosen,
+  notifyVoiceoverBrief,
   emailVoiceoverConfirm,
   sectionName,
 } from './_lib/voiceover.js';
@@ -353,7 +355,8 @@ async function gatherDealStates(dealIds) {
       SELECT v.id, v.deal_id, v.title, v.status, v.sort_order, v.video_number,
              v.production_phase, v.production_stage, v.video_length,
              v.production_schedule,
-             v.voiceover_artist_id, va.name AS voiceover_artist_name, va.category AS voiceover_category
+             v.voiceover_artist_id, v.voiceover_brief, v.voiceover_brief_at,
+             va.name AS voiceover_artist_name, va.category AS voiceover_category
         FROM project_videos v
         LEFT JOIN voiceover_artists va ON va.id = v.voiceover_artist_id
        WHERE v.deal_id = ANY(${dealIds})
@@ -653,6 +656,7 @@ export default async function handler(req, res) {
       case 'extras-accept': return extrasAcceptRoute(req, res, user);
       case 'voiceover': return voiceoverRoute(req, res, user);
       case 'voiceover-select': return voiceoverSelectRoute(req, res, user);
+      case 'voiceover-brief': return voiceoverBriefRoute(req, res, user);
       case 'voiceover-sample': return voiceoverSampleRoute(req, res, user);
       case 'kickoff': return kickoffRoute(req, res, user);
       case 'kickoff-book': return kickoffBookRoute(req, res, user);
@@ -2693,7 +2697,8 @@ async function voiceoverRoute(req, res, user) {
 
   const videos = await sql`
     SELECT v.id, v.title, v.video_number, v.sort_order, v.created_at,
-           v.voiceover_artist_id, va.name AS voiceover_artist_name, va.category AS voiceover_category
+           v.voiceover_artist_id, v.voiceover_brief, v.voiceover_brief_at,
+           va.name AS voiceover_artist_name, va.category AS voiceover_category
       FROM project_videos v
       LEFT JOIN voiceover_artists va ON va.id = v.voiceover_artist_id
      WHERE v.deal_id = ${deal.id}
@@ -2781,6 +2786,53 @@ async function voiceoverSelectRoute(req, res, user) {
   await emailVoiceoverConfirm({ deal, clientEmail: user.email, clientName: user.name, artist, videoLabel, applyToAll });
 
   return res.status(200).json({ videos, charged: charge > 0 ? { amount: charge, mode: 'final' } : null });
+}
+
+// Longest voice description we'll store. Generous for "warm, mid-30s, northern
+// English, not too corporate" and short of someone pasting their whole script.
+const VOICEOVER_BRIEF_MAX = 1000;
+
+// POST voiceover-brief { dealId, videoId, brief, applyToAll }
+// "Other — describe the voice you want", the AI alternative to picking a named
+// voice. Free by construction: it only reaches videos on projects whose AI
+// section is included, and it never touches deal_extras or Stripe. A producer
+// matches the description to an actual voice afterwards.
+async function voiceoverBriefRoute(req, res, user) {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  const body = await readJsonBody(req);
+  const deal = await requireDealInOrg(res, trimOrNull(body.dealId), user.companyIds);
+  if (!deal) return;
+  await ensureVoiceoverCatalogue();
+
+  const videoId = trimOrNull(body.videoId);
+  const brief = trimOrNull(body.brief);
+  if (!videoId || !brief) return res.status(400).json({ error: 'videoId and a description are required' });
+  if (brief.length > VOICEOVER_BRIEF_MAX) {
+    return res.status(400).json({ error: `Please keep the description under ${VOICEOVER_BRIEF_MAX} characters.` });
+  }
+
+  const [video] = await sql`
+    SELECT id, title, video_number, voiceover_artist_id, voiceover_brief
+      FROM project_videos WHERE id = ${videoId} AND deal_id = ${deal.id}`;
+  if (!video) return res.status(404).json({ error: 'Video not found' });
+  if (video.voiceover_artist_id) {
+    return res.status(409).json({ error: 'A voiceover is already locked in for this video. Contact your producer to change it.' });
+  }
+
+  const ctx = await resolveVoiceoverContext(deal);
+  if (!ctx.hasVo) return res.status(409).json({ error: 'This project doesn’t include a voiceover.' });
+  // Describing a voice is an AI-section affordance: a human artist is a real
+  // person we license by name, so there's nothing to "match" them against.
+  if (!ctx.sections.includes('ai')) {
+    return res.status(403).json({ error: 'Describing a voice isn’t available on your project — please pick one of the artists.' });
+  }
+
+  const applyToAll = body.applyToAll === true;
+  const videoLabel = voiceoverVideoLabel(deal, video);
+  const videos = await applyVoiceoverBrief({ dealId: deal.id, videoId, brief, applyToAll, portalUserId: user.puid });
+  await notifyVoiceoverBrief({ deal, actorName: user.name || user.email, brief, videoLabel, applyToAll });
+
+  return res.status(200).json({ videos });
 }
 
 // Create a Stripe Checkout Session for a paid voiceover upgrade. The metadata

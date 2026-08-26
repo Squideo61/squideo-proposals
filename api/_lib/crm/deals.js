@@ -1660,6 +1660,11 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         voiceoverArtistId: v.voiceover_artist_id || null,
         voiceoverArtistName: v.voiceover_artist_name || null,
         voiceoverCategory: v.voiceover_category || null,
+        // "Other — describe the voice you want" from the portal. Only meaningful
+        // while no artist is set: once a producer picks the voice that matches,
+        // the pick is the answer and the description is just how we got there.
+        voiceoverBrief: v.voiceover_artist_id ? null : (v.voiceover_brief || null),
+        voiceoverBriefAt: v.voiceover_artist_id ? null : (v.voiceover_brief_at || null),
         createdAt: v.created_at, updatedAt: v.updated_at || null,
       }));
     } catch (_) { /* project_videos not yet migrated */ }
