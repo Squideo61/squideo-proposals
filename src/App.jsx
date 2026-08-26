@@ -638,7 +638,12 @@ function AppShell() {
       {(view === 'deal' || view === 'project') && activeId && (
         <DealDetailView
           dealId={activeId}
-          onBack={() => goBack(view === 'project' ? 'projects' : 'pipeline')}
+          // A project's parent is the Production board — that's where the work
+          // is run from. The Pipeline is the SALES list, so it stays the
+          // destination for #/deal and would be somewhere a producer opening
+          // #/project had never been.
+          onBack={() => goBack(view === 'project' ? 'production' : 'pipeline')}
+          backLabel={view === 'project' ? 'Production' : 'Pipeline'}
           onOpenProposal={(id, mode) => navigate(mode === 'preview' ? 'client' : 'builder', id)}
           onCreateProposal={createForDeal}
           onOpenVideo={(id) => navigate('video', id)}

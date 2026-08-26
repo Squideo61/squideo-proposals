@@ -167,7 +167,12 @@ function PaymentPlanControl({ proposalId, dealId, value }) {
 // `productionOnly` strips the sales/financial chrome (pipeline, order summary,
 // proposals, invoices, edit/delete…) so producers/copywriters get a focused
 // project view — the deal page doubles as the project page once signed.
-export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposal, onOpenVideo, onOpenCompany, productionOnly = false, hideFinancials = false }) {
+// `backLabel` names where Back actually goes. The same component serves the
+// sales view (#/deal — back to the Pipeline) and the production view
+// (#/project — back to the Production board), and only the caller knows which
+// one it opened. Inferring it from `productionOnly` got it wrong for everyone
+// outside the producer shell: a project opened by a director said "Pipeline".
+export function DealDetailView({ dealId, onBack, backLabel, onOpenProposal, onCreateProposal, onOpenVideo, onOpenCompany, productionOnly = false, hideFinancials = false }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   const [editing, setEditing] = useState(false);
@@ -415,7 +420,9 @@ export function DealDetailView({ dealId, onBack, onOpenProposal, onCreateProposa
   return (
     <div style={{ padding: isMobile ? '16px 12px' : '32px 24px' }}>
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, gap: 12, flexWrap: 'wrap' }}>
-        <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> {productionOnly ? 'Production' : 'Pipeline'}</button>
+        <button onClick={onBack} className="btn-ghost">
+          <ArrowLeft size={14} /> {backLabel || (productionOnly ? 'Production' : 'Pipeline')}
+        </button>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           <IntroCallButton dealId={dealId} />
           <button
