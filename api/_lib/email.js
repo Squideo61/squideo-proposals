@@ -364,6 +364,28 @@ export function inviteAcceptedHtml({ name, email, roleName, invitedByEmail, link
   return shell(inner);
 }
 
+// "Which client, which project?" — the line every review notification needs.
+//
+// A bell full of "Luke finalised Video 2" and "Revisions complete: Video 1"
+// is unreadable unless you already know the project by heart: a video title is
+// almost never unique, and the person's name is whoever happened to click
+// finalise, not the client we bill. So every review alert carries the client
+// and the project alongside it.
+//
+// Both are included because neither is reliably the useful one on its own — a
+// revision project is often named for the client ("Global Baggage Solutions"),
+// in which case they'd read as a stutter, so identical values collapse to one.
+export function reviewContextLine({ clientName, projectTitle }) {
+  const parts = [];
+  for (const raw of [clientName, projectTitle]) {
+    const v = typeof raw === 'string' ? raw.trim() : '';
+    if (!v) continue;
+    if (parts.some((p) => p.toLowerCase() === v.toLowerCase())) continue;
+    parts.push(v);
+  }
+  return parts.join(' · ');
+}
+
 // Client has finished a video/storyboard review and sent their comments to the
 // team. `kind` is 'video' or 'storyboard'; `itemTitle` is the specific
 // video/storyboard within the project.

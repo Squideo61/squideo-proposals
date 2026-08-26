@@ -20,7 +20,7 @@ import { handleUpload } from '@vercel/blob/client';
 import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
 import { sendNotification, resolveDealTeamEmails, ensureRevisionCompleteNotificationDefault } from '../_lib/notifications.js';
-import { revisionFeedbackHtml, APP_URL } from '../_lib/email.js';
+import { revisionFeedbackHtml, reviewContextLine, APP_URL } from '../_lib/email.js';
 import { getRole } from '../_lib/userRoles.js';
 import { isFreelancer, freelancerRevisionProjectIds } from '../_lib/crm/access.js';
 import { submitRevisionToClient, reviewEmailContext } from '../_lib/crm/clientReview.js';
@@ -653,11 +653,15 @@ async function completeVersion(req, res, id, user) {
 async function completeComment(req, res, id, user) {
   const body = parseBody(req);
   const complete = body.complete !== false;
+  // The project comes along for the ride so the notification below can say
+  // WHICH client's video is done, and link straight to it.
   const [cur] = await sql`
-    SELECT rc.id, rc.version_id, rv.version_number, vid.title AS video_title
+    SELECT rc.id, rc.version_id, rv.version_number, vid.title AS video_title,
+           rp.id AS project_id, rp.title AS project_title, rp.client_name
       FROM revision_comments rc
       JOIN revision_versions rv ON rv.id = rc.version_id
       JOIN revision_videos vid ON vid.id = rv.video_id
+      JOIN revision_projects rp ON rp.id = vid.project_id
      WHERE rc.id = ${id}
   `;
   if (!cur) return res.status(404).json({ error: 'not found' });
@@ -672,7 +676,9 @@ async function completeComment(req, res, id, user) {
     `;
     if (total > 0 && open === 0) {
       const title = cur.video_title || 'Video';
-      const link = `${APP_URL}/#/revisions`;
+      const context = reviewContextLine({ clientName: cur.client_name, projectTitle: cur.project_title });
+      const deepLink = `#/revisions/${encodeURIComponent(cur.project_id)}`;
+      const link = `${APP_URL}/${deepLink}`;
       const notes = await sql`
         SELECT producer_note FROM revision_comments
          WHERE version_id = ${cur.version_id} AND producer_note IS NOT NULL AND btrim(producer_note) <> ''
@@ -690,7 +696,15 @@ async function completeComment(req, res, id, user) {
           html: `<p>All client revisions on <strong>${escapeHtml(title)}</strong> — draft ${cur.version_number} have been marked complete.</p>${notesHtml}<p><a href="${link}">Open Video Revisions</a></p>`,
           text: `All revisions on ${title} (draft ${cur.version_number}) are complete — ${link}${notesText}`,
           excludeEmails: user.email ? [user.email] : null,
-          inApp: { title: `Revisions complete: ${title}`, body: `Every comment on draft ${cur.version_number} is done${noteList.length ? ` · ${noteList.length} producer note${noteList.length === 1 ? '' : 's'}` : ''}`, link: '#/revisions' },
+          inApp: {
+            title: `Revisions complete: ${title}`,
+            body: [
+              context,
+              `Every comment on draft ${cur.version_number} is done`,
+              noteList.length ? `${noteList.length} producer note${noteList.length === 1 ? '' : 's'}` : null,
+            ].filter(Boolean).join(' · '),
+            link: deepLink,
+          },
         });
       } catch (err) { console.error('[revisions] draft-complete notify failed', err.message); }
     }
@@ -915,15 +929,28 @@ async function approveRevision(req, res) {
   try {
     const assigneeEmails = await revisionFinaliseRecipients(videoId, video.deal_id, video.created_by);
     if (assigneeEmails.length) {
-      const link = `${APP_URL}/#/revisions`;
+      const deepLink = `#/revisions/${encodeURIComponent(video.project_id)}`;
+      const link = `${APP_URL}/${deepLink}`;
       const clientLabel = video.client_name || approvedBy;
       const itemTitle = video.title || video.project_title;
+      // clientLabel falls back to whoever clicked finalise, which is a person's
+      // name that means nothing on its own ("Luke finalised Video 2"). Name the
+      // client and project in the body — skipping the client when the title
+      // already used it, so it doesn't stutter.
+      const context = reviewContextLine({
+        clientName: clientLabel === video.client_name ? null : video.client_name,
+        projectTitle: video.project_title,
+      });
       await sendNotification('revision.feedback_submitted', {
         assigneeEmails,
         subject: `${clientLabel} finalised "${itemTitle}" with ${n} comment${n === 1 ? '' : 's'}`,
         html: revisionFeedbackHtml({ kind: 'video', projectTitle: video.project_title, itemTitle: video.title, clientName: clientLabel, commentCount: n, link }),
         text: `${clientLabel} finalised ${itemTitle} with ${n} comment${n === 1 ? '' : 's'}. ${link}`,
-        inApp: { title: `${clientLabel} finalised ${itemTitle}`, body: `${n} comment${n === 1 ? '' : 's'} sent to the team`, link: '#/revisions' },
+        inApp: {
+          title: `${clientLabel} finalised ${itemTitle}`,
+          body: [context, `${n} comment${n === 1 ? '' : 's'} sent to the team`].filter(Boolean).join(' · '),
+          link: deepLink,
+        },
       });
     }
   } catch (err) {
@@ -1013,15 +1040,24 @@ async function submitFeedback(req, res) {
   try {
     const assigneeEmails = await resolveDealTeamEmails(video.deal_id, video.created_by);
     if (assigneeEmails.length) {
-      const link = `${APP_URL}/#/revisions`;
+      const deepLink = `#/revisions/${encodeURIComponent(video.project_id)}`;
+      const link = `${APP_URL}/${deepLink}`;
       const clientLabel = video.client_name || name;
       const itemTitle = video.title || video.project_title;
+      const context = reviewContextLine({
+        clientName: clientLabel === video.client_name ? null : video.client_name,
+        projectTitle: video.project_title,
+      });
       await sendNotification('revision.feedback_submitted', {
         assigneeEmails,
         subject: `${clientLabel} sent feedback on "${itemTitle}"`,
         html: revisionFeedbackHtml({ kind: 'video', projectTitle: video.project_title, itemTitle: video.title, clientName: clientLabel, commentCount: n, link }),
         text: `${clientLabel} submitted ${n} comment${n === 1 ? '' : 's'} on ${itemTitle}. ${link}`,
-        inApp: { title: `${clientLabel} sent video feedback`, body: `${n} comment${n === 1 ? '' : 's'} on ${itemTitle}`, link: '#/revisions' },
+        inApp: {
+          title: `${clientLabel} sent video feedback`,
+          body: [context, `${n} comment${n === 1 ? '' : 's'} on ${itemTitle}`].filter(Boolean).join(' · '),
+          link: deepLink,
+        },
       });
     }
   } catch (err) {

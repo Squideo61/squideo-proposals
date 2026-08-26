@@ -28,7 +28,7 @@ import { handleUpload } from '@vercel/blob/client';
 import sql from '../_lib/db.js';
 import { cors, requireAuth } from '../_lib/middleware.js';
 import { sendNotification, resolveDealTeamEmails, ensureRevisionCompleteNotificationDefault } from '../_lib/notifications.js';
-import { revisionFeedbackHtml, APP_URL } from '../_lib/email.js';
+import { revisionFeedbackHtml, reviewContextLine, APP_URL } from '../_lib/email.js';
 import { getRole } from '../_lib/userRoles.js';
 import { isFreelancer, freelancerStoryboardProjectIds } from '../_lib/crm/access.js';
 import { submitStoryboardToClient, reviewEmailContext } from '../_lib/crm/clientReview.js';
@@ -782,11 +782,15 @@ async function completeVersion(req, res, id, user) {
 async function completeComment(req, res, id, user) {
   const body = parseBody(req);
   const complete = body.complete !== false;
+  // The project comes along for the ride so the notification below can say
+  // WHICH client's storyboard is done, and link straight to it.
   const [cur] = await sql`
-    SELECT sc.id, sc.version_id, sv.version_number, sb.title AS storyboard_title
+    SELECT sc.id, sc.version_id, sv.version_number, sb.title AS storyboard_title,
+           sp.id AS project_id, sp.title AS project_title, sp.client_name
       FROM storyboard_comments sc
       JOIN storyboard_versions sv ON sv.id = sc.version_id
       JOIN storyboards sb ON sb.id = sv.storyboard_id
+      JOIN storyboard_projects sp ON sp.id = sb.project_id
      WHERE sc.id = ${id}
   `;
   if (!cur) return res.status(404).json({ error: 'not found' });
@@ -801,7 +805,9 @@ async function completeComment(req, res, id, user) {
     `;
     if (total > 0 && open === 0) {
       const title = cur.storyboard_title || 'Storyboard';
-      const link = `${APP_URL}/#/storyboards`;
+      const context = reviewContextLine({ clientName: cur.client_name, projectTitle: cur.project_title });
+      const deepLink = `#/storyboards/${encodeURIComponent(cur.project_id)}`;
+      const link = `${APP_URL}/${deepLink}`;
       const notes = await sql`
         SELECT producer_note FROM storyboard_comments
          WHERE version_id = ${cur.version_id} AND producer_note IS NOT NULL AND btrim(producer_note) <> ''
@@ -819,7 +825,15 @@ async function completeComment(req, res, id, user) {
           html: `<p>All client revisions on <strong>${escapeHtml(title)}</strong> — draft ${cur.version_number} have been marked complete.</p>${notesHtml}<p><a href="${link}">Open Storyboard Revisions</a></p>`,
           text: `All storyboard revisions on ${title} (draft ${cur.version_number}) are complete — ${link}${notesText}`,
           excludeEmails: user.email ? [user.email] : null,
-          inApp: { title: `Storyboard revisions complete: ${title}`, body: `Every comment on draft ${cur.version_number} is done${noteList.length ? ` · ${noteList.length} producer note${noteList.length === 1 ? '' : 's'}` : ''}`, link: '#/storyboards' },
+          inApp: {
+            title: `Storyboard revisions complete: ${title}`,
+            body: [
+              context,
+              `Every comment on draft ${cur.version_number} is done`,
+              noteList.length ? `${noteList.length} producer note${noteList.length === 1 ? '' : 's'}` : null,
+            ].filter(Boolean).join(' · '),
+            link: deepLink,
+          },
         });
       } catch (err) { console.error('[storyboards] draft-complete notify failed', err.message); }
     }
@@ -1013,15 +1027,26 @@ async function approveStoryboard(req, res) {
   try {
     const assigneeEmails = await storyboardFinaliseRecipients(storyboardId, storyboard.deal_id, storyboard.created_by);
     if (assigneeEmails.length) {
-      const link = `${APP_URL}/#/storyboards`;
+      const deepLink = `#/storyboards/${encodeURIComponent(storyboard.project_id)}`;
+      const link = `${APP_URL}/${deepLink}`;
       const clientLabel = storyboard.client_name || approvedBy;
       const itemTitle = storyboard.title || storyboard.project_title;
+      // See the video equivalent in api/revisions/[action].js: clientLabel can
+      // be whoever clicked finalise, so name the client and project in the body.
+      const context = reviewContextLine({
+        clientName: clientLabel === storyboard.client_name ? null : storyboard.client_name,
+        projectTitle: storyboard.project_title,
+      });
       await sendNotification('storyboard.feedback_submitted', {
         assigneeEmails,
         subject: `${clientLabel} finalised "${itemTitle}" with ${n} comment${n === 1 ? '' : 's'}`,
         html: revisionFeedbackHtml({ kind: 'storyboard', projectTitle: storyboard.project_title, itemTitle: storyboard.title, clientName: clientLabel, commentCount: n, link }),
         text: `${clientLabel} finalised ${itemTitle} with ${n} comment${n === 1 ? '' : 's'}. ${link}`,
-        inApp: { title: `${clientLabel} finalised ${itemTitle}`, body: `${n} comment${n === 1 ? '' : 's'} sent to the team`, link: '#/storyboards' },
+        inApp: {
+          title: `${clientLabel} finalised ${itemTitle}`,
+          body: [context, `${n} comment${n === 1 ? '' : 's'} sent to the team`].filter(Boolean).join(' · '),
+          link: deepLink,
+        },
       });
     }
   } catch (err) {
@@ -1104,15 +1129,24 @@ async function submitFeedback(req, res) {
   try {
     const assigneeEmails = await resolveDealTeamEmails(sb.deal_id, sb.created_by);
     if (assigneeEmails.length) {
-      const link = `${APP_URL}/#/storyboards`;
+      const deepLink = `#/storyboards/${encodeURIComponent(sb.project_id)}`;
+      const link = `${APP_URL}/${deepLink}`;
       const clientLabel = sb.client_name || name;
       const itemTitle = sb.title || sb.project_title;
+      const context = reviewContextLine({
+        clientName: clientLabel === sb.client_name ? null : sb.client_name,
+        projectTitle: sb.project_title,
+      });
       await sendNotification('storyboard.feedback_submitted', {
         assigneeEmails,
         subject: `${clientLabel} sent feedback on "${itemTitle}"`,
         html: revisionFeedbackHtml({ kind: 'storyboard', projectTitle: sb.project_title, itemTitle: sb.title, clientName: clientLabel, commentCount: n, link }),
         text: `${clientLabel} submitted ${n} comment${n === 1 ? '' : 's'} on ${itemTitle}. ${link}`,
-        inApp: { title: `${clientLabel} sent storyboard feedback`, body: `${n} comment${n === 1 ? '' : 's'} on ${itemTitle}`, link: '#/storyboards' },
+        inApp: {
+          title: `${clientLabel} sent storyboard feedback`,
+          body: [context, `${n} comment${n === 1 ? '' : 's'} on ${itemTitle}`].filter(Boolean).join(' · '),
+          link: deepLink,
+        },
       });
     }
   } catch (err) {
