@@ -191,7 +191,11 @@ export function ClientBriefBlock({ briefs = [], unfiled = [], onAttach, busy = f
         <>
           {briefs.map((b) => <BriefRow key={b.id} brief={b} />)}
 
-          {unfiled.length > 0 && (
+          {/* Filing a stray brief onto this deal is a WRITE, so the whole
+              section depends on being handed a handler. A read-only viewer
+              (portal.preview without portal-admin) gets the briefs themselves
+              — which is the point — but not the button that would 403. */}
+          {onAttach && unfiled.length > 0 && (
             <div style={{ marginTop: briefs.length ? 10 : 4 }}>
               <div style={{
                 fontSize: 10.5, fontWeight: 700, color: BRAND.muted, letterSpacing: 0.4,

@@ -335,7 +335,22 @@ export default async function handler(req, res) {
     return res.status(200).json({ users });
   }
 
-  const user = await requirePermission(req, res, PORTAL_ADMIN_PERMS);
+  // Reading ONE DEAL's portal card — the steps the client has completed, their
+  // activity, and their brief — is the same information the read-only preview
+  // already shows, so it takes the same permission (portal.preview: producers,
+  // copywriters and PMs). A copywriter who can open a client's portal but 403s
+  // on the card holding that client's brief has access in name only.
+  //
+  // Deliberately scoped to the deal GET, not to every GET here. The company and
+  // contact reads back cards full of account administration — invite, disable a
+  // member, revoke access, reset a password — which is a different job from
+  // reading a project, and belongs with the portal admins along with every
+  // write. Widening those would have put buttons in front of the delivery team
+  // that only ever end in a 403.
+  const dealRead = req.method === 'GET'
+    && !!trimOrNull(req.query.dealId)
+    && !trimOrNull(req.query.op);
+  const user = await requirePermission(req, res, dealRead ? portalPreviewPerms(false) : PORTAL_ADMIN_PERMS);
   if (!user) return;
   await ensurePortalTables();
 

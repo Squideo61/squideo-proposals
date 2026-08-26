@@ -130,6 +130,21 @@ describe('portalPreviewPerms', () => {
       expect(isValidPermission(slug)).toBe(true);
     }
   });
+
+  // The split the deal-card read in api/crm/portal-admin.js depends on. A
+  // copywriter holds portal.preview and none of the portal-admin permissions,
+  // so gating that read on PORTAL_ADMIN_PERMS locked them out of the card
+  // carrying the client's brief — the thing they most need to read.
+  it('lets a copywriter read a portal but not administer one', () => {
+    const copywriter = {
+      permissions: ['revisions.access', 'production.access', 'schedule.access', 'portal.preview'],
+    };
+    expect(allows(copywriter, false)).toBe(true);
+    expect(allows(copywriter, true)).toBe(false);
+    for (const slug of PORTAL_ADMIN_PERMS) {
+      expect(hasPermission(copywriter, slug)).toBe(false);
+    }
+  });
 });
 
 describe('permissionsInclude', () => {

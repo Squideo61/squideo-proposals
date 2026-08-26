@@ -10,7 +10,7 @@ import {
 import { BRAND } from '../../theme.js';
 import { api } from '../../api.js';
 import { useStore } from '../../store.jsx';
-import { permissionsInclude } from '../../lib/permissions.js';
+import { permissionsInclude, PORTAL_ADMIN_PERMS } from '../../lib/permissions.js';
 import { formatGBP } from '../../utils.js';
 import { Card, Empty } from './Card.jsx';
 import { Modal } from '../ui.jsx';
@@ -357,6 +357,12 @@ export function PortalDealCard({ dealId, dealTitle = null }) {
   // video before it's paid for is a money call — that stays with invoices.manage,
   // so don't offer them a button the server will refuse.
   const canRelease = permissionsInclude(state.session?.permissions, 'invoices.manage');
+  // Reading this card now only needs portal.preview, so producers and
+  // copywriters reach it for the steps, the activity and the client's brief.
+  // Everything that CHANGES the portal — offers, the extras discount, invites —
+  // still needs a portal-admin permission server-side, so don't render controls
+  // whose only outcome for them would be a 403.
+  const canManage = PORTAL_ADMIN_PERMS.some((p) => permissionsInclude(state.session?.permissions, p));
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -456,20 +462,24 @@ export function PortalDealCard({ dealId, dealTitle = null }) {
               ? 'This deal isn’t linked to a company yet, and a portal belongs to an organisation. Set the company on this deal and you can preview it — no invite needed.'
               : null}
           />
-          <button
-            className="btn-ghost"
-            style={{ fontSize: 12 }}
-            disabled={!data || !data.companyId}
-            onClick={() => setShowInvite(true)}
-            title={data && !data.companyId
-              ? 'Link this deal to a company first — an invite gives someone access to that organisation’s portal.'
-              : 'Squideo sends the invite email — you confirm the wording first'}
-          >
-            <Send size={12} style={{ verticalAlign: -1, marginRight: 4 }} />CRM portal invite
-          </button>
-          <button className="btn-ghost" style={{ fontSize: 12 }} onClick={() => setShowCustom(true)}>
-            <Plus size={12} style={{ verticalAlign: -1, marginRight: 4 }} />Custom offer
-          </button>
+          {canManage && (
+            <button
+              className="btn-ghost"
+              style={{ fontSize: 12 }}
+              disabled={!data || !data.companyId}
+              onClick={() => setShowInvite(true)}
+              title={data && !data.companyId
+                ? 'Link this deal to a company first — an invite gives someone access to that organisation’s portal.'
+                : 'Squideo sends the invite email — you confirm the wording first'}
+            >
+              <Send size={12} style={{ verticalAlign: -1, marginRight: 4 }} />CRM portal invite
+            </button>
+          )}
+          {canManage && (
+            <button className="btn-ghost" style={{ fontSize: 12 }} onClick={() => setShowCustom(true)}>
+              <Plus size={12} style={{ verticalAlign: -1, marginRight: 4 }} />Custom offer
+            </button>
+          )}
         </div>
       }
     >
@@ -511,7 +521,7 @@ export function PortalDealCard({ dealId, dealTitle = null }) {
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, padding: '7px 10px', borderRadius: 8, background: bg, border: '1px solid ' + bd }}>
                 <span style={{ width: 8, height: 8, borderRadius: '50%', background: dot, flexShrink: 0 }} />
                 <span style={{ fontSize: 12, fontWeight: 600, color: BRAND.ink }}>{label}</span>
-                {!has && !orgless && (
+                {!has && !orgless && canManage && (
                   <button className="btn-link" style={{ marginLeft: 'auto', fontSize: 11.5, fontWeight: 700 }} disabled={!data} onClick={() => setShowInvite(true)}>
                     {pend ? 'Manage invites' : 'Send invite'}
                   </button>
@@ -526,11 +536,11 @@ export function PortalDealCard({ dealId, dealTitle = null }) {
               waiting on". Its activity log stays at the bottom. */}
           <PortalStepsActivity variant="deal" sections="steps" steps={data.steps || []} />
 
-          {allOffers.length === 0 && (
+          {canManage && allOffers.length === 0 && (
             <Empty text="No portal extras to offer — the signed proposal has no remaining optional extras. Add a custom offer to upsell." />
           )}
 
-          {allOffers.length > 0 && (
+          {canManage && allOffers.length > 0 && (
             <ExtrasHeader
               live={liveCount}
               hidden={hiddenCount}
@@ -540,7 +550,7 @@ export function PortalDealCard({ dealId, dealTitle = null }) {
             />
           )}
 
-          {showExtras && proposalOffers.length > 0 && (
+          {canManage && showExtras && proposalOffers.length > 0 && (
             <>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12.5, color: BRAND.muted, margin: '2px 0 8px' }}>
                 <span>Portal extras discount:</span>
@@ -575,7 +585,7 @@ export function PortalDealCard({ dealId, dealTitle = null }) {
             </>
           )}
 
-          {customOffers.map((o) => (
+          {canManage && customOffers.map((o) => (
             <div key={o.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 0', borderBottom: '1px solid ' + BRAND.border, fontSize: 13, opacity: o.hidden ? 0.5 : 1 }}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <span style={{ fontWeight: 600, color: BRAND.ink }}>{o.title}</span>
@@ -629,10 +639,10 @@ export function PortalDealCard({ dealId, dealTitle = null }) {
             briefs={data.briefs || []}
             unfiled={data.unfiledBriefs || []}
             busy={busy}
-            onAttach={(b) => run(
+            onAttach={canManage ? (b) => run(
               () => api.post('/api/crm/portal-admin?op=brief-attach', { briefId: b.id, dealId }),
               `“${b.title}” filed to this project`,
-            )}
+            ) : null}
           />
 
           <PortalStepsActivity variant="deal" sections="activity" activity={data.activity || []} />
