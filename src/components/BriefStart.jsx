@@ -101,7 +101,12 @@ const STEPS = [
 //                       squideo.com/online-brief-builder so the two sites make
 //                       the same offer in the same words until Duda retires.
 export function BriefStart({ getAttribution, variant = 'compact' }) {
-  const carded = variant === 'full' || variant === 'landing';
+  // 'card' is 'full' without the pitch column: the host has already made the
+  // pitch and only wants the card. squideo-web's brief band renders the same
+  // eyebrow, headline, intro and bullets as BriefPromo does, so embedding
+  // 'full' beside it said everything twice, and 'compact' put a second,
+  // longer version of the intro inside the card.
+  const carded = variant === 'full' || variant === 'landing' || variant === 'card';
   const form = <BriefStartForm getAttribution={getAttribution} full={carded} />;
   if (variant === 'landing') return <BriefLanding>{form}</BriefLanding>;
   if (variant === 'full') return <BriefPromo>{form}</BriefPromo>;

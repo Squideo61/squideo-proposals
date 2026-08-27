@@ -65,6 +65,10 @@ if (inIframe) {
   } catch { /* ignore */ }
 }
 
+// ?variant=card    the card alone, worded for a host that has ALREADY made the
+//                  pitch — "Start your brief / Two details and you're in"
+//                  rather than compact's second, longer telling of it. This is
+//                  what squideo-web's brief band embeds.
 // ?variant=full    adds the pitch beside the form, for embedding somewhere that
 //                  isn't already explaining what this is (a homepage section,
 //                  the process page).
@@ -72,7 +76,7 @@ if (inIframe) {
 //                  Duda page that mirrors squideo.com/online-brief-builder.
 // Default stays compact — a page with its own selling copy wants only the card.
 const requested = new URLSearchParams(window.location.search).get('variant');
-const variant = requested === 'full' || requested === 'landing' ? requested : 'compact';
+const variant = ['full', 'landing', 'card'].includes(requested) ? requested : 'compact';
 
 const container = document.getElementById('brief-start-root');
 // The landing variant's bands run edge to edge and paint their own backgrounds,
