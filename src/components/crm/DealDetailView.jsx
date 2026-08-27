@@ -998,7 +998,7 @@ export function DealDetailView({ dealId, onBack, backLabel, onOpenProposal, onCr
             from freelancers / finance-restricted views). */}
         {state.session?.role !== 'freelancer' && !hideFinancials && (
           <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
-            <PortalDealCard dealId={dealId} dealTitle={deal.title} />
+            <PortalDealCard dealId={dealId} dealTitle={deal.title} onLinkCompany={() => setEditing(true)} />
           </div>
         )}
 

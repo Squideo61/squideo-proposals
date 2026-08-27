@@ -351,7 +351,7 @@ function ExtrasHeader({ live, hidden, discountPct, collapsed, onToggle }) {
   );
 }
 
-export function PortalDealCard({ dealId, dealTitle = null }) {
+export function PortalDealCard({ dealId, dealTitle = null, onLinkCompany = null }) {
   const { state, actions, showMsg } = useStore();
   // Production Managers run the portal (portal.manage) but releasing the final
   // video before it's paid for is a money call — that stays with invoices.manage,
@@ -373,6 +373,27 @@ export function PortalDealCard({ dealId, dealTitle = null }) {
   const [custom, setCustom] = useState({ title: '', description: '', amount: '' });
   const [discountEdit, setDiscountEdit] = useState(null); // % string while editing
 
+  // Everything on this card hangs off the deal's organisation, and that can be
+  // linked while the page is open (Edit deal → Organisation). Keyed on the
+  // deal's live company id as well as its id, so linking one refetches instead
+  // of leaving the card insisting there's no company until a reload.
+  // Detail first, same as the page around it — a save lands in both, but only
+  // the detail is refetched from the server.
+  const liveDeal = state.dealDetail?.[dealId] || state.deals?.[dealId] || null;
+  const dealCompanyId = liveDeal?.companyId || null;
+
+  // A deal usually lands here because a company was put on the CONTACT and not
+  // on the deal — the two are separate links, and only the deal's one opens a
+  // portal. When that's what happened, name the company and offer to adopt it
+  // rather than sending the user off to hunt for the field.
+  const primaryContactId = liveDeal?.primaryContactId || null;
+  const contactCompany = useMemo(() => {
+    if (dealCompanyId || !primaryContactId) return null;
+    const coId = state.contacts?.[primaryContactId]?.companyId || null;
+    const co = coId ? state.companies?.[coId] : null;
+    return co ? { id: co.id, name: co.name } : null;
+  }, [dealCompanyId, primaryContactId, state.contacts, state.companies]);
+
   const load = useCallback(async () => {
     try {
       setData(await api.get(`/api/crm/portal-admin?dealId=${encodeURIComponent(dealId)}`));
@@ -380,7 +401,7 @@ export function PortalDealCard({ dealId, dealTitle = null }) {
     } catch (err) {
       setError(err.message);
     }
-  }, [dealId]);
+  }, [dealId, dealCompanyId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -524,6 +545,29 @@ export function PortalDealCard({ dealId, dealTitle = null }) {
                 {!has && !orgless && canManage && (
                   <button className="btn-link" style={{ marginLeft: 'auto', fontSize: 11.5, fontWeight: 700 }} disabled={!data} onClick={() => setShowInvite(true)}>
                     {pend ? 'Manage invites' : 'Send invite'}
+                  </button>
+                )}
+                {/* The banner names the missing step, so it may as well be the
+                    way to do it — the Organisation field is otherwise buried in
+                    Edit deal, and putting a company on a CONTACT doesn't put one
+                    on the deal. */}
+                {orgless && canManage && contactCompany && (
+                  <button
+                    className="btn-link"
+                    style={{ marginLeft: 'auto', fontSize: 11.5, fontWeight: 700, whiteSpace: 'nowrap' }}
+                    disabled={busy}
+                    title={`${contactCompany.name} is on this deal's main contact but not on the deal itself — the portal follows the deal.`}
+                    onClick={() => run(
+                      () => actions.saveDeal(dealId, { companyId: contactCompany.id }),
+                      `Linked to ${contactCompany.name}`,
+                    )}
+                  >
+                    Link {contactCompany.name}
+                  </button>
+                )}
+                {orgless && canManage && !contactCompany && onLinkCompany && (
+                  <button className="btn-link" style={{ marginLeft: 'auto', fontSize: 11.5, fontWeight: 700, whiteSpace: 'nowrap' }} onClick={onLinkCompany}>
+                    Link a company
                   </button>
                 )}
               </div>
