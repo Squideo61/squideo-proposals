@@ -1899,9 +1899,14 @@ export function ConversationView({ openRef, folder, connected, onBack, onOpenDea
                     contact={null}
                     // Restore the saved draft only when its mode matches the open
                     // composer, so switching reply↔forward doesn't show stale content.
-                    initialDraft={savedThreadDraft && savedThreadDraft.mode === composeMode
-                      ? { ...draftFor(composeMode), ...savedThreadDraft }
-                      : draftFor(composeMode)}
+                    initialDraft={(() => {
+                      const base = draftFor(composeMode);
+                      if (!savedThreadDraft || savedThreadDraft.mode !== composeMode) return base;
+                      // The conversation to send into always comes from the
+                      // live thread, never the snapshot — a restored forward
+                      // must start a new one, not reply into the original.
+                      return { ...base, ...savedThreadDraft, gmailThreadId: base?.gmailThreadId || null };
+                    })()}
                     threadDraftKey={openRef.threadId}
                     draftMode={composeMode}
                     // Discard clears the saved draft; navigating away (unmount) keeps it.

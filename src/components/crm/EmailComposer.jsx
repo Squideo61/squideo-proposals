@@ -87,11 +87,15 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
 
   // Esc closes the composer — preserves the Modal-era keyboard affordance
   // even though we no longer render through Modal.
+  // Escape closes the floating dock composer (it reads as a modal). The inline
+  // composer sits inside the page and its onClose is a deliberate discard —
+  // binning the saved draft — so a stray Escape mustn't trigger it.
   useEffect(() => {
+    if (inline) return;
     const onKey = (e) => { if (e.key === 'Escape') onClose && onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [inline, onClose]);
 
   // Autosave as the user types, so navigating away or refreshing never loses
   // the draft. Debounced. The dock composer persists into composerContext (which
@@ -110,7 +114,11 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
         if (hasContent) {
           actions.saveThreadDraft(threadDraftKey, {
             to, cc, bcc, subject, body,
-            gmailThreadId: replyThreadId || threadDraftKey,
+            // What this composer would actually send into — NOT the storage
+            // key. A forward has no thread (it starts a new one), and saving
+            // the key here would make a restored forward reply into the
+            // conversation it was forwarded from.
+            gmailThreadId: replyThreadId || null,
             extraDeals, attachments: cleanAttachments,
             mode: draftMode || 'reply',
           });
@@ -791,7 +799,7 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
           </div>
           </div>
           {/* Pinned action footer — sits below the scrolling body so the
-              Discard / Save as draft / Send buttons stay visible no matter
+              Discard / Send buttons stay visible no matter
               how tall the form (or the signature preview) gets. */}
           <div
             style={{

@@ -1716,6 +1716,11 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
   const latest = messages[messages.length - 1];
   const threadId = latest.gmailThreadId || latest.gmailMessageId;
 
+  // An inline reply/forward in progress is mirrored into the store keyed by
+  // thread id (see saveThreadDraft) — the same slot the full thread reader in
+  // the Emails section uses, so a draft started here can be finished there.
+  const savedThreadDraft = state.threadDrafts?.[threadId] || null;
+
   // Re: subject shared by both reply variants.
   const replySubject = () => (/^re:/i.test(latest.subject || '') ? latest.subject : 'Re: ' + (latest.subject || '(no subject)'));
 
@@ -1769,6 +1774,33 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
   const [forwardSeq, setForwardSeq] = useState(0);
   const [preparingForward, setPreparingForward] = useState(false);
 
+  // Which composer is open — also the mode the draft is saved under, so a
+  // reply's content is never restored into a forward (or vice versa).
+  const composeMode = forwardDraft ? 'forward' : (replyAll ? 'replyAll' : 'reply');
+
+  // Bring back a reply/forward that was still being written when the page was
+  // left or reloaded: expand the conversation and reopen the composer in the
+  // mode it was written in. The saved snapshot carries the body and any
+  // attachments, so a restored forward needs no rebuilding. Runs once per
+  // thread — after that the live composer owns the state.
+  const restoredDraft = useRef(false);
+  useEffect(() => {
+    if (restoredDraft.current) return;
+    restoredDraft.current = true;
+    const d = state.threadDrafts?.[threadId];
+    if (!d) return;
+    setExpanded(true);
+    if (d.mode === 'forward') {
+      setReplying(false);
+      // A forward opens its own conversation, whatever the snapshot says.
+      setForwardDraft({ ...d, gmailThreadId: null });
+    } else {
+      setForwardDraft(null);
+      setReplyAll(d.mode === 'replyAll');
+      setReplying(true);
+    }
+  }, [threadId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const startReply = (all = false) => {
     setForwardDraft(null);
     setReplyAll(all);
@@ -1784,6 +1816,10 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
   // the forward still opens, with the files named so they can be added by hand.
   const startForward = async (onlyIds = null) => {
     if (preparingForward) return;
+    // A new forward replaces any forward already saved on this thread —
+    // otherwise the saved draft would win and you'd get the previous
+    // selection's body back. A reply draft is a different mode and survives.
+    if (state.threadDrafts?.[threadId]?.mode === 'forward') actions.clearThreadDraft(threadId);
     setPreparingForward(true);
     try {
       const full = await actions.loadDealThread(threadId);
@@ -1957,9 +1993,24 @@ export function ThreadRow({ messages, dealId, dealTitle, linkedEmails, defaultCo
               inline
               deal={{ id: dealId, title: dealTitle }}
               contact={null}
-              initialDraft={forwardDraft || (replyAll ? replyAllDraft() : replyDraft())}
-              onClose={closeComposer}
-              onSent={() => { closeComposer(); actions.loadDealDetail(dealId); }}
+              // Resume the saved draft only when its mode matches the open
+              // composer, so switching reply↔forward doesn't show stale content.
+              initialDraft={(() => {
+                const base = forwardDraft || (replyAll ? replyAllDraft() : replyDraft());
+                if (!savedThreadDraft || savedThreadDraft.mode !== composeMode) return base;
+                // The conversation to send into always comes from the live
+                // thread, never the snapshot — a forward must start a new one.
+                return { ...base, ...savedThreadDraft, gmailThreadId: base.gmailThreadId || null };
+              })()}
+              // Autosaves into the per-thread draft slot as you type, so
+              // collapsing the thread, leaving the deal or a refresh never
+              // loses an unsent reply.
+              threadDraftKey={threadId}
+              draftMode={composeMode}
+              // Discard is deliberate — bin the saved draft. Navigating away
+              // (unmount) keeps it.
+              onClose={() => { actions.clearThreadDraft(threadId); closeComposer(); }}
+              onSent={() => { actions.clearThreadDraft(threadId); closeComposer(); actions.loadDealDetail(dealId); }}
             />
           ) : (
             <div style={{ display: 'flex', gap: 8, alignSelf: 'flex-start', flexWrap: 'wrap' }}>
