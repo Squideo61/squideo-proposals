@@ -948,17 +948,25 @@ function deleteAttachmentBlobs(attachments) {
 // Build a MIME body entity (its own Content-Type header + the body). Used
 // either as the whole message body or as the first part inside a
 // multipart/mixed when there are attachments.
-function buildBodyEntity(htmlOut, textOut) {
+// Bodies go out base64-encoded rather than as raw 8-bit text. Anything outside
+// ASCII — an emoji, a £, the em dashes we write everywhere — is multi-byte
+// UTF-8, and declaring "7bit" while shipping those bytes is exactly what turns
+// a 😀 into "ðŸ˜€" in a client that takes the header at its word.
+function encodeBodyPart(content) {
+  return Buffer.from(content, 'utf8').toString('base64').replace(/(.{76})/g, '$1\r\n');
+}
+
+export function buildBodyEntity(htmlOut, textOut) {
   if (htmlOut && textOut) {
     const b = 'sqd_alt_' + crypto.randomBytes(8).toString('hex');
     return `Content-Type: multipart/alternative; boundary="${b}"\r\n\r\n`
-      + `--${b}\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: 7bit\r\n\r\n${textOut}\r\n`
-      + `--${b}\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: 7bit\r\n\r\n${htmlOut}\r\n`
+      + `--${b}\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n${encodeBodyPart(textOut)}\r\n`
+      + `--${b}\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n${encodeBodyPart(htmlOut)}\r\n`
       + `--${b}--\r\n`;
   } else if (htmlOut) {
-    return `Content-Type: text/html; charset=UTF-8\r\n\r\n${htmlOut}`;
+    return `Content-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n${encodeBodyPart(htmlOut)}`;
   }
-  return `Content-Type: text/plain; charset=UTF-8\r\n\r\n${textOut}`;
+  return `Content-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n${encodeBodyPart(textOut)}`;
 }
 
 // Fetch each attachment blob and render it as a base64 MIME part string.

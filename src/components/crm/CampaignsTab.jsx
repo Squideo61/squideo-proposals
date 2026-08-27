@@ -21,6 +21,7 @@ import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
 import { Modal, ResponsiveTable } from '../ui.jsx';
 import { RichTextEditor, RichTextToolbar } from './EmailComposer.jsx';
+import { EmojiPickerButton, insertEmojiIntoInput } from '../EmojiPicker.jsx';
 import { sanitizeEmailHtml, isHtmlEmpty } from '../../lib/emailHtml.js';
 
 const LISTS = [
@@ -670,6 +671,7 @@ function CampaignEditor({ campaign, counts, sender, onSaved, onDone, onDeleted }
   const { showMsg } = useStore();
   const isMobile = useIsMobile();
   const editorRef = useRef(null);
+  const subjectRef = useRef(null);
   const [name, setName] = useState(campaign.name);
   const [audience, setAudience] = useState(campaign.audience);
   const [subject, setSubject] = useState(campaign.subject);
@@ -871,9 +873,21 @@ function CampaignEditor({ campaign, counts, sender, onSaved, onDone, onDeleted }
           </div>
 
           <div style={{ marginBottom: 14 }}>
-            <label style={label}>Subject</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <label style={{ ...label, marginBottom: 0 }}>Subject</label>
+              <div style={{ flex: 1 }} />
+              {/* Emoji in a subject line is a marketing device, not decoration —
+                  it's the one field where it changes the open rate. */}
+              <EmojiPickerButton
+                placement="bottom"
+                align="right"
+                title="Insert emoji into the subject"
+                onPick={(char) => insertEmojiIntoInput(subjectRef.current, char, (v) => mark(setSubject)(v))}
+              />
+            </div>
             <input
-              style={input} value={subject} placeholder="The line that decides whether it gets opened"
+              ref={subjectRef}
+              style={{ ...input, marginTop: 6 }} value={subject} placeholder="The line that decides whether it gets opened"
               onChange={(e) => mark(setSubject)(e.target.value)}
             />
           </div>

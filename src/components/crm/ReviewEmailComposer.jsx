@@ -17,6 +17,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Send, FileText, Users } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { Modal } from '../ui.jsx';
+import { EmojiPickerButton, insertEmojiIntoEditable } from '../EmojiPicker.jsx';
 import { useStore } from '../../store.jsx';
 import { crmApi } from '../../lib/crmFetch.js';
 import { reviewTemplate, fillReview, unfillReview, REVIEW_TEMPLATE_ID } from '../../lib/reviewEmail.js';
@@ -250,7 +251,17 @@ export default function ReviewEmailComposer({ kind, contextUrl, onSubmit, onClos
             <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.ink, marginBottom: 4 }}>Subject</div>
             <input className="input" value={subject} onChange={(e) => setSubject(e.target.value)} style={{ width: '100%' }} />
           </label>
-          <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.ink, marginBottom: 4 }}>Message</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.ink }}>Message</div>
+            <div style={{ flex: 1 }} />
+            {/* The body is read straight off the element at send, so dropping
+                an emoji into the DOM is all this needs. */}
+            <EmojiPickerButton
+              placement="bottom"
+              align="right"
+              onPick={(char) => insertEmojiIntoEditable(bodyRef.current, char)}
+            />
+          </div>
           <div
             ref={bodyRef}
             contentEditable

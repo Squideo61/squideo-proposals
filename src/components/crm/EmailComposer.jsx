@@ -11,6 +11,7 @@ import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile, fileSizeLabel } from '../../utils.js';
 import { Modal, FormRow } from '../ui.jsx';
+import { EmojiPickerButton, insertEmojiIntoEditable } from '../EmojiPicker.jsx';
 import { sanitizeEmailHtml, htmlToPlainText, isHtmlEmpty } from '../../lib/emailHtml.js';
 import { NewDealModal } from './PipelineView.jsx';
 import { DealSearchPicker } from './DealSearchPicker.jsx';
@@ -1663,6 +1664,13 @@ export function RichTextToolbar({ editorRef, onChange, onAttach, onInsertImage }
       {onAttach && <Btn onClick={onAttach} title="Attach files">📎</Btn>}
       {onInsertImage && <Btn onClick={onInsertImage} title="Insert an image">🖼</Btn>}
       <Btn onClick={addLink} title="Insert link">🔗</Btn>
+      <EmojiPickerButton
+        buttonStyle={toolBtn}
+        onPick={(char) => {
+          const html = insertEmojiIntoEditable(editorRef.current, char);
+          if (html != null) onChange(html);
+        }}
+      />
       <Btn onClick={() => exec('removeFormat')} title="Clear formatting">⨯</Btn>
     </div>
   );
