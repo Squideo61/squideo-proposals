@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Archive, Award, CalendarClock, Calendar, Captions, Check, ChevronLeft, Download,
   FileDown, FileText, Globe, LayoutGrid, Link2, Mic, Music, Palette, PenLine, Phone,
-  Play, RefreshCw, Rocket, Share2, Smartphone, Sparkles, Users
+  Pause, Play, RefreshCw, Rocket, Share2, Smartphone, Sparkles, Users
 } from 'lucide-react';
 import { BRAND, CONFIG, DEFAULT_PHOTOS } from '../theme.js';
 import { SQUIDEO_LOGO, NEXT_STEPS, extraHasVariants, extraHasQuantity, extraUnitPrice, extraNetUnitPrice, extrasDiscountRate, formatFreeSubtitlesValue, resolveExtraPricing, applyInclusionTokens } from '../defaults.js';
@@ -43,6 +43,66 @@ const INCLUSION_ICON_RULES = [
   [/meeting|team|follow.?up/i, Users],
   [/word|narrative|140/i, FileText],
 ];
+
+// "Latest-generation AI voiceover artist" is an abstract promise until you hear
+// one, so that inclusion carries a clip of the voice we'd actually use. The
+// bytes only leave the server on press (preload="none"), so a proposal nobody
+// listens to costs nothing extra to open.
+function VoiceoverSampleRow({ proposalId, sample }) {
+  const audioRef = useRef(null);
+  const [playing, setPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);   // 0..1
+  const [failed, setFailed] = useState(false);
+  // The size cache-buster means a clip replaced in Admin → Voiceovers is heard
+  // straight away instead of the browser replaying its cached copy.
+  const src = '/api/proposals/' + encodeURIComponent(proposalId) + '/voiceover-sample?v=' + (sample.v || 0);
+
+  const toggle = () => {
+    const el = audioRef.current;
+    if (!el) return;
+    if (el.paused) el.play().catch(() => setFailed(true));
+    else el.pause();
+  };
+
+  if (failed) return null;   // never leave a dead play button on a proposal
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8, padding: '8px 10px', background: BRAND.blue + '0D', border: '1px solid ' + BRAND.blue + '33', borderRadius: 10 }}>
+      <button
+        type="button"
+        onClick={toggle}
+        aria-label={playing ? 'Pause the voiceover sample' : 'Play a voiceover sample'}
+        style={{ flexShrink: 0, width: 34, height: 34, borderRadius: '50%', border: 'none', background: BRAND.blue, color: 'white', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0 }}
+      >
+        {playing ? <Pause size={15} fill="white" /> : <Play size={15} fill="white" style={{ marginLeft: 2 }} />}
+      </button>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 600, color: BRAND.ink }}>
+          {playing ? 'Playing' : 'Hear a sample'}
+          <span style={{ fontWeight: 500, color: BRAND.muted }}>
+            {sample.name ? ' — ' + sample.name : ''}{sample.description ? ', ' + sample.description : ''}
+          </span>
+        </div>
+        <div style={{ height: 4, borderRadius: 999, background: BRAND.blue + '26', marginTop: 6, overflow: 'hidden' }}>
+          <div style={{ height: '100%', width: (progress * 100).toFixed(1) + '%', background: BRAND.blue, borderRadius: 999, transition: 'width 120ms linear' }} />
+        </div>
+      </div>
+      <audio
+        ref={audioRef}
+        src={src}
+        preload="none"
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => { setPlaying(false); setProgress(0); }}
+        onTimeUpdate={(e) => {
+          const { currentTime, duration } = e.currentTarget;
+          setProgress(duration ? Math.min(1, currentTime / duration) : 0);
+        }}
+        onError={() => { setPlaying(false); setFailed(true); }}
+      />
+    </div>
+  );
+}
 
 function iconForInclusion(title) {
   if (!title) return Check;
@@ -172,6 +232,24 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
     actions.loadDealInvoices(dealId).then((rows) => { if (alive) setDealInvoices(rows); });
     return () => { alive = false; };
   }, [isPreview, signed, payment, dealId]);
+
+  // The AI voice this proposal demos, under the voiceover inclusion. A public
+  // read resolves it server-side and ships it with the proposal; a staff preview
+  // reads the CRM's own payload (which carries no sample), so it asks the public
+  // route — off the SAVED proposal, so an override picked seconds ago shows once
+  // the builder's autosave lands.
+  const embeddedSample = data?._voiceoverSample;
+  const [fetchedSample, setFetchedSample] = useState(null);
+  useEffect(() => {
+    if (!data || embeddedSample !== undefined) { setFetchedSample(null); return; }
+    let alive = true;
+    fetch('/api/proposals/' + encodeURIComponent(id) + '/voiceover-sample?meta=1')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (alive) setFetchedSample(j?.sample || null); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [id, embeddedSample, Boolean(data)]);
+  const voiceoverSample = embeddedSample !== undefined ? embeddedSample : fetchedSample;
 
   // Track viewing session: open + heartbeat (active time only) + close beacon
   // Only fires for real client views (public URL). Internal previews from the
@@ -775,9 +853,13 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
             <button
               onClick={() => openPrintWindow(
                 data,
-                signed
-                  ? printOptionsForSigned(signed, payment)
-                  : { signable: true, selectedExtras, selectedExtrasMeta: extrasMeta, paymentOption, partnerSelected }
+                {
+                  // The PDF can't play it, but it can say it's there.
+                  voiceoverSample,
+                  ...(signed
+                    ? printOptionsForSigned(signed, payment)
+                    : { signable: true, selectedExtras, selectedExtrasMeta: extrasMeta, paymentOption, partnerSelected }),
+                }
               )}
               className="btn-ghost"
               style={{ fontSize: 13 }}
@@ -1028,6 +1110,9 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
                   <div style={{ fontWeight: 500 }}>{applyInclusionTokens(inc.title, contentMinutes)}</div>
                   {inc.description && (
                     <div style={{ fontSize: 13, color: BRAND.muted, lineHeight: 1.5, marginTop: 3 }}>{applyInclusionTokens(inc.description, contentMinutes)}</div>
+                  )}
+                  {voiceoverSample && /latest-generation ai voiceover/i.test(inc.title || '') && (
+                    <VoiceoverSampleRow proposalId={id} sample={voiceoverSample} />
                   )}
                 </div>
               </div>
@@ -1718,7 +1803,7 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
             onConfirmInvoice={handleConfirmInvoice}
             onPoConfirm={handlePoConfirm}
             onDownloadReceipt={payment ? () => openReceiptWindow(data, signed, payment) : undefined}
-            onDownloadSignedProposal={signed ? () => openPrintWindow(data, printOptionsForSigned(signed, payment)) : undefined}
+            onDownloadSignedProposal={signed ? () => openPrintWindow(data, { voiceoverSample, ...printOptionsForSigned(signed, payment) }) : undefined}
           />
         ) : (
           <div ref={signRef} style={{ background: BRAND.paper, border: '2px solid ' + BRAND.blue, borderRadius: 12, padding: 24, scrollMarginTop: 80 }}>

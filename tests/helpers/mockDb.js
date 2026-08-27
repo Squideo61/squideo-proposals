@@ -26,6 +26,12 @@ export function sqlMock(strings, ...values) {
   return Promise.resolve(handler(text, values));
 }
 
+// The Neon HTTP driver batches reads/writes into one request with
+// sql.transaction([...]). Its tagged template returns a lazy query object that
+// transaction() runs; here each tagged call has already produced a promise, so
+// resolving them together is the same thing.
+sqlMock.transaction = (queries) => Promise.all(queries);
+
 export function setSqlHandler(fn) {
   handler = fn;
 }

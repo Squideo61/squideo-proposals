@@ -54,6 +54,10 @@ function ensureFinanceTargetsColumn() {
     await sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS demo_project JSONB`;
     // { url, title } — the video on the portal's Partner Programme page.
     await sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS partner_video JSONB`;
+    // { artistId } — the AI voiceover artist whose sample clip plays on client
+    // proposals (db/migrations/20260827_proposal_voiceover_sample.sql). null
+    // until an admin picks one; the resolver then falls back by name.
+    await sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS proposal_voiceover JSONB`;
   })().catch((err) => { financeTargetsColumnEnsured = null; throw err; });
   return financeTargetsColumnEnsured;
 }
@@ -68,7 +72,7 @@ export default async function handler(req, res) {
   await ensureFinanceTargetsColumn();
 
   if (req.method === 'GET') {
-    const rows = await sql`SELECT extras_bank, inclusions_bank, notification_recipients, revision_call_url, finance_targets, sales_targets, cost_items, default_proposal, project_tasks_email, voiceover_pricing, task_reminders, course_emails, demo_project, partner_video FROM settings WHERE id = 1`;
+    const rows = await sql`SELECT extras_bank, inclusions_bank, notification_recipients, revision_call_url, finance_targets, sales_targets, cost_items, default_proposal, project_tasks_email, voiceover_pricing, task_reminders, course_emails, demo_project, partner_video, proposal_voiceover FROM settings WHERE id = 1`;
     const row = rows[0];
     return res.status(200).json({
       extrasBank: row.extras_bank,
@@ -91,6 +95,8 @@ export default async function handler(req, res) {
       // Where the sample project's video lives. null until one is uploaded.
       demoProject: row.demo_project || null,
       partnerVideo: row.partner_video || null,
+      // Which AI voice demos on client proposals. null = resolved by name.
+      proposalVoiceover: row.proposal_voiceover || null,
       financeTargets: Array.isArray(row.finance_targets) && row.finance_targets.length
         ? row.finance_targets
         : DEFAULT_FINANCE_TARGETS,
@@ -110,7 +116,7 @@ export default async function handler(req, res) {
     if (!hasPermission(await getRole(user.role), 'settings.manage')) {
       return res.status(403).json({ error: 'You do not have permission to edit workspace settings' });
     }
-    const { extrasBank, inclusionsBank, notificationRecipients, revisionCallUrl, financeTargets, salesTargets, costItems, defaultProposal, projectTasksEmail, voiceoverPricing, taskReminders, courseEmails, demoProject, partnerVideo } = req.body || {};
+    const { extrasBank, inclusionsBank, notificationRecipients, revisionCallUrl, financeTargets, salesTargets, costItems, defaultProposal, projectTasksEmail, voiceoverPricing, taskReminders, courseEmails, demoProject, partnerVideo, proposalVoiceover } = req.body || {};
     await sql`
       UPDATE settings SET
         extras_bank             = COALESCE(${extrasBank ? JSON.stringify(extrasBank) : null}::jsonb, extras_bank),
@@ -126,7 +132,8 @@ export default async function handler(req, res) {
         task_reminders          = COALESCE(${taskReminders ? JSON.stringify(taskReminders) : null}::jsonb, task_reminders),
         course_emails           = COALESCE(${courseEmails ? JSON.stringify(courseEmails) : null}::jsonb, course_emails),
         demo_project            = COALESCE(${demoProject ? JSON.stringify(demoProject) : null}::jsonb, demo_project),
-        partner_video           = COALESCE(${partnerVideo ? JSON.stringify(partnerVideo) : null}::jsonb, partner_video)
+        partner_video           = COALESCE(${partnerVideo ? JSON.stringify(partnerVideo) : null}::jsonb, partner_video),
+        proposal_voiceover      = COALESCE(${proposalVoiceover ? JSON.stringify(proposalVoiceover) : null}::jsonb, proposal_voiceover)
       WHERE id = 1
     `;
     return res.status(200).json({ ok: true });

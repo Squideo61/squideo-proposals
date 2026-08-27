@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Mic, Plus, Trash2, Upload, Loader2, Eye, EyeOff, Pencil } from 'lucide-react';
+import { Mic, Plus, Trash2, Upload, Loader2, Eye, EyeOff, Pencil, Volume2 } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { VOICEOVER_SECTIONS } from '../../lib/voiceoverSections.js';
+import { proposalSampleArtistId } from '../../lib/proposalSampleVoice.js';
 
 // Admin → Voiceovers. Manage the GLOBAL voiceover-artist catalogue the client
 // picks from (per video) in the portal. Three colour-coded sections:
@@ -69,7 +70,13 @@ function ClientPreview({ artists }) {
 }
 
 function ArtistRow({ artist }) {
-  const { actions, showMsg } = useStore();
+  const { state, actions, showMsg } = useStore();
+  const isProposalSample = artist.category === 'ai'
+    && artist.hasSample
+    && proposalSampleArtistId(state.voiceoverArtists, state.proposalVoiceover) === artist.id;
+  // Explicitly ticked, as opposed to landing here through the name fallback —
+  // only an explicit pick can be un-ticked.
+  const isExplicit = state.proposalVoiceover?.artistId === artist.id;
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(artist.name || '');
   const [description, setDescription] = useState(artist.description || '');
@@ -163,6 +170,29 @@ function ArtistRow({ artist }) {
           {busy ? <Loader2 size={14} className="spin" /> : <Upload size={14} />}
           {artist.hasSample ? 'Replace clip' : 'Upload clip'}
         </button>
+        {/* The one AI voice clients can play on a proposal. Only AI artists with
+            a clip can hold it — a proposal promises an AI voice, not a human one. */}
+        {artist.category === 'ai' && artist.hasSample && (
+          <button
+            onClick={() => actions
+              .saveProposalVoiceover({ artistId: isExplicit ? null : artist.id })
+              .then(() => showMsg(isExplicit ? 'Cleared — proposals fall back to the default voice' : `Proposals now play ${artist.name || 'this voice'}`))
+              .catch((e) => showMsg(e.message || 'Could not save'))}
+            className="btn-ghost"
+            title={isProposalSample
+              ? (isExplicit ? 'Clients hear this voice on proposals — click to clear' : 'Clients hear this voice on proposals (automatic default)')
+              : 'Play this voice on client proposals'}
+            style={{
+              fontSize: 12,
+              fontWeight: isProposalSample ? 700 : 500,
+              color: isProposalSample ? '#15803D' : BRAND.muted,
+              background: isProposalSample ? '#F0FDF4' : undefined,
+              borderColor: isProposalSample ? '#BBF7D0' : undefined,
+            }}
+          >
+            <Volume2 size={14} /> {isProposalSample ? 'Plays on proposals' : 'Use on proposals'}
+          </button>
+        )}
         {/* Quick move between the three sections. */}
         {SECTIONS.filter((s) => s.key !== artist.category).map((s) => (
           <button key={s.key} onClick={() => move(s.key)} className="btn-ghost" style={{ fontSize: 12 }}>

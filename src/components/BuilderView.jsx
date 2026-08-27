@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { BookmarkPlus, Building2, Check, ChevronLeft, CreditCard, Eye, GripVertical, Lightbulb, List, Lock, Mic, Package, Plus, PoundSterling, Save, Star, Users, Video, X } from 'lucide-react';
+import { BookmarkPlus, Building2, Check, ChevronLeft, CreditCard, Eye, GripVertical, Lightbulb, List, Lock, Mic, Package, Plus, PoundSterling, Save, Star, Users, Video, Volume2, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { useIsMobile, formatGBP, computeBaseDiscount } from '../utils.js';
@@ -10,6 +10,7 @@ import { ExtrasBankManager } from './ExtrasBankManager.jsx';
 import { extraHasVariants, extraUnitPrice, extraNetUnitPrice, extrasDiscountRate, formatFreeSubtitlesValue, resolveExtraPricing, applyInclusionTokens, DEFAULT_PROPOSAL, VARIANT_ELIGIBLE_IDS } from '../defaults.js';
 import { InclusionsBankManager } from './InclusionsBankManager.jsx';
 import { ClientLinkPanel } from './crm/ClientLinkPanel.jsx';
+import { aiSampleArtists, proposalSampleArtistId } from '../lib/proposalSampleVoice.js';
 
 // Fetch a Vimeo video's title + thumbnail via our /api/vimeo-oembed proxy
 // (the app CSP blocks calling vimeo.com from the browser). Returns
@@ -418,6 +419,14 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
   const inclusionsReorder = useReorderState();
   const extrasReorder = useReorderState();
   const isMobile = useIsMobile();
+
+  // The client can play an AI voice sample under that inclusion. Pull the
+  // catalogue in once, and only for a proposal that actually includes AI voice —
+  // reading it is open to any staff member (writes stay admin-only).
+  const aiVoIncluded = (data?.baseInclusions || []).some((inc) => /latest-generation ai voiceover/i.test(inc?.title || ''));
+  useEffect(() => {
+    if (aiVoIncluded && !state.voiceoverArtists) actions.loadVoiceoverArtists();
+  }, [aiVoIncluded, state.voiceoverArtists]);
 
   if (!data) {
     return (
@@ -1453,6 +1462,49 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
               }}
               placeholder="Description shown to client (optional)"
             />
+            {/* Which voice the client can actually hear. Left alone it's the
+                house voice from Admin → Voiceovers, so a salesperson never has
+                to think about it; the picker is for the proposal that wants a
+                different one (or none). */}
+            {isAiVo && (() => {
+              const artists = aiSampleArtists(state.voiceoverArtists);
+              const pick = data.voiceoverSample || null;
+              const value = pick?.off ? 'off' : (pick?.artistId || '');
+              const defaultId = proposalSampleArtistId(state.voiceoverArtists, state.proposalVoiceover);
+              const defaultName = artists.find((a) => a.id === defaultId)?.name || null;
+              const playingId = pick?.off ? null : (pick?.artistId || defaultId);
+              if (!artists.length) return null;   // nothing uploaded yet — no control to offer
+              return (
+                <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: '#B45309' }}>
+                    <Volume2 size={13} /> Sample the client can play
+                  </span>
+                  <select
+                    className="input"
+                    value={value}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      update({ voiceoverSample: v === '' ? null : v === 'off' ? { off: true } : { artistId: v } });
+                    }}
+                    style={{ width: 'auto', minWidth: 180, maxWidth: '100%', fontSize: 13, padding: '6px 8px' }}
+                  >
+                    <option value="">Default voice{defaultName ? ` (${defaultName})` : ''}</option>
+                    {artists.map((a) => (
+                      <option key={a.id} value={a.id}>{a.name}{a.description ? ` — ${a.description}` : ''}</option>
+                    ))}
+                    <option value="off">Don’t show a sample</option>
+                  </select>
+                  {playingId && (
+                    <audio
+                      controls
+                      preload="none"
+                      src={'/api/crm/voiceovers/' + encodeURIComponent(playingId) + '/sample'}
+                      style={{ height: 32, maxWidth: '100%' }}
+                    />
+                  )}
+                </div>
+              );
+            })()}
             {/* A written "up to N words" is an allowance PER MINUTE — the client
                 view multiplies it by the proposal's length. Easy to write the
                 already-multiplied figure by mistake (210 for a 90-second video,

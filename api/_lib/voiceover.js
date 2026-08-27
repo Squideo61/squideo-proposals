@@ -404,3 +404,70 @@ export async function streamVoiceoverSample(req, res, artist) {
   res.setHeader('Content-Length', String(full.length));
   return res.status(200).end(full);
 }
+
+// ═══════════════════ proposal sample ("hear the AI voice") ══════════════════
+// A client reading a proposal sees "Latest-generation AI voiceover artist" as
+// an inclusion — an abstract promise until they hear one. So the client view
+// plays one AI sample straight off the catalogue below that line.
+//
+// Which voice: the proposal's own override (set in the builder) → the house
+// voice an admin ticked in Admin → Voiceovers → the artist named Alexander →
+// any AI artist with a clip. The name fallback means this works before anyone
+// touches the admin toggle, and stops being consulted the moment they do.
+
+export const AI_VOICEOVER_INCLUSION_RE = /latest-generation ai voiceover/i;
+const HOUSE_SAMPLE_NAME_RE = /^alexander\b/i;
+
+// The metadata the public proposal payload carries. Deliberately thin: a name,
+// a description and a cache-buster — never the blob URL (the store is private).
+export function serialiseProposalSample(artist) {
+  if (!artist) return null;
+  return {
+    artistId: artist.id,
+    name: artist.name,
+    description: artist.description || null,
+    v: Number(artist.size_bytes) || 0,
+  };
+}
+
+// Resolve the artist whose clip a given proposal should play, or null for none.
+// Returns the raw row (streamVoiceoverSample wants blob_url/mime_type).
+export async function resolveProposalSampleArtist(proposalData) {
+  const data = proposalData || {};
+  const pick = data.voiceoverSample || null;
+  if (pick?.off) return null;                       // switched off for this proposal
+  const inclusions = Array.isArray(data.baseInclusions) ? data.baseInclusions : [];
+  const aiIncluded = inclusions.some((i) => AI_VOICEOVER_INCLUSION_RE.test(i?.title || ''));
+  if (!aiIncluded && !pick?.artistId) return null;  // no AI voice on this proposal
+
+  // Reads only, and it sits on the unauthenticated proposal read — so no DDL
+  // self-heal here, and a missing table/column resolves to "no sample" rather
+  // than 500ing a client's proposal.
+  try {
+    if (pick?.artistId) {
+      const [row] = await sql`
+        SELECT * FROM voiceover_artists WHERE id = ${pick.artistId} AND archived_at IS NULL`;
+      // A hand-picked voice that's since been deleted plays nothing rather than
+      // quietly swapping in a different one under the salesperson.
+      return row && (row.blob_url || row.blob_pathname) ? row : null;
+    }
+
+    // One round trip for both (the Neon HTTP driver bills a request per query).
+    const [rows, settingsRows] = await sql.transaction([
+      sql`SELECT * FROM voiceover_artists
+           WHERE archived_at IS NULL AND category = 'ai'
+             AND (blob_url IS NOT NULL OR blob_pathname IS NOT NULL)
+           ORDER BY sort_order, created_at`,
+      sql`SELECT proposal_voiceover FROM settings WHERE id = 1`,
+    ]);
+    if (!rows.length) return null;
+    const defaultId = settingsRows?.[0]?.proposal_voiceover?.artistId || null;
+
+    return (defaultId && rows.find((r) => r.id === defaultId))
+      || rows.find((r) => HOUSE_SAMPLE_NAME_RE.test((r.name || '').trim()))
+      || rows[0];
+  } catch (err) {
+    console.warn('[voiceover] proposal sample lookup failed', err.message);
+    return null;
+  }
+}

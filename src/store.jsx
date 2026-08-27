@@ -474,6 +474,9 @@ export function StoreProvider({ children }) {
         projectTasksEmail: settings?.projectTasksEmail || null,
         // Flat charge to pick a Premium voiceover artist; null until set.
         voiceoverPricing: settings?.voiceoverPricing || null,
+        // { artistId } — the AI voice clients can play on their proposal; null
+        // until an admin picks one (the server then resolves it by name).
+        proposalVoiceover: settings?.proposalVoiceover || null,
         // Automatic client-task reminder cadence + copy; null until first saved.
         taskReminders: settings?.taskReminders || null,
         courseEmails: settings?.courseEmails || null,
@@ -2944,6 +2947,13 @@ export function StoreProvider({ children }) {
       saveTimers.current.__voiceoverPricing = setTimeout(() => {
         api.put('/api/settings', { voiceoverPricing: data }).catch(() => {});
       }, 800);
+    },
+    // Persist which AI artist demos on client proposals (Admin → Voiceovers).
+    // Not debounced — it's a single click on a radio, and the admin needs the
+    // tick they see to be the tick that's stored.
+    saveProposalVoiceover(data) {
+      setState(s => ({ ...s, proposalVoiceover: data }));
+      return api.put('/api/settings', { proposalVoiceover: data });
     },
     // Persist the automatic client-task reminder config (Admin → Task reminders).
     saveTaskReminders(data) {

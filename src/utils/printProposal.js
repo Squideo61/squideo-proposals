@@ -91,7 +91,7 @@ export function printOptionsForSigned(signed, payment) {
   };
 }
 
-function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedExtrasMeta = {}, paymentOption = '5050', partnerSelected = false, signed = null, payment = null } = {}) {
+function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedExtrasMeta = {}, paymentOption = '5050', partnerSelected = false, signed = null, payment = null, voiceoverSample = null } = {}) {
   const getQty = (e) => {
     if (!extraHasQuantity(e)) return 1;
     return Math.max(1, Number(selectedExtrasMeta[e.id]?.quantity) || 1);
@@ -193,14 +193,23 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
       </div>`;
   }).join('');
 
-  const inclusionRows = data.baseInclusions.map(inc => `
+  // A PDF can't play the voiceover sample the online proposal offers, so the
+  // voiceover line points back to it rather than silently dropping the offer.
+  const sampleVoice = data._voiceoverSample || voiceoverSample || null;
+  const inclusionRows = data.baseInclusions.map(inc => {
+    const sampleNote = sampleVoice && /latest-generation ai voiceover/i.test(inc.title || '')
+      ? `<div style="font-size:12px;color:#2BB8E6;margin-top:3px;">▶ Hear ${esc(sampleVoice.name || 'a sample')} in your online proposal.</div>`
+      : '';
+    return `
     <div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid #E5E9EE;font-size:13px;">
       <span style="color:#2BB8E6;flex-shrink:0;font-size:16px;line-height:1;">✓</span>
       <div>
         <div style="font-weight:500;">${esc(applyInclusionTokens(inc.title, printMinutes))}</div>
         ${inc.description ? `<div style="font-size:12px;color:#6B7785;margin-top:2px;">${esc(applyInclusionTokens(inc.description, printMinutes))}</div>` : ''}
+        ${sampleNote}
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 
   // On a signed copy, only the extras the client actually selected are shown.
   // On the blank/signable copy we still list every extra so it can be ticked.

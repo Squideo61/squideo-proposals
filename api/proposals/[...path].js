@@ -1,6 +1,7 @@
 // Consolidated proposals endpoint. Handles:
 //   GET    /api/proposals                 — list (auth)
 //   GET    /api/proposals/:id             — public single read
+//   GET    /api/proposals/:id/voiceover-sample — public AI voice clip (bytes)
 //   PUT    /api/proposals/:id             — save + auto-create-deal (auth)
 //   DELETE /api/proposals/:id             — delete (auth)
 import crypto from 'crypto';
@@ -12,6 +13,7 @@ import { ensureDealForProposal, advanceStage } from '../_lib/dealStage.js';
 import { formatDateGB, freshExpiryISO } from '../_lib/proposalDates.js';
 import { quotedProjectExVat } from '../_lib/proposalPricing.js';
 import { logStaffActivity } from '../_lib/crm/staffActivity.js';
+import { resolveProposalSampleArtist, serialiseProposalSample, streamVoiceoverSample } from '../_lib/voiceover.js';
 
 // What to call a proposal in the activity log — it keeps reading properly after
 // the proposal itself is deleted.
@@ -79,11 +81,33 @@ export default async function handler(req, res) {
     `;
     if (!rows.length) return res.status(404).json({ error: 'Not found' });
     const r = rows[0];
+    // Which AI voice (if any) the client can play under the voiceover
+    // inclusion. Metadata only — the clip itself streams from the sub-route
+    // below, and only once they press play.
+    const sample = await resolveProposalSampleArtist(r.data);
     return res.status(200).json({
       ...publicProposalView(r.data),
+      _voiceoverSample: serialiseProposalSample(sample),
       _number: r.number_year && r.number_seq ? { year: r.number_year, seq: r.number_seq } : null,
       _dealId: r.deal_id || null,
     });
+  }
+
+  // GET /api/proposals/:id/voiceover-sample — the AI voice sample, public like
+  // the proposal itself. Scoped to whatever THIS proposal resolves to, so the
+  // route can't be walked to stream arbitrary catalogue clips.
+  if (req.method === 'GET' && sub === 'voiceover-sample') {
+    const rows = await sql`SELECT data FROM proposals WHERE id = ${id}`;
+    if (!rows.length) return res.status(404).json({ error: 'Not found' });
+    const artist = await resolveProposalSampleArtist(rows[0].data);
+    // ?meta=1 — just who the voice is. The staff preview reads the proposal
+    // from the CRM's own (auth) payload, which carries no resolved sample, so
+    // it asks for the metadata here instead of re-fetching the public view.
+    if (/[?&]meta=1(&|$)/.test(req.url || '')) {
+      return res.status(200).json({ sample: serialiseProposalSample(artist) });
+    }
+    if (!artist) return res.status(404).json({ error: 'No sample' });
+    return streamVoiceoverSample(req, res, artist);
   }
 
   const user = await requireAuth(req, res);

@@ -1,6 +1,8 @@
 // Admin CRUD for the global voiceover-artist catalogue (Admin → Voiceovers).
-// The client picks from this catalogue per video in the portal. All routes are
-// gated on settings.manage — it's a workspace-wide catalogue, not per-deal.
+// The client picks from this catalogue per video in the portal, and hears one AI
+// voice from it on their proposal. Writes are gated on voiceovers.manage /
+// settings.manage — it's a workspace-wide catalogue, not per-deal; reads are
+// open to any signed-in staff member so the proposal builder can offer the list.
 //
 //   GET    /api/crm/voiceovers              → list (both sections, non-archived)
 //   POST   /api/crm/voiceovers              → create artist metadata
@@ -26,7 +28,12 @@ export async function voiceoversRoute(req, res, id, action, user) {
 
   const role = await getRole(user.role);
   const manage = hasPermission(role, 'voiceovers.manage') || hasPermission(role, 'settings.manage');
-  if (!manage) return res.status(403).json({ error: 'You do not have permission to manage the voiceover catalogue' });
+
+  // Reading the catalogue is open to any signed-in staff member: the proposal
+  // builder lets whoever writes the quote choose which AI voice the client can
+  // play, and they aren't all catalogue admins. Every write below stays gated.
+  const readOnly = req.method === 'GET';
+  if (!manage && !readOnly) return res.status(403).json({ error: 'You do not have permission to manage the voiceover catalogue' });
 
   // ── Collection: list + create ──────────────────────────────────────────────
   if (!id) {
