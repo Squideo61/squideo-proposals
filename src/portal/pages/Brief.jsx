@@ -1272,11 +1272,19 @@ export default function Brief({ briefId: routeId = null }) {
     );
   }
   if (!index.briefs?.length) {
+    // In practice only a PREVIEW gets here. A client opening this page has a
+    // blank brief created for them on the spot and goes straight into the
+    // questions (see briefRoute) — a preview session doesn't, because the brief
+    // would carry their name on answers we wrote. Saying "no brief yet" to
+    // staff previewing therefore describes the preview, not what the client
+    // faces, and reads as though they'd hit the same dead end.
     return (
       <EmptyState
         icon={<FileText size={22} />}
-        title="No brief yet"
-        body="This organisation hasn't started a video brief. Once someone does, their answers appear here as they type."
+        title={index.readOnly ? 'Nothing to preview here yet' : 'No brief yet'}
+        body={index.readOnly
+          ? 'A client landing on this page gets a blank brief of their own and drops straight into the first question — nothing to click. Previewing doesn’t start one, because their brief would end up carrying answers they never wrote. Nobody at this organisation has opened it yet; as soon as someone does, their answers appear here as they type.'
+          : 'This organisation hasn’t started a video brief. Once someone does, their answers appear here as they type.'}
       />
     );
   }
