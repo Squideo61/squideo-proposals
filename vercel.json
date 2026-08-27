@@ -17,6 +17,10 @@
       "destination": "/api/proposals/_root"
     },
     {
+      "source": "/api/proposals/:id/:action",
+      "destination": "/api/proposals/:id?_action=:action"
+    },
+    {
       "source": "/api/templates",
       "destination": "/api/templates/_root"
     },

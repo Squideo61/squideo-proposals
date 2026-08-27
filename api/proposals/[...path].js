@@ -61,7 +61,12 @@ export default async function handler(req, res) {
   const segs = urlPath.split('/').filter(Boolean).slice(2); // strip 'api', 'proposals'
   const first = segs[0] || null;
   const id = first === '_root' ? null : first;
-  const sub = segs[1] || null; // sub-action, e.g. /api/proposals/:id/duplicate
+  // Sub-action, e.g. /api/proposals/:id/duplicate. The catch-all only ever gets
+  // ONE path segment routed to it (Vercel's generated route table stops there),
+  // so vercel.json rewrites the second segment into ?_action= — the same trick
+  // /api/crm uses. Without it every sub-route 404s before reaching this file.
+  const query = new URLSearchParams((req.url || '').split('?')[1] || '');
+  const sub = segs[1] || query.get('_action') || null;
 
   // --- Collection routes (no id) ---
   if (!id) {
