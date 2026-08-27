@@ -45,10 +45,12 @@ const INCLUSION_ICON_RULES = [
 ];
 
 // "Latest-generation AI voiceover artist" is an abstract promise until you hear
-// one, so that inclusion carries a clip of the voice we'd actually use. The
-// bytes only leave the server on press (preload="none"), so a proposal nobody
-// listens to costs nothing extra to open.
-function VoiceoverSampleRow({ proposalId, sample }) {
+// one, so that inclusion carries a clip of the voice we'd actually use. It sits
+// inline beside the title as a small pill — an offer, not a player taking a row
+// of its own in a list of fifteen inclusions. The bytes only leave the server on
+// press (preload="none"), so a proposal nobody listens to costs nothing extra
+// to open. Progress fills the pill itself rather than adding a second element.
+function VoiceoverSamplePill({ proposalId, sample }) {
   const audioRef = useRef(null);
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);   // 0..1
@@ -66,27 +68,29 @@ function VoiceoverSampleRow({ proposalId, sample }) {
 
   if (failed) return null;   // never leave a dead play button on a proposal
 
+  const pct = (progress * 100).toFixed(1) + '%';
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8, padding: '8px 10px', background: BRAND.blue + '0D', border: '1px solid ' + BRAND.blue + '33', borderRadius: 10 }}>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
       <button
         type="button"
         onClick={toggle}
-        aria-label={playing ? 'Pause the voiceover sample' : 'Play a voiceover sample'}
-        style={{ flexShrink: 0, width: 34, height: 34, borderRadius: '50%', border: 'none', background: BRAND.blue, color: 'white', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0 }}
+        aria-label={(playing ? 'Pause the voiceover sample' : 'Play a voiceover sample') + (sample.name ? ' — ' + sample.name : '')}
+        title={sample.description || undefined}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          padding: '2px 10px 2px 3px', borderRadius: 999, cursor: 'pointer',
+          border: '1px solid ' + BRAND.blue + '40',
+          // The clip's progress fills the pill from the left as it plays.
+          background: `linear-gradient(to right, ${BRAND.blue}2E ${pct}, ${BRAND.blue}12 ${pct})`,
+          color: BRAND.blue, fontSize: 11.5, fontWeight: 600, lineHeight: 1.6,
+          fontFamily: 'inherit', whiteSpace: 'nowrap',
+        }}
       >
-        {playing ? <Pause size={15} fill="white" /> : <Play size={15} fill="white" style={{ marginLeft: 2 }} />}
+        <span style={{ width: 20, height: 20, borderRadius: '50%', background: BRAND.blue, color: 'white', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          {playing ? <Pause size={10} fill="white" /> : <Play size={10} fill="white" style={{ marginLeft: 1 }} />}
+        </span>
+        {playing ? 'Playing' : 'Hear a sample'}{sample.name ? ' — ' + sample.name : ''}
       </button>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 12.5, fontWeight: 600, color: BRAND.ink }}>
-          {playing ? 'Playing' : 'Hear a sample'}
-          <span style={{ fontWeight: 500, color: BRAND.muted }}>
-            {sample.name ? ' — ' + sample.name : ''}{sample.description ? ', ' + sample.description : ''}
-          </span>
-        </div>
-        <div style={{ height: 4, borderRadius: 999, background: BRAND.blue + '26', marginTop: 6, overflow: 'hidden' }}>
-          <div style={{ height: '100%', width: (progress * 100).toFixed(1) + '%', background: BRAND.blue, borderRadius: 999, transition: 'width 120ms linear' }} />
-        </div>
-      </div>
       <audio
         ref={audioRef}
         src={src}
@@ -100,7 +104,7 @@ function VoiceoverSampleRow({ proposalId, sample }) {
         }}
         onError={() => { setPlaying(false); setFailed(true); }}
       />
-    </div>
+    </span>
   );
 }
 
@@ -1107,12 +1111,14 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
                 </span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   {/* Word counts and the like scale with the content length. */}
-                  <div style={{ fontWeight: 500 }}>{applyInclusionTokens(inc.title, contentMinutes)}</div>
+                  <div style={{ fontWeight: 500, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    <span>{applyInclusionTokens(inc.title, contentMinutes)}</span>
+                    {voiceoverSample && /latest-generation ai voiceover/i.test(inc.title || '') && (
+                      <VoiceoverSamplePill proposalId={id} sample={voiceoverSample} />
+                    )}
+                  </div>
                   {inc.description && (
                     <div style={{ fontSize: 13, color: BRAND.muted, lineHeight: 1.5, marginTop: 3 }}>{applyInclusionTokens(inc.description, contentMinutes)}</div>
-                  )}
-                  {voiceoverSample && /latest-generation ai voiceover/i.test(inc.title || '') && (
-                    <VoiceoverSampleRow proposalId={id} sample={voiceoverSample} />
                   )}
                 </div>
               </div>
