@@ -13,6 +13,25 @@ import { PdfThumb } from '../storyboard/PdfThumb.jsx';
 const CARD_W = 200;
 const PREVIEW_H = 112;
 
+// Rendering a preview downloads the WHOLE attachment through
+// /api/crm/gmail/attachment, which buffers it in the function before sending it
+// on. A thread with several large PDFs therefore fires several concurrent
+// invocations, each holding tens of megabytes, purely to draw a 200x112
+// thumbnail — which is how that route ends up returning 502s.
+//
+// Above this size the card shows its file-type icon instead. Nothing is lost:
+// the filename, the size and the download button are all still there, and the
+// bytes are fetched only if somebody actually asks for them.
+const PREVIEW_MAX_BYTES = 2 * 1024 * 1024;
+
+// Unknown size means unknown cost, so that does not get a preview either. Gmail
+// populates body.size on every real attachment, so this is close to unreachable
+// in practice — but "probably small" is not a basis for an unbounded download.
+function previewable(att) {
+  const n = Number(att.size ?? att.sizeBytes);
+  return Number.isFinite(n) && n > 0 && n <= PREVIEW_MAX_BYTES;
+}
+
 function attachmentUrl(messageId, att, disposition) {
   const params = new URLSearchParams({
     messageId,
@@ -80,8 +99,10 @@ export function EmailAttachmentCard({ att, messageId, connected, dealId = null }
     }
   };
 
+  const canPreview = usable && previewable(att);
+
   let preview;
-  if (usable && kind === 'image') {
+  if (canPreview && kind === 'image') {
     preview = (
       <img
         src={openUrl}
@@ -90,7 +111,7 @@ export function EmailAttachmentCard({ att, messageId, connected, dealId = null }
         style={{ width: '100%', height: PREVIEW_H, objectFit: 'cover', display: 'block', background: '#F1F5F9' }}
       />
     );
-  } else if (usable && kind === 'pdf') {
+  } else if (canPreview && kind === 'pdf') {
     preview = (
       <div style={{ height: PREVIEW_H, overflow: 'hidden', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', background: '#F1F5F9' }}>
         <PdfThumb url={openUrl} width={CARD_W} />

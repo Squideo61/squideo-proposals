@@ -399,6 +399,10 @@ async function getThread(req, res, accessToken, user) {
   });
 }
 
+// Vercel caps a serverless response body at 4.5 MB. Held a little under, so
+// the refusal below fires before the platform kills the invocation.
+const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
+
 // GET /api/crm/gmail/attachment?messageId=&attachmentId=&filename=&mimeType=&disposition=
 // Streams the decoded attachment bytes back to the browser. Default disposition
 // is `attachment` (download); pass disposition=inline so the attachment preview
@@ -417,6 +421,25 @@ async function getAttachment(req, res, accessToken) {
     `/messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`,
   )).json();
   const buf = Buffer.from(j.data || '', 'base64url');
+
+  // A serverless response body is capped at 4.5 MB by the platform. Past that
+  // the invocation is killed rather than returning anything, so the browser
+  // sees a 502 and the log shows a crash with nothing explaining it.
+  //
+  // Answering with a real status and a sentence does not fix the underlying
+  // limitation — a 10 MB attachment still cannot be served this way, and doing
+  // that properly means copying it to Blob and redirecting. It is, though, the
+  // difference between a diagnosable refusal and a function that falls over.
+  if (buf.length > MAX_RESPONSE_BYTES) {
+    return res.status(413).json({
+      error: 'That attachment is too large to open here ('
+        + (buf.length / (1024 * 1024)).toFixed(1) + ' MB). Open it in Gmail instead.',
+      code: 'ATTACHMENT_TOO_LARGE',
+      bytes: buf.length,
+      limit: MAX_RESPONSE_BYTES,
+    });
+  }
+
   res.setHeader('Content-Type', mimeType);
   res.setHeader('Content-Disposition', `${disposition}; filename="${filename}"`);
   res.setHeader('Content-Length', String(buf.length));
