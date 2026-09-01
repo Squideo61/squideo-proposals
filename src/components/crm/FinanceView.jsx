@@ -862,6 +862,9 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, excludedKeys
   // The deal + portion to invoice when "Create invoice" is picked on a predicted
   // signed-deal row (opens the shared Xero modal, same as Pending Payments).
   const [invTarget, setInvTarget] = useState(null);
+  // A company-invoice row being marked paid (it banks through the invoice's own
+  // flow, not the imported-payment toggle).
+  const [payInvoice, setPayInvoice] = useState(null);
   const rolled = rolledKeys || new Set();
   const rolledAway = rolledAwayKeys || new Set();
   const items = useMemo(() => collectPredicted(pending, partners, predictKeys, excludedKeys, predictMonthKey, predictedAmounts)
@@ -894,6 +897,10 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, excludedKeys
   const markPaid = (it, method) => {
     if (!actions) return;
     let p = null;
+    // A company invoice isn't an imported sheet row — it has no
+    // manual_pending_payments record to toggle, so it banks via the invoice
+    // modal instead (see the row's "Mark paid…" action).
+    if (it.type === 'manual' && it.row?.kind === 'company-invoice') return;
     if (it.type === 'manual') p = actions.markPendingPaymentPaid(it.row.id, true, method);
     else if (it.type === 'partner') p = actions.markPartnerFeePaid(it.clientKey, true);
     else if (it.type === 'other' && it.row?.id) {
@@ -1049,8 +1056,9 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, excludedKeys
                         icon: FileText,
                         onClick: () => setInvTarget({ dealId: it.row.dealId, companyId: it.row.companyId, title: it.row.title || it.row.company, stage: it.row.stage, mode: l.type === 'final' ? 'final' : undefined, reference: it.row.poNumber || undefined }),
                       })),
-                      it.type === 'manual' && { label: 'Mark paid — Stripe', icon: CreditCard, onClick: () => markPaid(it, 'stripe') },
-                      it.type === 'manual' && { label: 'Mark paid — BACS', icon: Banknote, onClick: () => markPaid(it, 'bacs') },
+                      it.type === 'manual' && it.row?.kind === 'company-invoice' && { label: 'Mark paid…', icon: Check, onClick: () => setPayInvoice(it.row) },
+                      it.type === 'manual' && it.row?.kind !== 'company-invoice' && { label: 'Mark paid — Stripe', icon: CreditCard, onClick: () => markPaid(it, 'stripe') },
+                      it.type === 'manual' && it.row?.kind !== 'company-invoice' && { label: 'Mark paid — BACS', icon: Banknote, onClick: () => markPaid(it, 'bacs') },
                       it.type === 'deal' && it.row?.proposalId && { label: 'Mark paid — Stripe', icon: CreditCard, onClick: () => markPaid(it, 'stripe') },
                       it.type === 'deal' && it.row?.proposalId && { label: 'Mark paid — BACS', icon: Banknote, onClick: () => markPaid(it, 'bacs') },
                       it.type === 'partner' && { label: 'Mark paid this month', icon: Check, onClick: () => markPaid(it) },
@@ -1124,6 +1132,15 @@ function PredictedPaymentsSection({ pending, partners, predictKeys, excludedKeys
           target={noteTarget}
           onClose={() => setNoteTarget(null)}
           onSave={(text) => { onSaveNote && onSaveNote(noteTarget.key, text); setNoteTarget(null); }}
+        />
+      )}
+      {payInvoice && (
+        <MarkInvoicePaidModal
+          invoiceId={payInvoice.id}
+          invoiceNumber={payInvoice.description || undefined}
+          amount={(Number(payInvoice.amountExVat) || 0) + (Number(payInvoice.vat) || 0)}
+          onClose={() => setPayInvoice(null)}
+          onMarked={() => { setPayInvoice(null); onChanged && onChanged(); }}
         />
       )}
       {invTarget && (
