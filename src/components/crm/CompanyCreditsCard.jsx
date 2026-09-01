@@ -104,6 +104,12 @@ function ReservedForVideos({ allocations }) {
               {a.videoTitle}
               {a.projectTitle && a.projectTitle !== a.videoTitle ? <span style={{ color: BRAND.muted }}> · {a.projectTitle}</span> : null}
             </span>
+            {a.poolName && (
+              <span title="Which of this organisation's credit balances it draws on"
+                style={{ flexShrink: 0, fontSize: 10, fontWeight: 700, color: BRAND.muted, background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 999, padding: '0 6px', maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {a.poolName}
+              </span>
+            )}
             {a.planned && <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 700, color: '#B45309' }}>NOT STARTED</span>}
             <strong style={{ flexShrink: 0 }}>{fmtCredits(a.minutes)} min</strong>
           </div>

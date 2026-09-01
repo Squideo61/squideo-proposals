@@ -4125,6 +4125,18 @@ async function videoCreditRoute(req, res, user) {
       reserved: round(balance.reserved),
       available: round(balance.available),
     },
+    // Their separate balances, where they run more than one — e.g. a university
+    // with a budget per study. Only sent when there IS more than one, so the
+    // ordinary client never sees an internal-looking breakdown of one number.
+    pools: (balance.pools || []).length > 1
+      ? balance.pools.map((p) => ({
+        name: p.name,
+        issued: round(p.issued),
+        used: round(p.used),
+        reserved: round(p.reserved),
+        available: round(p.available),
+      }))
+      : [],
     // What the reserved minutes are earmarked against, so the number is never
     // just an unexplained deduction.
     allocations: allocations.map((a) => ({
@@ -4135,6 +4147,9 @@ async function videoCreditRoute(req, res, user) {
       minutes: a.minutes,
       status: a.status,
       planned: a.planned,
+      // Which of their balances it's held against. A customer running one per
+      // study needs this to make sense of the split at all.
+      poolName: a.poolName,
     })),
     pricing,
   });

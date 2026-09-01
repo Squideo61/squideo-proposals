@@ -1016,6 +1016,7 @@ export function DealDetailView({ dealId, onBack, backLabel, onOpenProposal, onCr
           <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
             <ClientCreditCard
               dealId={dealId}
+              dealTitle={deal.title}
               companyId={deal.companyId || company?.id || null}
               companyName={company?.name || null}
               onOpenVideo={onOpenVideo}

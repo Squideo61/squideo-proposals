@@ -32,6 +32,9 @@ export function ProductionPanel({ dealId, deal, videos, creditProject, companyCr
   const credits = deal.productionCredits || 0;
   const clientCredit = hideCredits ? null : companyCredit || null;
   const clientAvailable = clientCredit ? (clientCredit.available ?? clientCredit.remaining ?? 0) : 0;
+  // A customer can hold several separate credit balances (Newcastle University
+  // runs one per NHS study). Everything that spends credit has to say which.
+  const creditPools = clientCredit?.pools || [];
   const [addOpen, setAddOpen] = useState(false);
   const [addPlanned, setAddPlanned] = useState(false);
 
@@ -51,7 +54,7 @@ export function ProductionPanel({ dealId, deal, videos, creditProject, companyCr
       // eslint-disable-next-line no-await-in-loop
       await actions.addProjectVideo(dealId, r.title || null, {
         ...(creditMode ? { credits: r.credits } : {}),
-        ...(r.creditMinutes ? { creditMinutes: r.creditMinutes } : {}),
+        ...(r.creditMinutes ? { creditMinutes: r.creditMinutes, creditClientKey: r.creditClientKey || null } : {}),
         ...(plannedFlag ? { planned: true } : {}),
       });
     }
@@ -88,6 +91,7 @@ export function ProductionPanel({ dealId, deal, videos, creditProject, companyCr
       creditMode={creditMode}
       remaining={remaining}
       clientAvailable={clientCredit ? clientAvailable : 0}
+      pools={creditPools}
       planned={addPlanned}
     />
   ) : null;
@@ -114,7 +118,7 @@ export function ProductionPanel({ dealId, deal, videos, creditProject, companyCr
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {planned.map(v => (
               <PlannedRow key={v.id} dealId={dealId} dealReference={deal.reference} video={v}
-                hideCredits={hideCredits} canStart={false} onOpen={() => onOpenVideo && onOpenVideo(v.id)} />
+                hideCredits={hideCredits} canStart={false} pools={creditPools} onOpen={() => onOpenVideo && onOpenVideo(v.id)} />
             ))}
           </div>
         )}
@@ -164,7 +168,7 @@ export function ProductionPanel({ dealId, deal, videos, creditProject, companyCr
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {live.map(v => (
             <VideoRow key={v.id} dealId={dealId} dealReference={deal.reference} video={v}
-              hideCredits={hideCredits} onOpen={() => onOpenVideo && onOpenVideo(v.id)} />
+              hideCredits={hideCredits} pools={creditPools} onOpen={() => onOpenVideo && onOpenVideo(v.id)} />
           ))}
           {planned.length > 0 && (
             <div style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 4 }}>
@@ -173,7 +177,7 @@ export function ProductionPanel({ dealId, deal, videos, creditProject, companyCr
           )}
           {planned.map(v => (
             <PlannedRow key={v.id} dealId={dealId} dealReference={deal.reference} video={v}
-              hideCredits={hideCredits} canStart onOpen={() => onOpenVideo && onOpenVideo(v.id)} />
+              hideCredits={hideCredits} canStart pools={creditPools} onOpen={() => onOpenVideo && onOpenVideo(v.id)} />
           ))}
         </div>
       )}
@@ -186,10 +190,17 @@ export function ProductionPanel({ dealId, deal, videos, creditProject, companyCr
 // row also carries how many credits the video is worth, and where the customer
 // holds their own video credit each row can reserve minutes of it. All rows are
 // created in order when you hit the button.
-function AddVideosModal({ onClose, onCreate, showMsg, creditMode, remaining, clientAvailable, planned }) {
+function AddVideosModal({ onClose, onCreate, showMsg, creditMode, remaining, clientAvailable, pools = [], planned }) {
   const [rows, setRows] = useState([{ name: 'Video 1', credits: '1', mins: '' }]);
   const [saving, setSaving] = useState(false);
-  const clientMode = clientAvailable > 0;
+  // Which of the customer's balances these videos draw on. Only asked when they
+  // hold more than one — otherwise the server fills it in.
+  const multiPool = pools.length > 1;
+  const [poolKey, setPoolKey] = useState(() => (multiPool ? '' : (pools[0]?.clientKey || '')));
+  const pool = multiPool ? pools.find((p) => p.clientKey === poolKey) || null : (pools[0] || null);
+  // What's actually free depends on the chosen balance, not the company total.
+  const spendable = multiPool ? (pool ? pool.available : 0) : clientAvailable;
+  const clientMode = clientAvailable > 0 || pools.some((p) => p.available > 0);
 
   const setAt = (i, patch) => setRows(arr => arr.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
   const addRow = () => setRows(arr => [...arr, { name: `Video ${arr.length + 1}`, credits: '1', mins: '' }]);
@@ -198,7 +209,7 @@ function AddVideosModal({ onClose, onCreate, showMsg, creditMode, remaining, cli
   const totalCredits = rows.reduce((s, r) => s + (Number(r.credits) || 0), 0);
   const totalMins = rows.reduce((s, r) => s + (Number(r.mins) || 0), 0);
   const overBudget = creditMode && totalCredits > remaining;
-  const overClient = clientMode && totalMins > clientAvailable;
+  const overClient = clientMode && totalMins > spendable;
 
   const submit = async () => {
     if (saving) return;
@@ -212,12 +223,14 @@ function AddVideosModal({ onClose, onCreate, showMsg, creditMode, remaining, cli
       if (rows.some(r => r.mins !== '' && (!Number.isFinite(Number(r.mins)) || Number(r.mins) < 0))) {
         showMsg('Client credit must be a number of minutes (or blank)'); return;
       }
-      if (overClient) { showMsg(`That reserves ${fmtMins(totalMins)} but only ${fmtMins(clientAvailable)} is free`); return; }
+      if (multiPool && totalMins > 0 && !poolKey) { showMsg('Choose which of their credit balances these videos draw on'); return; }
+      if (overClient) { showMsg(`That reserves ${fmtMins(totalMins)} but only ${fmtMins(spendable)} is free`); return; }
     }
     const items = rows.map(r => ({
       title: r.name.trim(),
       credits: Number(r.credits) || 0,
       creditMinutes: Number(r.mins) || 0,
+      creditClientKey: poolKey || pool?.clientKey || null,
     }));
     setSaving(true);
     try {
@@ -243,6 +256,23 @@ function AddVideosModal({ onClose, onCreate, showMsg, creditMode, remaining, cli
             ? <>Name each video and set how many credits it’s worth. <strong>{remaining}</strong> credit{remaining === 1 ? '' : 's'} available.</>
             : 'Name each video (e.g. “Hero film”, “Cutdown 30s”). You can add as many as you like.'}
       </div>
+
+      {clientMode && multiPool && (
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, marginBottom: 12 }}>
+          <span style={{ fontWeight: 700, color: BRAND.ink, whiteSpace: 'nowrap' }}>Credit from</span>
+          <select
+            value={poolKey}
+            onChange={(e) => setPoolKey(e.target.value)}
+            disabled={saving}
+            style={{ flex: 1, minWidth: 0, padding: '7px 9px', fontSize: 13, border: '1px solid ' + BRAND.border, borderRadius: 8, background: 'white' }}
+          >
+            <option value="">Choose a project…</option>
+            {pools.map((p) => (
+              <option key={p.clientKey} value={p.clientKey}>{p.name} — {fmtMins(p.available)} free</option>
+            ))}
+          </select>
+        </label>
+      )}
 
       {wide && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10.5, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 4 }}>
@@ -345,8 +375,16 @@ function AddVideosModal({ onClose, onCreate, showMsg, creditMode, remaining, cli
       )}
       {clientMode && (
         <div style={{ marginTop: 6, fontSize: 13, color: overClient ? '#B91C1C' : BRAND.muted }}>
-          Reserving {fmtMins(totalMins)} of client credit · {fmtMins(Math.max(0, clientAvailable - totalMins))} would stay free.
-          {' '}They’ll see it in their portal as reserved for these videos.
+          {multiPool && !poolKey && totalMins > 0
+            // Don't quote a "would stay free" figure before we know which of
+            // their balances it's coming out of — that's the exact confusion
+            // this picker exists to end.
+            ? <>Choose which project’s credit these {fmtMins(totalMins)} come from, above.</>
+            : <>
+                Reserving {fmtMins(totalMins)} of client credit{pool ? ` from ${pool.name}` : ''} ·
+                {' '}{fmtMins(Math.max(0, spendable - totalMins))} would stay free.
+                {' '}They’ll see it in their portal as reserved for these videos.
+              </>}
         </div>
       )}
 
@@ -371,7 +409,7 @@ function PanelHeader() {
 
 // A video that's been named and (usually) paid for out of credit, but hasn't
 // started. No progress bar — there's no board position to draw.
-function PlannedRow({ dealId, dealReference, video, hideCredits, canStart, onOpen }) {
+function PlannedRow({ dealId, dealReference, video, hideCredits, canStart, pools = [], onOpen }) {
   const { actions, showMsg } = useStore();
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -406,7 +444,7 @@ function PlannedRow({ dealId, dealReference, video, hideCredits, canStart, onOpe
         onClick={() => { if (window.confirm(`Delete "${video.title}"? Any credit reserved for it goes back on the client's balance.`)) actions.deleteProjectVideo(dealId, video.id); }}
         className="btn-icon" title="Delete video"
       ><Trash2 size={13} /></button>
-      {editing && <AssignCreditModal dealId={dealId} video={video} onClose={() => setEditing(false)} />}
+      {editing && <AssignCreditModal dealId={dealId} video={video} pools={pools} onClose={() => setEditing(false)} />}
     </div>
   );
 }
@@ -444,16 +482,27 @@ export function CreditChip({ video, onEdit }) {
 
 // Set or clear the client credit reserved against one video. Shared by the
 // project page and the video page.
-export function AssignCreditModal({ dealId, video, onClose }) {
+export function AssignCreditModal({ dealId, video, pools = [], onClose }) {
   const { actions, showMsg } = useStore();
   const [mins, setMins] = useState(String(video.creditMinutes || ''));
   const [saving, setSaving] = useState(false);
+  // Which balance this comes out of. Pre-set to whatever the video already draws
+  // on, so editing an existing reservation doesn't silently move it.
+  const multiPool = pools.length > 1;
+  const [poolKey, setPoolKey] = useState(video.creditAllocation?.clientKey || video.creditClientKey || '');
+  const pool = pools.find((p) => p.clientKey === poolKey) || null;
+  // What's free on the chosen balance, with this video's own reservation added
+  // back — re-assigning 6 min to a video already holding 4 needs 2 more, not 6.
+  const spendable = pool
+    ? pool.available + (video.creditAllocation?.clientKey === pool.clientKey ? (video.creditMinutes || 0) : 0)
+    : null;
 
   const save = (value) => {
     const n = Number(value);
     if (value !== '' && (!Number.isFinite(n) || n < 0)) { showMsg('Enter a number of minutes, or 0 to release it'); return; }
+    if (n > 0 && multiPool && !poolKey) { showMsg('Choose which of their credit balances this draws on'); return; }
     setSaving(true);
-    actions.setVideoCredit(video.id, value === '' ? 0 : n, dealId)
+    actions.setVideoCredit(video.id, value === '' ? 0 : n, dealId, poolKey || null)
       .then(() => { showMsg(n > 0 ? `Reserved ${fmtMins(n)} for this video` : 'Credit released back to their balance'); onClose(); })
       .catch(e => { showMsg(e.message || 'Could not assign the credit'); setSaving(false); });
   };
@@ -465,6 +514,23 @@ export function AssignCreditModal({ dealId, video, onClose }) {
         Reserve minutes of the customer’s own video credit against this video. It comes off what they can spend on
         anything new, but it isn’t drawn down until the video is signed off — and they see exactly this in their portal.
       </p>
+      {multiPool && (
+        <label style={{ display: 'block', marginBottom: 12 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.ink, marginBottom: 4 }}>Credit from</div>
+          <select
+            value={poolKey}
+            onChange={e => setPoolKey(e.target.value)}
+            disabled={saving}
+            style={{ width: '100%', padding: '9px 10px', fontSize: 14, border: '1px solid ' + BRAND.border, borderRadius: 8, background: 'white' }}
+          >
+            <option value="">Choose a project…</option>
+            {pools.map((p) => (
+              <option key={p.clientKey} value={p.clientKey}>{p.name} — {fmtMins(p.available)} free</option>
+            ))}
+          </select>
+        </label>
+      )}
+
       <div style={{ position: 'relative' }}>
         <input
           autoFocus
@@ -480,6 +546,12 @@ export function AssignCreditModal({ dealId, video, onClose }) {
         />
         <span style={{ position: 'absolute', right: 12, top: 12, fontSize: 13, color: BRAND.muted, pointerEvents: 'none' }}>min</span>
       </div>
+      {spendable != null && (
+        <div style={{ fontSize: 12, color: Number(mins) > spendable ? '#B91C1C' : BRAND.muted, marginTop: 6 }}>
+          {fmtMins(spendable)} free on {pool.name}.
+        </div>
+      )}
+
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginTop: 20 }}>
         <button type="button" className="btn-ghost" disabled={saving || !video.creditMinutes}
           onClick={() => save(0)} style={{ color: video.creditMinutes ? '#B91C1C' : BRAND.muted }}>
@@ -496,7 +568,7 @@ export function AssignCreditModal({ dealId, video, onClose }) {
   );
 }
 
-function VideoRow({ dealId, dealReference, video, hideCredits, onOpen }) {
+function VideoRow({ dealId, dealReference, video, hideCredits, pools = [], onOpen }) {
   const { actions, showMsg } = useStore();
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -562,7 +634,7 @@ function VideoRow({ dealId, dealReference, video, hideCredits, onOpen }) {
         revisionRound={video.revisionRound}
         onMove={moveStage}
       />
-      {editing && <AssignCreditModal dealId={dealId} video={video} onClose={() => setEditing(false)} />}
+      {editing && <AssignCreditModal dealId={dealId} video={video} pools={pools} onClose={() => setEditing(false)} />}
     </div>
   );
 }

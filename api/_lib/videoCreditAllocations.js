@@ -54,6 +54,12 @@ export function ensureVideoCreditAllocations() {
                   ON video_credit_allocations(company_id, status)`;
       await sql`CREATE INDEX IF NOT EXISTS video_credit_allocations_deal_idx
                   ON video_credit_allocations(deal_id, status)`;
+      // 20260901_video_credit_allocation_pool.sql — which of the company's
+      // credit balances this draws on. See the migration for why a company can
+      // have more than one.
+      await sql`ALTER TABLE video_credit_allocations ADD COLUMN IF NOT EXISTS client_key TEXT`;
+      await sql`CREATE INDEX IF NOT EXISTS video_credit_allocations_client_key_idx
+                  ON video_credit_allocations(client_key, status)`;
     } catch (err) {
       // Let a later call retry rather than caching the failure forever.
       ensured = null;
@@ -88,6 +94,22 @@ export async function reservedMinutesForCompany(companyId) {
   return map.get(companyId) || 0;
 }
 
+// Reserved minutes broken down by credit pool (client_key), for a company that
+// holds more than one. The '' key collects reservations made before pools
+// existed, or against a company with no pool to name — they're real commitments
+// against the company total, they just can't be attributed to one balance.
+export async function reservedMinutesByPool(companyId) {
+  await ensureVideoCreditAllocations();
+  if (!companyId) return new Map();
+  const rows = await sql`
+    SELECT COALESCE(client_key, '') AS client_key, COALESCE(SUM(minutes), 0) AS minutes
+      FROM video_credit_allocations
+     WHERE status = 'reserved' AND company_id = ${companyId}
+     GROUP BY COALESCE(client_key, '')
+  `.catch(() => []);
+  return new Map(rows.map((r) => [r.client_key, num(r.minutes)]));
+}
+
 function serialiseAllocation(r) {
   return {
     id: r.id,
@@ -110,6 +132,10 @@ function serialiseAllocation(r) {
     planned: !r.production_phase,
     projectTitle: r.project_title || null,
     projectReference: r.project_reference || null,
+    // The credit pool this draws on, and its client-facing name — e.g. "NHS
+    // Rivival Study" rather than the whole of Newcastle University's credit.
+    clientKey: r.client_key || null,
+    poolName: r.pool_name || null,
   };
 }
 
@@ -123,7 +149,9 @@ export async function listVideoCreditAllocations({ companyId = null, dealId = nu
   const rows = await sql`
     SELECT a.*, pv.title AS video_title, pv.video_number,
            pv.production_phase, pv.production_stage,
-           d.title AS project_title, d.reference AS project_reference
+           d.title AS project_title, d.reference AS project_reference,
+           (SELECT MAX(ps.client_name) FROM partner_subscriptions ps
+             WHERE ps.client_key = a.client_key) AS pool_name
       FROM video_credit_allocations a
       JOIN project_videos pv ON pv.id = a.video_id
       JOIN deals d ON d.id = a.deal_id
@@ -153,10 +181,28 @@ export async function allocationsByVideo(videoIds = []) {
 // already reserved. `excludeVideoId` leaves the video being edited out of the
 // reserved figure, so re-assigning 6 min to a video that already holds 4 needs
 // only 2 more to be free rather than the full 6.
-export async function availableForCompany(companyId, { excludeVideoId = null } = {}) {
-  if (!companyId) return { remaining: 0, reserved: 0, available: 0 };
+//
+// `clientKey` narrows it to ONE of the company's credit pools. A company can
+// hold several at once (Newcastle University has a balance per NHS study), and
+// spending Establish's minutes on a Rivival video would be wrong however healthy
+// the combined total looks — so an assignment is always checked against the pool
+// it names, not the company.
+export async function availableForCompany(companyId, { excludeVideoId = null, clientKey = null } = {}) {
+  const empty = { remaining: 0, reserved: 0, available: 0, clientKey: clientKey || null, pools: [] };
+  if (!companyId) return empty;
   const { companyCreditTotals } = await import('./partnerCredits.js');
   const totals = await companyCreditTotals(companyId).catch(() => null);
+  const pools = totals?.pools || [];
+  if (clientKey) {
+    const pool = pools.find((p) => p.clientKey === clientKey);
+    if (!pool) return { ...empty, pools };
+    let reserved = pool.reserved;
+    if (excludeVideoId) {
+      const mine = (await allocationsByVideo([excludeVideoId])).get(excludeVideoId);
+      if (mine && mine.status === 'reserved' && mine.clientKey === clientKey) reserved = num(reserved - mine.minutes);
+    }
+    return { remaining: pool.remaining, reserved, available: num(pool.remaining - reserved), clientKey, pools };
+  }
   // Only the partner ledger is spendable this way — a deal's own credit project
   // is assigned per video through project_retainer_entries instead.
   const remaining = num(totals?.partner?.remaining || 0);
@@ -165,12 +211,12 @@ export async function availableForCompany(companyId, { excludeVideoId = null } =
     const mine = (await allocationsByVideo([excludeVideoId])).get(excludeVideoId);
     if (mine && mine.status === 'reserved') reserved = num(reserved - mine.minutes);
   }
-  return { remaining, reserved, available: num(remaining - reserved) };
+  return { remaining, reserved, available: num(remaining - reserved), clientKey: null, pools };
 }
 
 // Assign (or re-assign) minutes of the client's credit to one video. Passing 0
 // releases whatever was assigned. Throws with a .status for the route to relay.
-export async function setVideoCreditAllocation({ videoId, minutes, user = null, note = null }) {
+export async function setVideoCreditAllocation({ videoId, minutes, user = null, note = null, clientKey = null }) {
   await ensureVideoCreditAllocations();
   const m = num(minutes);
   if (!Number.isFinite(m) || m < 0) { const e = new Error('Minutes must be zero or more'); e.status = 400; throw e; }
@@ -194,24 +240,47 @@ export async function setVideoCreditAllocation({ videoId, minutes, user = null, 
     e.status = 409; throw e;
   }
 
-  const { available } = await availableForCompany(v.company_id, { excludeVideoId: videoId });
+  // Which of the customer's balances this comes out of. When they hold exactly
+  // one there's nothing to choose, so it's filled in for them; when they hold
+  // several the caller has to say, because "they've got plenty left" is not an
+  // answer when the plenty belongs to a different study.
+  const balance = await availableForCompany(v.company_id, { excludeVideoId: videoId, clientKey });
+  const pools = balance.pools || [];
+  let key = clientKey || existing?.client_key || null;
+  if (!key) {
+    const funded = pools.filter((p) => p.issued > 0 || p.remaining !== 0);
+    if (funded.length === 1) key = funded[0].clientKey;
+    else if (pools.length === 1) key = pools[0].clientKey;
+    else if (funded.length > 1) {
+      const e = new Error('This customer holds more than one credit balance — choose which one this video draws on.');
+      e.status = 400; e.pools = funded; throw e;
+    }
+  }
+  // Re-check against the chosen pool if it wasn't the one we just measured.
+  const scoped = key && key !== balance.clientKey
+    ? await availableForCompany(v.company_id, { excludeVideoId: videoId, clientKey: key })
+    : balance;
+  const available = scoped.available;
   if (m > available) {
-    const e = new Error(`Only ${available} min of credit is free — the rest is already reserved or used.`);
+    const poolName = pools.find((p) => p.clientKey === key)?.name;
+    const e = new Error(
+      `Only ${available} min of credit is free${poolName ? ` on ${poolName}` : ''} — the rest is already reserved or used.`,
+    );
     e.status = 400; throw e;
   }
 
   if (existing) {
     await sql`
       UPDATE video_credit_allocations
-         SET minutes = ${m}, note = ${note},
+         SET minutes = ${m}, note = ${note}, client_key = ${key},
              assigned_by = ${user?.email || existing.assigned_by || null}, updated_at = NOW()
        WHERE id = ${existing.id}`;
   } else {
     await sql`
       INSERT INTO video_credit_allocations
-        (id, video_id, deal_id, company_id, minutes, status, note, assigned_by)
+        (id, video_id, deal_id, company_id, client_key, minutes, status, note, assigned_by)
       VALUES
-        (${makeId('vca')}, ${videoId}, ${v.deal_id}, ${v.company_id}, ${m}, 'reserved', ${note}, ${user?.email || null})`;
+        (${makeId('vca')}, ${videoId}, ${v.deal_id}, ${v.company_id}, ${key}, ${m}, 'reserved', ${note}, ${user?.email || null})`;
   }
   const [row] = await sql`
     SELECT a.*, pv.title AS video_title, pv.video_number, pv.production_phase, pv.production_stage
@@ -265,7 +334,10 @@ export async function settleSignedOffAllocations({ companyId = null, dealId = nu
   let settled = 0;
   for (const r of due) {
     try {
-      const key = await ensureCompanyCreditKey({ id: r.company_id });
+      // Draw it down from the pool it was reserved against, so a company with
+      // several balances debits the right one. Falls back to the company's
+      // anchor key for reservations made before pools existed.
+      const key = r.client_key || await ensureCompanyCreditKey({ id: r.company_id });
       if (!key) continue;
       const sourceRef = 'vca_' + r.id;
       const [dupe] = await sql`SELECT 1 FROM credit_allocations WHERE source_ref = ${sourceRef} LIMIT 1`;

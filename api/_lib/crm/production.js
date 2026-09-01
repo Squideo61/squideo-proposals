@@ -474,7 +474,9 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
     const creditMinutes = numberOrNull(body.creditMinutes);
     if (creditMinutes != null && creditMinutes > 0) {
       try {
-        await setVideoCreditAllocation({ videoId: vid, minutes: creditMinutes, user });
+        await setVideoCreditAllocation({
+          videoId: vid, minutes: creditMinutes, user, clientKey: trimOrNull(body.creditClientKey),
+        });
       } catch (err) {
         await sql`DELETE FROM project_videos WHERE id = ${vid}`.catch(() => {});
         return res.status(err.status || 400).json({ error: err.message });
@@ -521,16 +523,21 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
 // video. The library owns the arithmetic — including refusing to over-commit a
 // balance and refusing to edit credit that's already been drawn down.
 async function setVideoCredit(req, res, videoId, user, forced = null) {
-  const minutes = forced != null ? forced : numberOrNull((req.body || {}).minutes);
+  const body = req.body || {};
+  const minutes = forced != null ? forced : numberOrNull(body.minutes);
   if (minutes == null) return res.status(400).json({ error: 'minutes required' });
+  // Which of the customer's credit balances to draw on. Optional: the library
+  // fills it in when they only hold one, and refuses (with the list) when they
+  // hold several and none was named.
+  const clientKey = trimOrNull(body.clientKey);
   try {
-    const allocation = await setVideoCreditAllocation({ videoId, minutes, user });
+    const allocation = await setVideoCreditAllocation({ videoId, minutes, user, clientKey });
     const [v] = await sql`
       SELECT d.company_id FROM project_videos pv JOIN deals d ON d.id = pv.deal_id WHERE pv.id = ${videoId}`;
     const balance = await availableForCompany(v?.company_id || null);
     return res.status(200).json({ allocation, balance });
   } catch (err) {
-    return res.status(err.status || 500).json({ error: err.message });
+    return res.status(err.status || 500).json({ error: err.message, pools: err.pools || undefined });
   }
 }
 

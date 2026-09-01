@@ -1,5 +1,5 @@
 import sql from './db.js';
-import { reservedMinutesFor } from './videoCreditAllocations.js';
+import { reservedMinutesFor, reservedMinutesByPool } from './videoCreditAllocations.js';
 
 // Runtime self-heal for db/migrations/20260730_credit_company_link.sql.
 // Module-cached; resets on failure so a later call retries.
@@ -95,11 +95,11 @@ export async function creditClientsWithCompany() {
 // Money-type retainers are excluded: those are a £ pot, not minutes.
 export async function companyCreditTotals(companyId) {
   const id = typeof companyId === 'object' ? companyId?.id : companyId;
-  const empty = { issued: 0, used: 0, remaining: 0, reserved: 0, available: 0, keys: [], partner: null, retainers: null };
+  const empty = { issued: 0, used: 0, remaining: 0, reserved: 0, available: 0, keys: [], pools: [], unassignedReserved: 0, partner: null, retainers: null };
   if (!id) return empty;
 
   const keys = await clientKeysForCompany(id);
-  const [totals, retainerRows, reservedMap] = await Promise.all([
+  const [totals, retainerRows, reservedMap, reservedByPool] = await Promise.all([
     keys.length ? creditTotalsForKeys(keys) : Promise.resolve([]),
     sql`
       SELECT r.id, r.allocation_amount,
@@ -114,6 +114,8 @@ export async function companyCreditTotals(companyId) {
     // often videos that haven't started yet. Still on the balance, but spoken
     // for, so they come out of "available" without moving "used".
     reservedMinutesFor([id]).catch(() => new Map()),
+    // …and the same, split by credit pool (see `pools` below).
+    reservedMinutesByPool(id).catch(() => new Map()),
   ]);
 
   const partner = {
@@ -137,6 +139,34 @@ export async function companyCreditTotals(companyId) {
   partner.reserved = reserved;
   partner.available = partner.remaining - reserved;
 
+  // The company's credit POOLS, one per partner-credit client, each with its own
+  // issued / used / remaining. A company can hold several at once — Newcastle
+  // University runs a separate balance per NHS study — and adding them together
+  // gives a "credit remaining" nobody can act on: a producer on the Rivival job
+  // would be looking at Establish's unspent minutes. So the total stays for the
+  // headline, and this is what the per-project view reads.
+  const pools = totals.map((t) => {
+    const issued = Number(t.credits_issued) || 0;
+    const used = Number(t.credits_used) || 0;
+    const poolRemaining = Number(t.credits_remaining) || 0;
+    const poolReserved = reservedByPool.get(t.client_key) || 0;
+    return {
+      clientKey: t.client_key,
+      name: t.client_name || t.client_key,
+      status: t.status,
+      issued,
+      used,
+      remaining: poolRemaining,
+      reserved: poolReserved,
+      available: poolRemaining - poolReserved,
+    };
+  }).sort((a, b) => (b.remaining - a.remaining) || String(a.name).localeCompare(String(b.name)));
+  // Reservations made before pools existed (or against a company with no pool)
+  // belong to no single balance but are still real. Surfaced so the per-pool
+  // figures and the company total can be reconciled rather than silently
+  // disagreeing.
+  const unassignedReserved = reservedByPool.get('') || 0;
+
   return {
     issued: partner.issued + retainers.issued,
     used: partner.used + retainers.used,
@@ -147,6 +177,8 @@ export async function companyCreditTotals(companyId) {
     reserved,
     available: partner.remaining + retainers.remaining - reserved,
     keys,
+    pools,
+    unassignedReserved,
     partner,
     retainers,
   };

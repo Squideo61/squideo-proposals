@@ -85,6 +85,10 @@ export default function VideoCredit() {
   const reserved = data?.balance?.reserved ?? 0;
   const allocations = data?.allocations || [];
   const reservedFor = allocations.filter((a) => a.status === 'reserved');
+  // Some organisations run a separate credit budget per project — a university
+  // with one per study, say. When they do, one combined balance isn't the
+  // number anyone needs, so we show each alongside it.
+  const pools = data?.pools || [];
 
   const buyCard = async () => {
     setBusy('card');
@@ -190,6 +194,11 @@ export default function VideoCredit() {
                       {a.videoTitle}
                       {a.projectTitle && a.projectTitle !== a.videoTitle ? <span style={{ color: '#8FA9B8' }}> · {a.projectTitle}</span> : null}
                     </span>
+                    {a.poolName && pools.length > 0 && (
+                      <span style={{ flexShrink: 0, fontSize: 10.5, fontWeight: 700, color: '#B9CBD6', border: '1px solid rgba(185,203,214,0.35)', borderRadius: 999, padding: '1px 7px', whiteSpace: 'nowrap', maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {a.poolName}
+                      </span>
+                    )}
                     {a.planned && (
                       <span style={{ flexShrink: 0, fontSize: 10.5, fontWeight: 700, color: '#FDE68A', border: '1px solid rgba(253,230,138,0.4)', borderRadius: 999, padding: '1px 7px', whiteSpace: 'nowrap' }}>
                         Not started
@@ -203,6 +212,29 @@ export default function VideoCredit() {
           </div>
         )}
       </Card>
+
+      {/* Per-project balances, for an organisation that budgets credit per
+          project rather than as one pot. */}
+      {pools.length > 0 && (
+        <Card>
+          <SectionHeading>Your credit by project</SectionHeading>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {pools.map((p) => (
+              <div key={p.name} style={{ border: `1px solid ${BRAND.border}`, borderRadius: 10, padding: '12px 14px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+                  <strong style={{ fontSize: 14, color: BRAND.ink }}>{p.name}</strong>
+                  <span style={{ fontSize: 14, fontWeight: 800, color: '#16A34A' }}>{fmtMins(p.available)} free</span>
+                </div>
+                <div style={{ fontSize: 12.5, color: BRAND.muted, marginTop: 3 }}>
+                  {fmtMins(p.issued)} bought
+                  {p.reserved > 0 ? ` · ${fmtMins(p.reserved)} set aside` : ''}
+                  {p.used > 0 ? ` · ${fmtMins(p.used)} used` : ''}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       {error && <Card><EmptyState title="Couldn't load your credit" body={error} /></Card>}
 

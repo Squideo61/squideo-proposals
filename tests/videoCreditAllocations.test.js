@@ -21,8 +21,14 @@ import { setSqlHandler, resetSqlMock, getSqlCalls } from './helpers/mockDb.js';
 
 // A stand-in database. `reserved` is the rows in video_credit_allocations;
 // `issued`/`used` are what the partner ledger reports.
-function mockDb({ reserved = [], issued = 20, used = 0, video = null, workRows = [] } = {}) {
+// `pools` describes the company's credit balances (client_key → issued/used).
+// A single default pool 'k1' stands in for the common one-balance case; pass
+// several to exercise a customer like Newcastle University, who holds one per
+// NHS study.
+function mockDb({ reserved = [], issued = 20, used = 0, video = null, workRows = [], pools = null } = {}) {
   const state = { reserved: [...reserved], work: [...workRows] };
+  const poolRows = pools || [{ client_key: 'k1', client_name: 'Acme', credits_issued: issued, credits_used: used }];
+  const withKeys = () => state.reserved.map((r) => ({ ...r, client_key: r.client_key ?? poolRows[0].client_key }));
   setSqlHandler((text) => {
     // — reads —
     if (text.includes('FROM video_credit_allocations') && text.includes('GROUP BY company_id')) {
@@ -30,12 +36,20 @@ function mockDb({ reserved = [], issued = 20, used = 0, video = null, workRows =
         .reduce((s, r) => s + r.minutes, 0);
       return total ? [{ company_id: 'co1', minutes: total }] : [];
     }
+    if (text.includes("GROUP BY COALESCE(client_key, '')")) {
+      const out = new Map();
+      for (const r of withKeys()) {
+        if (r.status !== 'reserved') continue;
+        out.set(r.client_key, (out.get(r.client_key) || 0) + r.minutes);
+      }
+      return Array.from(out.entries()).map(([client_key, minutes]) => ({ client_key, minutes }));
+    }
     if (text.includes('SELECT * FROM video_credit_allocations')) {
-      return state.reserved.filter((r) => r.status !== 'released')
-        .map((r) => ({ ...r, video_id: r.video_id, company_id: 'co1', deal_id: 'deal1' }));
+      return withKeys().filter((r) => r.status !== 'released')
+        .map((r) => ({ ...r, company_id: 'co1', deal_id: 'deal1' }));
     }
     if (text.includes('FROM video_credit_allocations a')) {
-      return state.reserved
+      return withKeys()
         .filter((r) => r.status === 'reserved')
         .map((r) => ({ ...r, company_id: 'co1', deal_id: 'deal1', video_title: 'Brand film', production_phase: r.phase || null, production_stage: r.stage || null }));
     }
@@ -43,9 +57,12 @@ function mockDb({ reserved = [], issued = 20, used = 0, video = null, workRows =
       return video ? [video] : [];
     }
     if (text.includes('WITH sub_totals AS')) {
-      return [{ client_key: 'k1', credits_issued: issued, credits_used: used, credits_remaining: issued - used }];
+      return poolRows.map((p) => ({
+        ...p,
+        credits_remaining: (Number(p.credits_issued) || 0) - (Number(p.credits_used) || 0),
+      }));
     }
-    if (text.includes('SELECT DISTINCT ps.client_key')) return [{ client_key: 'k1' }];
+    if (text.includes('SELECT DISTINCT ps.client_key')) return poolRows.map((p) => ({ client_key: p.client_key }));
     if (text.includes('SELECT id, name, xero_contact_id FROM companies')) return [{ id: 'co1', name: 'Acme', xero_contact_id: null }];
     if (text.includes('FROM project_retainers r')) return [];
     if (text.includes('FROM credit_allocations WHERE source_ref')) {
@@ -91,7 +108,7 @@ describe('availableForCompany', () => {
   });
 
   it('is zero for a company with no id rather than throwing', async () => {
-    expect(await availableForCompany(null)).toEqual({ remaining: 0, reserved: 0, available: 0 });
+    expect(await availableForCompany(null)).toMatchObject({ remaining: 0, reserved: 0, available: 0 });
   });
 });
 
@@ -130,6 +147,70 @@ describe('setVideoCreditAllocation', () => {
     await setVideoCreditAllocation({ videoId: 'v1', minutes: 0 });
     expect(sqlText().some((t) => t.includes("SET status = 'released'"))).toBe(true);
     expect(sqlText().some((t) => t.includes('INSERT INTO video_credit_allocations'))).toBe(false);
+  });
+});
+
+// Newcastle University holds one credit balance per NHS study. Blending them
+// into a single "credit remaining" is what made the deal page unusable for them:
+// a producer on the Rivival job would be shown Establish's unspent minutes.
+describe('a customer with several credit pools', () => {
+  const NEWCASTLE = [
+    { client_key: 'establish', client_name: 'NHS Establish Study', credits_issued: 15, credits_used: 7.5 },
+    { client_key: 'rivival', client_name: 'NHS Rivival Study', credits_issued: 4, credits_used: 3 },
+  ];
+  const video = { id: 'v1', deal_id: 'deal1', title: 'Rivival explainer', company_id: 'co1' };
+
+  it('reports each pool separately as well as the company total', async () => {
+    mockDb({ pools: NEWCASTLE });
+    const t = await companyCreditTotals('co1');
+    expect(t.remaining).toBe(8.5); // 7.5 + 1, the blended number on its own
+    expect(t.pools.map((p) => [p.name, p.remaining])).toEqual([
+      ['NHS Establish Study', 7.5],
+      ['NHS Rivival Study', 1],
+    ]);
+  });
+
+  it('scopes what is free to the chosen pool, not the company', async () => {
+    mockDb({ pools: NEWCASTLE });
+    const bal = await availableForCompany('co1', { clientKey: 'rivival' });
+    expect(bal.available).toBe(1);   // NOT 8.5
+    expect(bal.clientKey).toBe('rivival');
+  });
+
+  it('refuses to spend one study’s credit on another’s video', async () => {
+    mockDb({ pools: NEWCASTLE, video });
+    await expect(setVideoCreditAllocation({ videoId: 'v1', minutes: 5, clientKey: 'rivival' }))
+      .rejects.toThrow(/Only 1 min of credit is free on NHS Rivival Study/);
+  });
+
+  it('makes the caller choose rather than guessing which balance to raid', async () => {
+    mockDb({ pools: NEWCASTLE, video });
+    await expect(setVideoCreditAllocation({ videoId: 'v1', minutes: 1 }))
+      .rejects.toThrow(/more than one credit balance/);
+  });
+
+  it('records the pool on the reservation, so it debits the right one later', async () => {
+    mockDb({ pools: NEWCASTLE, video });
+    await setVideoCreditAllocation({ videoId: 'v1', minutes: 1, clientKey: 'rivival' });
+    const insert = getSqlCalls().find((c) => c.text.includes('INSERT INTO video_credit_allocations'));
+    expect(insert.values).toContain('rivival');
+  });
+
+  it('settles against the pool it was reserved on', async () => {
+    mockDb({
+      pools: NEWCASTLE,
+      reserved: [{ id: 'vca1', video_id: 'v1', minutes: 1, status: 'reserved', client_key: 'rivival', phase: 'production', stage: 'signed_off' }],
+    });
+    expect(await settleSignedOffAllocations({ companyId: 'co1' })).toBe(1);
+    const insert = getSqlCalls().find((c) => c.text.includes('INSERT INTO credit_allocations'));
+    expect(insert.values).toContain('rivival');
+  });
+
+  it('still fills the pool in when there is only one to choose', async () => {
+    mockDb({ issued: 20, video });
+    await setVideoCreditAllocation({ videoId: 'v1', minutes: 6 });
+    const insert = getSqlCalls().find((c) => c.text.includes('INSERT INTO video_credit_allocations'));
+    expect(insert.values).toContain('k1');
   });
 });
 

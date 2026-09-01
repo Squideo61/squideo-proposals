@@ -2283,14 +2283,14 @@ export function StoreProvider({ children }) {
     // `credits`, which spends a deal's own credit-project pool. `planned`
     // creates it without a board position; the server forces that anyway on a
     // deal that hasn't entered production.
-    addProjectVideo(dealId, title, { fromCredit = false, credits, creditMinutes, planned } = {}) {
-      return api.post('/api/crm/production/' + encodeURIComponent(dealId) + '/videos', { title, fromCredit, credits, creditMinutes, planned })
+    addProjectVideo(dealId, title, { fromCredit = false, credits, creditMinutes, creditClientKey, planned } = {}) {
+      return api.post('/api/crm/production/' + encodeURIComponent(dealId) + '/videos', { title, fromCredit, credits, creditMinutes, creditClientKey, planned })
         .then((video) => Promise.all([actions.loadDealDetail(dealId), actions.loadProductionVideos()]).then(() => video));
     },
     // Assign (or, with 0, hand back) minutes of the customer's credit against
     // one video. Reloads whatever's on screen so the balance can't go stale.
-    setVideoCredit(videoId, minutes, dealId = null) {
-      return api.post('/api/crm/production/video/' + encodeURIComponent(videoId) + '/credit', { minutes })
+    setVideoCredit(videoId, minutes, dealId = null, clientKey = null) {
+      return api.post('/api/crm/production/video/' + encodeURIComponent(videoId) + '/credit', { minutes, clientKey })
         .then((resp) => Promise.all([
           dealId ? actions.loadDealDetail(dealId) : null,
           actions.loadVideo(videoId).catch(() => null),

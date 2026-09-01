@@ -177,7 +177,7 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal, on
         </div>
         )}
         {creditOpen && (
-          <AssignCreditModal dealId={video.dealId} video={video} onClose={() => setCreditOpen(false)} />
+          <AssignCreditModal dealId={video.dealId} video={video} pools={video.creditBalance?.pools || []} onClose={() => setCreditOpen(false)} />
         )}
 
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 14, marginTop: 12 }}>
@@ -221,7 +221,11 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal, on
               </button>
               {video.creditBalance && video.creditStatus !== 'spent' && (
                 <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 4 }}>
-                  {fmtMins(video.creditBalance.available)} of their credit is free.
+                  {/* Named when the customer runs several balances — "12 min
+                      free" is no use if it's the other study's 12 minutes. */}
+                  {video.creditAllocation?.poolName
+                    ? `From ${video.creditAllocation.poolName}.`
+                    : `${fmtMins(video.creditBalance.available)} of their credit is free.`}
                 </div>
               )}
             </div>
