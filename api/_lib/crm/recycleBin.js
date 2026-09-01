@@ -36,7 +36,10 @@ const OWNER_RESTORABLE = new Set(['task']);
 const RESTORABLE_TABLES = new Set([
   'tasks', 'task_assignees', 'manual_pending_payments', 'cashflow_costs', 'recurring_other_revenue',
   // Production video + its cascade children (re-inserted parent-first on restore).
+  // video_credit_allocations is among them: deleting a video hands its reserved
+  // client credit back, so an undo has to take it again.
   'project_videos', 'video_milestones', 'video_milestone_assets', 'video_scripts', 'video_assignees',
+  'video_credit_allocations',
   // Partner subscription + the client's credit movements (deleted together).
   'partner_subscriptions', 'credit_allocations',
 ]);

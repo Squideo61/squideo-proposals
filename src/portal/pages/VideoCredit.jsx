@@ -8,7 +8,7 @@ import { BRAND } from '../../theme.js';
 import { portalApi } from '../api.js';
 import { usePortal } from '../PortalContext.jsx';
 import { Card, SectionHeading, EmptyState, fmtGBP } from '../components.jsx';
-import { Clapperboard, CreditCard, FileText, Minus, Plus, Sparkles, Wallet } from 'lucide-react';
+import { Clapperboard, CreditCard, Film, FileText, Minus, Plus, Sparkles, Wallet } from 'lucide-react';
 import { LEAD_MAGNET } from '../../lib/leadMagnet.js';
 
 const MIN = 1;
@@ -76,6 +76,15 @@ export default function VideoCredit() {
   const pricing = data?.pricing || null;
   const q = useMemo(() => (pricing ? quoteFor(minutes, pricing) : null), [minutes, pricing]);
   const remaining = data?.balance?.remaining ?? 0;
+  // What they can still spend on something new: the balance minus the minutes
+  // our team has already set aside for named videos of theirs. Showing only the
+  // total would over-promise, and showing only the free figure would look like
+  // credit had gone missing — so the page shows both, and what the reserved part
+  // is for.
+  const available = data?.balance?.available ?? remaining;
+  const reserved = data?.balance?.reserved ?? 0;
+  const allocations = data?.allocations || [];
+  const reservedFor = allocations.filter((a) => a.status === 'reserved');
 
   const buyCard = async () => {
     setBusy('card');
@@ -153,10 +162,46 @@ export default function VideoCredit() {
           {data && (data.balance.used > 0 || data.balance.issued > 0) && (
             <div style={{ textAlign: 'right', fontSize: 12, color: '#B9CBD6', flexShrink: 0 }}>
               <div>{fmtMins(data.balance.issued)} bought</div>
+              {reserved > 0 && <div>{fmtMins(reserved)} reserved</div>}
               <div>{fmtMins(data.balance.used)} used</div>
             </div>
           )}
         </div>
+
+        {/* Reserved minutes, and the videos they're held for. Without this the
+            "free to spend" figure below would just look like the balance had
+            quietly shrunk. */}
+        {reserved > 0 && (
+          <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid rgba(255,255,255,0.14)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 13, color: '#B9CBD6' }}>
+                <strong style={{ color: '#fff' }}>{fmtMins(reserved)}</strong> is set aside for videos we've planned with you
+              </span>
+              <span style={{ fontSize: 13.5, fontWeight: 700, color: '#7EE2A8' }}>
+                {fmtMins(available)} free to spend
+              </span>
+            </div>
+            {reservedFor.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
+                {reservedFor.map((a) => (
+                  <div key={a.videoId} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: '#DDE9F0' }}>
+                    <Film size={13} style={{ flexShrink: 0, opacity: 0.8 }} />
+                    <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {a.videoTitle}
+                      {a.projectTitle && a.projectTitle !== a.videoTitle ? <span style={{ color: '#8FA9B8' }}> · {a.projectTitle}</span> : null}
+                    </span>
+                    {a.planned && (
+                      <span style={{ flexShrink: 0, fontSize: 10.5, fontWeight: 700, color: '#FDE68A', border: '1px solid rgba(253,230,138,0.4)', borderRadius: 999, padding: '1px 7px', whiteSpace: 'nowrap' }}>
+                        Not started
+                      </span>
+                    )}
+                    <strong style={{ flexShrink: 0, color: '#fff' }}>{fmtMins(a.minutes)}</strong>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </Card>
 
       {error && <Card><EmptyState title="Couldn't load your credit" body={error} /></Card>}
@@ -221,6 +266,7 @@ export default function VideoCredit() {
           <li>Credit is measured in <strong>minutes of finished video</strong> — a 2 minute video uses 2 credits.</li>
           <li>The more minutes you buy at once, the bigger the discount on them.</li>
           <li>When you request a <strong>New video</strong>, tick “use my credit” and we'll draw it down against your quote.</li>
+          <li>When we plan a video with you we <strong>set credit aside</strong> for it — it stays yours, and only comes off the balance once that video is signed off.</li>
           <li>Any credit you don't use stays on your balance for up to 2 years.</li>
         </ul>
         <a href="#/request" className="btn-ghost" style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginTop: 14, fontSize: 13.5, fontWeight: 700, color: BRAND.blue }}>

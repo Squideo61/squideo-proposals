@@ -27,6 +27,7 @@ import { InvoicesPaymentsCard } from './InvoicesPaymentsCard.jsx';
 import { OrderSummaryCard } from './OrderSummaryCard.jsx';
 import { RetainersCard } from './RetainersCard.jsx';
 import { ProductionPanel } from './ProductionPanel.jsx';
+import { ClientCreditCard } from './ClientCreditCard.jsx';
 import { PortalDealCard, launchIntroEmail } from './PortalDealCard.jsx';
 import { CreditAccessCard } from './CreditAccessCard.jsx';
 import { ClientScriptCard } from './ClientScriptCard.jsx';
@@ -286,13 +287,21 @@ export function DealDetailView({ dealId, onBack, backLabel, onOpenProposal, onCr
     return { value: null, source: null };
   }, [proposals, deal.value]);
   const projectVideos = detail?.videos || [];
-  const projectPhase = useMemo(() => aggregateProjectPhase(projectVideos), [projectVideos]);
+  // Planned videos (no board position) are excluded from the project's progress
+  // bar: they're named and often have credit reserved against them, but they
+  // haven't started, so counting them would drag the whole project back to
+  // Pre-Production and inflate "N of M delivered".
+  // Videos that are actually under way. Everything that asks "is this a project
+  // yet?" reads this rather than the raw list — planning a video and reserving
+  // credit against it doesn't turn a sales deal into a production project.
+  const startedVideos = useMemo(() => projectVideos.filter(v => v.productionPhase), [projectVideos]);
+  const projectPhase = useMemo(() => aggregateProjectPhase(startedVideos), [startedVideos]);
   // Once a deal is in production it's a project (production_phase is set as soon
   // as it enters, before videos finish loading, so check both). Before that, the
   // "Good to go" gate moves it into Projects — but only when it's committed:
   // a signed proposal, a paid/long-term stage, or a purchase order. (The server
   // enforces the same rule; this just decides whether to offer the button.)
-  const isProject = projectVideos.length > 0 || !!deal.productionPhase;
+  const isProject = startedVideos.length > 0 || !!deal.productionPhase;
   const po = detail?.purchaseOrder || null;
   const canGoodToGo = !isProject && (
     proposals.some(p => p.signed)
@@ -517,7 +526,7 @@ export function DealDetailView({ dealId, onBack, backLabel, onOpenProposal, onCr
         {/* Once the deal is a project (it has production videos) the sales
             pipeline bar gives way to a production progress bar for the whole
             project — aggregated across its videos. */}
-        {projectVideos.length > 0 ? (
+        {startedVideos.length > 0 ? (
           <ProductionProgressBar
             phaseId={projectPhase.phaseId}
             subtitle={projectPhase.total > 1
@@ -539,7 +548,9 @@ export function DealDetailView({ dealId, onBack, backLabel, onOpenProposal, onCr
               <button
                 type="button"
                 onClick={() => company && onOpenCompany?.(company.id)}
-                title="This customer holds credit — open their organisation to see the ledger"
+                title={detail.companyCredit.reserved > 0
+                  ? `${detail.companyCredit.available} min free · ${detail.companyCredit.reserved} min already reserved against specific videos`
+                  : 'This customer holds credit — open their organisation to see the ledger'}
                 style={{
                   display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 6,
                   background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 999,
@@ -548,7 +559,10 @@ export function DealDetailView({ dealId, onBack, backLabel, onOpenProposal, onCr
                 }}
               >
                 <Wallet size={12} />
-                {detail.companyCredit.remaining} min credit
+                {/* "Free" rather than a bare total: some of the balance may
+                    already be earmarked for videos that haven't started. */}
+                {detail.companyCredit.available ?? detail.companyCredit.remaining} min credit free
+                {detail.companyCredit.reserved > 0 ? ` · ${detail.companyCredit.reserved} reserved` : ''}
               </button>
             )}
           </Field>
@@ -599,12 +613,12 @@ export function DealDetailView({ dealId, onBack, backLabel, onOpenProposal, onCr
               still have shown a confident "Deposit paid" date. The payment state
               itself lives on the proposal card, where saleStatus computes it
               from what's actually been received. */}
-          {!hideFinancials && projectVideos.length > 0 && deal.productionEnteredAt && (
+          {!hideFinancials && startedVideos.length > 0 && deal.productionEnteredAt && (
             <Field icon={Calendar} label="Production opened">
               {new Date(deal.productionEnteredAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
             </Field>
           )}
-          {projectVideos.length > 0 && (
+          {startedVideos.length > 0 && (
             <Field icon={Calendar} label="Production start date">
               <input
                 type="date"
@@ -856,7 +870,7 @@ export function DealDetailView({ dealId, onBack, backLabel, onOpenProposal, onCr
           ))}
         </Card>
 
-        {projectVideos.length > 0 && (
+        {startedVideos.length > 0 && (
           <ScheduleCard deal={deal} onOpen={() => setScheduleOpen(true)} />
         )}
 
@@ -991,8 +1005,25 @@ export function DealDetailView({ dealId, onBack, backLabel, onOpenProposal, onCr
         </>)}
 
         <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
-          <ProductionPanel dealId={dealId} deal={deal} videos={detail?.videos || []} creditProject={detail?.creditProject || null} hideCredits={hideFinancials} isMobile={isMobile} onOpenVideo={onOpenVideo} />
+          <ProductionPanel dealId={dealId} deal={deal} videos={detail?.videos || []} creditProject={detail?.creditProject || null} companyCredit={detail?.companyCredit || null} hideCredits={hideFinancials} isMobile={isMobile} onOpenVideo={onOpenVideo} />
         </div>
+
+        {/* The customer's own video-credit balance, in the same words their
+            portal uses, plus every video it's reserved against — including
+            videos nobody has started. Money, so it follows the same visibility
+            rule as the rest of the finance cards. */}
+        {state.session?.role !== 'freelancer' && !hideFinancials && (
+          <div style={{ gridColumn: isMobile ? undefined : '1 / -1' }}>
+            <ClientCreditCard
+              dealId={dealId}
+              companyId={deal.companyId || company?.id || null}
+              companyName={company?.name || null}
+              onOpenVideo={onOpenVideo}
+              onOpenCompany={onOpenCompany}
+              refreshKey={`${(detail?.videos || []).length}:${detail?.companyCredit?.reserved ?? ''}:${detail?.companyCredit?.used ?? ''}`}
+            />
+          </div>
+        )}
 
         {/* Customer-portal extras offers + invite management (money — hidden
             from freelancers / finance-restricted views). */}

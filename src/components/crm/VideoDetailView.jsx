@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Film, FolderOpen, Send, ExternalLink, Trash2, FileText, Upload, CheckCircle2, Circle, ListChecks, ChevronDown, ChevronRight, Link2, Unlink } from 'lucide-react';
+import { ArrowLeft, Film, FolderOpen, Send, ExternalLink, Trash2, FileText, Upload, CheckCircle2, Circle, ListChecks, ChevronDown, ChevronRight, Link2, Unlink, Wallet, Play } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile, formatRelativeTime } from '../../utils.js';
@@ -16,6 +16,8 @@ import { AssigneePicker } from './TaskFormModal.jsx';
 import { PdfPage } from '../storyboard/PdfPage.jsx';
 import ReviewEmailComposer from './ReviewEmailComposer.jsx';
 import { ClientBriefBlock } from './ClientBriefBlock.jsx';
+import { AssignCreditModal } from './ProductionPanel.jsx';
+import { fmtMins } from './ClientCreditCard.jsx';
 
 const sectionCard = {
   background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: 20, marginTop: 18,
@@ -42,6 +44,7 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal, on
 
   const video = state.videoDetail?.[videoId];
   const [showSchedule, setShowSchedule] = useState(false);
+  const [creditOpen, setCreditOpen] = useState(false);
 
   if (!video) {
     return (
@@ -138,9 +141,31 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal, on
           </button>
         )}
 
-        {/* Production progress — detailed stage bar (click a step to move the
-            video there, across phases too) with the exact board stage beneath.
-            Replaces the old manual Status dropdown. */}
+        {/* A planned video has no board position yet — it's been named, and
+            often has credit reserved against it, but nobody has started it.
+            Showing a Pre-Production bar for it would be a lie, so it gets its
+            own banner and a way to start. */}
+        {!video.productionPhase ? (
+          <div style={{ marginTop: 4, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+            background: '#FFFDF5', border: '1px dashed #FDE68A', borderRadius: 10, padding: '12px 14px' }}>
+            <div style={{ flex: 1, minWidth: 200, fontSize: 13, color: BRAND.ink }}>
+              <strong>Planned — not started.</strong>{' '}
+              <span style={{ color: BRAND.muted }}>
+                It isn’t on the production board yet.
+                {video.creditMinutes ? ` ${fmtMins(video.creditMinutes)} of the client’s credit is reserved for it.` : ''}
+              </span>
+            </div>
+            <button className="btn" onClick={() => {
+              if (!window.confirm(`Start "${video.title}"? It moves onto the production board at Pre-Production.`)) return;
+              actions.startPlannedVideo(video.dealId, videoId)
+                .then(() => showMsg('Video started'))
+                .catch(e => showMsg(e.message || 'Could not start the video'));
+            }}><Play size={14} /> Start this video</button>
+          </div>
+        ) : (
+        /* Production progress — detailed stage bar (click a step to move the
+           video there, across phases too) with the exact board stage beneath.
+           Replaces the old manual Status dropdown. */
         <div style={{ marginTop: 4, marginBottom: 16 }}>
           <VideoProgressBar
             phaseId={phase.id}
@@ -150,6 +175,10 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal, on
           />
           <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 6 }}>Stage: {stageLabel}</div>
         </div>
+        )}
+        {creditOpen && (
+          <AssignCreditModal dealId={video.dealId} video={video} onClose={() => setCreditOpen(false)} />
+        )}
 
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 14, marginTop: 12 }}>
           <div style={{ gridColumn: '1 / -1' }}>
@@ -165,6 +194,38 @@ export function VideoDetailView({ videoId, onBack, onOpenProject, onOpenDeal, on
               emptyLabel="No producers assigned"
             />
           </div>
+          {/* The customer's own video credit reserved for THIS video. Editable
+              here as well as on the project page, because a producer opening a
+              video shouldn't have to go back to find out whether it's paid for
+              out of a balance. Hidden from freelancers — it's money. */}
+          {state.session?.role !== 'freelancer' && (
+            <div>
+              <label style={labelStyle}>Client credit</label>
+              <button
+                type="button"
+                onClick={() => video.creditStatus === 'spent' ? undefined : setCreditOpen(true)}
+                disabled={video.creditStatus === 'spent'}
+                title={video.creditStatus === 'spent'
+                  ? 'This credit has been drawn down — the video is signed off'
+                  : 'Reserve minutes of the customer’s video credit against this video'}
+                style={{ ...ctrl, display: 'flex', alignItems: 'center', gap: 6, minHeight: 36, textAlign: 'left',
+                  background: video.creditMinutes ? '#F0FDF4' : '#F8FAFC',
+                  borderColor: video.creditMinutes ? '#BBF7D0' : undefined,
+                  color: video.creditMinutes ? '#15803D' : BRAND.muted,
+                  cursor: video.creditStatus === 'spent' ? 'default' : 'pointer', width: '100%' }}
+              >
+                <Wallet size={14} />
+                {video.creditMinutes
+                  ? `${fmtMins(video.creditMinutes)}${video.creditStatus === 'spent' ? ' · drawn down' : ' reserved'}`
+                  : 'None reserved'}
+              </button>
+              {video.creditBalance && video.creditStatus !== 'spent' && (
+                <div style={{ fontSize: 11.5, color: BRAND.muted, marginTop: 4 }}>
+                  {fmtMins(video.creditBalance.available)} of their credit is free.
+                </div>
+              )}
+            </div>
+          )}
           <div>
             <label style={labelStyle}>Payment</label>
             <div style={{ ...ctrl, background: '#F8FAFC', display: 'flex', alignItems: 'center', minHeight: 36,

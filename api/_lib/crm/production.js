@@ -33,6 +33,10 @@ import { hasPermission } from '../permissions.js';
 import { briefsForDeal } from '../brief/dealBriefs.js';
 import { archiveRecord } from './recycleBin.js';
 import { getDealCreditProject } from './retainers.js';
+import {
+  setVideoCreditAllocation, availableForCompany, allocationsByVideo,
+  listVideoCreditAllocations, settleSignedOffAllocations,
+} from '../videoCreditAllocations.js';
 import { isFreelancer, userOnDeal, userOnVideo } from './access.js';
 import { submitRevisionToClient, submitStoryboardToClient, reviewEmailContext } from './clientReview.js';
 import { advanceDeliveredIfUnlocked } from './delivery.js';
@@ -189,7 +193,17 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
           FROM project_videos pv
           JOIN deals d ON d.id = pv.deal_id
           LEFT JOIN companies c ON c.id = d.company_id
-         WHERE pv.production_phase IS NOT NULL
+         WHERE (
+                 pv.production_phase IS NOT NULL
+                 -- Planned videos (no board position) belong to the project too:
+                 -- the Projects overview is derived from this list, and a video
+                 -- with the client's credit reserved against it has to be
+                 -- countable there. Only on projects that are actually live —
+                 -- a planned video on an unsold deal isn't a project yet, and
+                 -- lives on the deal page instead.
+                 OR d.production_entered_at IS NOT NULL
+                 OR d.production_phase IS NOT NULL
+               )
            AND (NOT ${freelancer} OR (
                  LOWER(d.producer_email) = ${meEmail}
                  OR EXISTS (SELECT 1 FROM deal_assignees da WHERE da.deal_id = d.id AND LOWER(da.user_email) = ${meEmail})
@@ -198,8 +212,19 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
          ORDER BY pv.sort_order, pv.created_at
       `;
       const videos = rows.map(serialiseVideo);
-      const pmap = await paymentOptionMap([...new Set(videos.map(v => v.dealId).filter(Boolean))]);
-      for (const v of videos) v.paymentOption = pmap.get(v.dealId) || null;
+      const [pmap, credits] = await Promise.all([
+        paymentOptionMap([...new Set(videos.map(v => v.dealId).filter(Boolean))]),
+        // Client credit earmarked per video, so a PM scanning the board can see
+        // which cards are already paid for out of a balance. Money — freelancers
+        // never get it.
+        freelancer ? Promise.resolve(new Map()) : allocationsByVideo(videos.map(v => v.id)).catch(() => new Map()),
+      ]);
+      for (const v of videos) {
+        v.paymentOption = pmap.get(v.dealId) || null;
+        const a = credits.get(v.id);
+        v.creditMinutes = a ? a.minutes : null;
+        v.creditStatus = a ? a.status : null;
+      }
       return res.status(200).json(videos);
     }
 
@@ -275,6 +300,23 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
       if (req.method !== 'POST') return res.status(405).end();
       return moveVideo(req, res, videoId, user);
     }
+    // Earmark a slice of the CUSTOMER'S video-credit balance against this video
+    // — the "pre-assign credit to a video that hasn't started" path. Money, so
+    // freelancers never reach it (they're already blocked above for videos
+    // they're not on; this blocks them outright).
+    if (subaction === 'credit') {
+      if (freelancer) return res.status(403).json({ error: 'You do not have permission to assign credit' });
+      if (req.method === 'POST')   return setVideoCredit(req, res, videoId, user);
+      if (req.method === 'DELETE') return setVideoCredit(req, res, videoId, user, 0);
+      return res.status(405).end();
+    }
+    // Start a planned video: give it a board position without changing its
+    // credit. Kept separate from /move so the UI doesn't have to know which
+    // stage a project begins at.
+    if (subaction === 'start') {
+      if (req.method !== 'POST') return res.status(405).end();
+      return startPlannedVideo(res, videoId, user);
+    }
     if (subaction === 'milestone') {
       if (req.method !== 'POST') return res.status(405).end();
       return setMilestone(req, res, videoId, user);
@@ -305,11 +347,15 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
       // undoable via /api/crm/restore/:videoId. Best-effort — a failed archive
       // must not block the delete itself.
       try {
-        const [milestones, assets, scripts, assignees] = await Promise.all([
+        const [milestones, assets, scripts, assignees, creditRows] = await Promise.all([
           sql`SELECT * FROM video_milestones WHERE video_id = ${videoId}`,
           sql`SELECT * FROM video_milestone_assets WHERE video_id = ${videoId}`,
           sql`SELECT * FROM video_scripts WHERE video_id = ${videoId}`,
           sql`SELECT * FROM video_assignees WHERE video_id = ${videoId}`,
+          // Deleting the video cascades its credit allocation away, which hands
+          // the reserved minutes back — right, but only if an undo puts them
+          // back too. Archive it with the rest.
+          sql`SELECT * FROM video_credit_allocations WHERE video_id = ${videoId}`.catch(() => []),
         ]);
         await archiveRecord('project_video', videoId, [
           { table: 'project_videos', row: vid },
@@ -317,6 +363,7 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
           ...assets.map((row) => ({ table: 'video_milestone_assets', row })),
           ...scripts.map((row) => ({ table: 'video_scripts', row })),
           ...assignees.map((row) => ({ table: 'video_assignees', row })),
+          ...creditRows.map((row) => ({ table: 'video_credit_allocations', row })),
         ], user.email);
       } catch (err) {
         console.error('[production] archive before delete failed', err.message);
@@ -357,10 +404,23 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
     return res.status(200).json({ ok: true, productionCredits: row.production_credits });
   }
 
-  // Add a video (lands at Pre-Production / New Project). On credit-based deals it
-  // costs credits from the deal's credit project (a linked work-log entry is
-  // created, which draws the balance down); otherwise the legacy per-deal
-  // production_credits counter applies.
+  // A read-only summary of what this project can draw on: the customer's
+  // company-wide video credit (bought in the portal or as partner credit),
+  // what's already earmarked here vs on their other projects, and the deal's own
+  // credit project if it has one. The deal page's credit card renders this, and
+  // it's deliberately the same numbers companyCreditTotals gives the portal.
+  if (action === 'credit-summary') {
+    if (req.method !== 'GET') return res.status(405).end();
+    if (freelancer) return res.status(403).json({ error: 'You do not have permission to view credit' });
+    return dealCreditSummary(res, dealId);
+  }
+
+  // Add a video. Lands at Pre-Production / New Project on a live project, or as
+  // a PLANNED video (no board position) when the deal hasn't entered production
+  // yet — which is what lets a production manager reserve credit against work
+  // that hasn't started. On credit-based deals it costs credits from the deal's
+  // credit project (a linked work-log entry is created, which draws the balance
+  // down); otherwise the legacy per-deal production_credits counter applies.
   if (action === 'videos') {
     if (req.method !== 'POST') return res.status(405).end();
     const body = req.body || {};
@@ -387,13 +447,39 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
       if (!dec.length) return res.status(400).json({ error: 'No credits available' });
     }
 
+    // A planned video has NO board position (production_phase NULL), which is
+    // already how the board, the projects overview and the client portal tell
+    // "not on the board yet" from "in Pre-Production". Asked for explicitly, or
+    // implied when the deal hasn't gone through the "Good to go" gate — a video
+    // can't sit in Pre-Production on a project that isn't in production.
+    const [dealProd] = await sql`SELECT production_phase, production_entered_at FROM deals WHERE id = ${dealId}`;
+    const dealLive = !!(dealProd?.production_phase || dealProd?.production_entered_at);
+    const planned = body.planned === true || !dealLive;
+
     const vid = makeId('pvid');
     await sql`
       INSERT INTO project_videos
         (id, deal_id, title, status, sort_order, video_number, production_phase, production_stage, production_stage_changed_at, created_by)
       VALUES
-        (${vid}, ${dealId}, ${title}, 'not_started', ${next}, ${Number(nextNumber)}, ${FIRST_PRODUCTION.phase}, ${FIRST_PRODUCTION.stage}, NOW(), ${user.email || null})
+        (${vid}, ${dealId}, ${title}, 'not_started', ${next}, ${Number(nextNumber)},
+         ${planned ? null : FIRST_PRODUCTION.phase}, ${planned ? null : FIRST_PRODUCTION.stage},
+         ${planned ? null : new Date().toISOString()}, ${user.email || null})
     `;
+
+    // Pre-assign the customer's own video credit to it. Separate from the deal's
+    // credit project above: this draws on the company-wide balance they bought
+    // in the portal, and holds the minutes as reserved until the video is
+    // signed off. A rejection here must not leave a stray video behind, so the
+    // video is removed again and the reason relayed.
+    const creditMinutes = numberOrNull(body.creditMinutes);
+    if (creditMinutes != null && creditMinutes > 0) {
+      try {
+        await setVideoCreditAllocation({ videoId: vid, minutes: creditMinutes, user });
+      } catch (err) {
+        await sql`DELETE FROM project_videos WHERE id = ${vid}`.catch(() => {});
+        return res.status(err.status || 400).json({ error: err.message });
+      }
+    }
 
     // Log the video against the credit project so it shows as a line item
     // (Active until Signed Off) and its credits are consumed from the balance.
@@ -429,6 +515,75 @@ export async function productionRoute(req, res, id, action, user, subaction = nu
 }
 
 // Move a video to a new phase/stage on the board.
+// ─── Client video credit, per video ──────────────────────────────────────────
+
+// Set (or, with minutes 0, clear) the customer's credit earmarked against this
+// video. The library owns the arithmetic — including refusing to over-commit a
+// balance and refusing to edit credit that's already been drawn down.
+async function setVideoCredit(req, res, videoId, user, forced = null) {
+  const minutes = forced != null ? forced : numberOrNull((req.body || {}).minutes);
+  if (minutes == null) return res.status(400).json({ error: 'minutes required' });
+  try {
+    const allocation = await setVideoCreditAllocation({ videoId, minutes, user });
+    const [v] = await sql`
+      SELECT d.company_id FROM project_videos pv JOIN deals d ON d.id = pv.deal_id WHERE pv.id = ${videoId}`;
+    const balance = await availableForCompany(v?.company_id || null);
+    return res.status(200).json({ allocation, balance });
+  } catch (err) {
+    return res.status(err.status || 500).json({ error: err.message });
+  }
+}
+
+// Move a planned video onto the board at the project's first stage. Its credit
+// reservation is untouched — starting the work doesn't spend the credit, being
+// signed off does.
+async function startPlannedVideo(res, videoId, user) {
+  const cur = (await sql`SELECT deal_id, production_phase FROM project_videos WHERE id = ${videoId}`)[0];
+  if (!cur) return res.status(404).json({ error: 'Video not found' });
+  if (cur.production_phase) {
+    const [row] = await VIDEO_SELECT(sql`WHERE pv.id = ${videoId}`);
+    return res.status(200).json(serialiseVideo(row));
+  }
+  // The project itself has to be live before one of its videos can be — the
+  // "Good to go" gate is what tells the project managers work has started.
+  const [deal] = await sql`SELECT production_phase, production_entered_at FROM deals WHERE id = ${cur.deal_id}`;
+  if (!deal?.production_phase && !deal?.production_entered_at) {
+    return res.status(409).json({ error: 'This project isn’t in production yet — use “Good to go” on the deal first.' });
+  }
+  await sql`
+    UPDATE project_videos
+       SET production_phase = ${FIRST_PRODUCTION.phase}, production_stage = ${FIRST_PRODUCTION.stage},
+           production_stage_changed_at = NOW(), updated_at = NOW()
+     WHERE id = ${videoId}`;
+  await sql`
+    INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
+    VALUES (${cur.deal_id}, 'video_stage_change',
+            ${JSON.stringify({ videoId, fromPhase: null, fromStage: null, toPhase: FIRST_PRODUCTION.phase, toStage: FIRST_PRODUCTION.stage, planned: true })},
+            ${user.email || null})`;
+  await sql`UPDATE deals SET last_activity_at = NOW() WHERE id = ${cur.deal_id}`;
+  const [row] = await VIDEO_SELECT(sql`WHERE pv.id = ${videoId}`);
+  return res.status(200).json(serialiseVideo(row));
+}
+
+// Everything the deal page's credit card needs, in the customer's terms.
+async function dealCreditSummary(res, dealId) {
+  const [deal] = await sql`SELECT company_id FROM deals WHERE id = ${dealId}`;
+  const companyId = deal?.company_id || null;
+  if (!companyId) {
+    return res.status(200).json({ companyId: null, balance: null, allocations: [], creditProject: null });
+  }
+  // Settle anything signed off since the last look, so the figures on this page
+  // are the ones the client is seeing in their portal right now.
+  await settleSignedOffAllocations({ companyId }).catch(() => 0);
+  const { companyCreditTotals } = await import('../partnerCredits.js');
+  const [balance, allocations, creditProject] = await Promise.all([
+    companyCreditTotals(companyId).catch(() => null),
+    listVideoCreditAllocations({ companyId }).catch(() => []),
+    getDealCreditProject(dealId).catch(() => null),
+  ]);
+  return res.status(200).json({ companyId, balance, allocations, creditProject });
+}
+
 async function moveVideo(req, res, videoId, user) {
   const { phase, stage } = req.body || {};
   if (!isValidProductionStage(phase, stage)) return res.status(400).json({ error: 'Invalid phase/stage' });
@@ -447,6 +602,9 @@ async function moveVideo(req, res, videoId, user) {
               ${user.email || null})
     `;
     await sql`UPDATE deals SET last_activity_at = NOW() WHERE id = ${cur.deal_id}`;
+    // Reaching Signed Off is what actually spends the client's reserved credit.
+    // Best-effort: a credit write must never stop the board moving.
+    await settleSignedOffAllocations({ videoId }).catch(() => 0);
   }
   const [row] = await VIDEO_SELECT(sql`WHERE pv.id = ${videoId}`);
   return res.status(200).json(serialiseVideo(row));
@@ -727,6 +885,17 @@ async function withVideoExtras(video) {
     } catch { /* best-effort */ }
   }
   video.paymentOption = await paymentOptionForDeal(video.dealId);
+  // The customer's video credit assigned to this video, plus what's still free
+  // on their balance, so the video page can edit it without a second round trip.
+  try {
+    const allocation = (await allocationsByVideo([video.id])).get(video.id) || null;
+    video.creditAllocation = allocation;
+    video.creditMinutes = allocation ? allocation.minutes : null;
+    video.creditStatus = allocation ? allocation.status : null;
+    video.creditBalance = video.companyId ? await availableForCompany(video.companyId, { excludeVideoId: video.id }) : null;
+  } catch (err) {
+    console.warn('[production] video credit lookup failed', video.id, err.message);
+  }
   return video;
 }
 
@@ -749,6 +918,9 @@ async function advanceVideoForward(videoId, phase, stage, user) {
             ${user.email || null})
   `;
   await sql`UPDATE deals SET last_activity_at = NOW() WHERE id = ${cur.deal_id}`;
+  // Same settlement as moveVideo — a milestone approval can be what carries a
+  // video over the Signed Off line.
+  await settleSignedOffAllocations({ videoId }).catch(() => 0);
 }
 
 // Approve / un-approve a milestone. Approving advances the card to the

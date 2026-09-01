@@ -11,6 +11,7 @@ import {
 } from '../partnerCredits.js';
 import { ensureCompanyLogoColumns, decodeLogo, portalLogoPath } from '../portal/logo.js';
 import { listVideoCreditOrders, raiseInvoiceForCreditOrder, cancelCreditOrder, reconcileVideoCreditOrders } from '../videoCredit.js';
+import { listVideoCreditAllocations, settleSignedOffAllocations } from '../videoCreditAllocations.js';
 import { loadCompanyCredit, setCompanyCredit } from './companyCredit.js';
 
 // Self-heal for db/migrations/20260603_company_address.sql. Called at the top of
@@ -286,6 +287,9 @@ export async function companiesRoute(req, res, id, action, user) {
     // Credit any just-paid video-credit invoices BEFORE computing partner totals
     // so the balance shown below already includes them.
     await reconcileVideoCreditOrders([id]).catch(() => {});
+    // …and settle any video that's been signed off since last look, so a
+    // reservation doesn't linger on finished work.
+    await settleSignedOffAllocations({ companyId: id }).catch(() => 0);
 
     // --- Deal credit-based projects (mirrors retainersRoute's read, by company)
     const retainerRows = await sql`
@@ -377,7 +381,13 @@ export async function companiesRoute(req, res, id, action, user) {
     // + the history. Reconciles any just-paid invoices into the balance first.
     const creditOrders = await listVideoCreditOrders(id).catch(() => []);
 
-    return res.status(200).json({ retainers, partnerCredits, creditOrders });
+    // Minutes earmarked against specific videos (often ones that haven't
+    // started). They're still inside creditsRemaining above — this is what says
+    // how much of it is already spoken for, which is the same split the client's
+    // portal shows them.
+    const creditAllocations = await listVideoCreditAllocations({ companyId: id }).catch(() => []);
+
+    return res.status(200).json({ retainers, partnerCredits, creditOrders, creditAllocations });
   }
 
   // POST /companies/:id/credit-order-raise { orderId } — raise the standalone

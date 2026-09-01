@@ -323,7 +323,9 @@ export function BusinessOverviewView({
 
   // ── Production (production.access — derived from in-state videos). ──
   const production = useMemo(() => {
-    const vids = state.productionVideos || [];
+    // Planned videos ride along in the same list but have no board position —
+    // they aren't in production, so they're left out of these counts.
+    const vids = (state.productionVideos || []).filter((v) => v.productionPhase);
     const counts = Object.fromEntries(PRODUCTION_PHASES.map((p) => [p.id, 0]));
     for (const v of vids) if (counts[v.productionPhase] != null) counts[v.productionPhase] += 1;
     const items = PRODUCTION_PHASES.map((p) => ({ id: p.id, label: p.label, color: p.color, count: counts[p.id] }));

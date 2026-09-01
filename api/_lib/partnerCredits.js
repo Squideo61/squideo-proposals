@@ -1,4 +1,5 @@
 import sql from './db.js';
+import { reservedMinutesFor } from './videoCreditAllocations.js';
 
 // Runtime self-heal for db/migrations/20260730_credit_company_link.sql.
 // Module-cached; resets on failure so a later call retries.
@@ -94,11 +95,11 @@ export async function creditClientsWithCompany() {
 // Money-type retainers are excluded: those are a £ pot, not minutes.
 export async function companyCreditTotals(companyId) {
   const id = typeof companyId === 'object' ? companyId?.id : companyId;
-  const empty = { issued: 0, used: 0, remaining: 0, keys: [], partner: null, retainers: null };
+  const empty = { issued: 0, used: 0, remaining: 0, reserved: 0, available: 0, keys: [], partner: null, retainers: null };
   if (!id) return empty;
 
   const keys = await clientKeysForCompany(id);
-  const [totals, retainerRows] = await Promise.all([
+  const [totals, retainerRows, reservedMap] = await Promise.all([
     keys.length ? creditTotalsForKeys(keys) : Promise.resolve([]),
     sql`
       SELECT r.id, r.allocation_amount,
@@ -109,6 +110,10 @@ export async function companyCreditTotals(companyId) {
          AND r.allocation_type = 'credits'
          AND COALESCE(r.status, 'active') = 'active'
     `.catch(() => []),
+    // Minutes a production manager has earmarked against specific videos —
+    // often videos that haven't started yet. Still on the balance, but spoken
+    // for, so they come out of "available" without moving "used".
+    reservedMinutesFor([id]).catch(() => new Map()),
   ]);
 
   const partner = {
@@ -124,10 +129,23 @@ export async function companyCreditTotals(companyId) {
   };
   retainers.remaining = retainers.issued - retainers.used;
 
+  // Reservations only ever draw on the partner ledger (see
+  // api/_lib/videoCreditAllocations.js) — a deal's own credit project assigns
+  // per video through project_retainer_entries, which already shows up in
+  // retainers.used.
+  const reserved = reservedMap.get(id) || 0;
+  partner.reserved = reserved;
+  partner.available = partner.remaining - reserved;
+
   return {
     issued: partner.issued + retainers.issued,
     used: partner.used + retainers.used,
+    // `remaining` keeps its long-standing meaning — issued minus used — so
+    // nothing that already reads it changes behaviour. `available` is the
+    // narrower "free to spend on something new" figure.
     remaining: partner.remaining + retainers.remaining,
+    reserved,
+    available: partner.remaining + retainers.remaining - reserved,
     keys,
     partner,
     retainers,

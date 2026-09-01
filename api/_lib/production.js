@@ -240,6 +240,26 @@ export async function enterProduction(dealId, { source = null, actorEmail = null
       VALUES
         (${makeId('pvid')}, ${dealId}, 'Video 1', 'not_started', 0, 1, ${phase}, ${stage}, NOW(), ${actorEmail})
     `;
+  } else {
+    // The deal already has videos, but they may all be PLANNED — named ahead of
+    // time, often with the client's credit reserved against them, and with no
+    // board position. Going live has to put at least one of them on the board,
+    // or the project enters production with nothing in it. The first by sort
+    // order starts; anything planned after it stays planned until someone
+    // starts it, which is the point of planning them separately.
+    const [started] = await sql`
+      SELECT 1 FROM project_videos WHERE deal_id = ${dealId} AND production_phase IS NOT NULL LIMIT 1`;
+    if (!started) {
+      await sql`
+        UPDATE project_videos
+           SET production_phase = ${phase}, production_stage = ${stage},
+               production_stage_changed_at = NOW(), updated_at = NOW()
+         WHERE id = (
+           SELECT id FROM project_videos
+            WHERE deal_id = ${dealId} AND production_phase IS NULL
+            ORDER BY sort_order, created_at LIMIT 1
+         )`;
+    }
   }
 
   await logDealEvent(dealId, 'entered_production', { actorEmail, payload: { phase, stage, source } });

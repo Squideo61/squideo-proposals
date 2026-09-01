@@ -1,16 +1,28 @@
 import React, { useState } from 'react';
-import { Clapperboard, Film, Plus, Trash2, Send, Coins, ExternalLink, ChevronRight, X, Mic } from 'lucide-react';
+import { Clapperboard, Film, Plus, Trash2, Send, Coins, ExternalLink, ChevronRight, X, Mic, Wallet, Play } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { STAGE_LABEL } from '../../lib/productionStages.js';
 import { VideoProgressBar } from './ProductionProgressBar.jsx';
 import { Modal, RefBadge } from '../ui.jsx';
 import { videoReference } from '../../lib/reference.js';
+import { fmtMins } from './ClientCreditCard.jsx';
 
-// The project's videos + pre-paid credit balance. Each video moves through the
+// The project's videos + the credit behind them. Each video moves through the
 // board independently and is edited on its own page (onOpenVideo); this panel
-// is the project-level container — add videos, manage credits, jump in.
-export function ProductionPanel({ dealId, deal, videos, creditProject, hideCredits = false, isMobile, onOpenVideo }) {
+// is the project-level container — add videos, assign credit, jump in.
+//
+// Two different pots can pay for a video, and the panel keeps them distinct:
+//  · the deal's own credit project (creditProject) — a pool bought FOR this
+//    project, drawn down per video through the Credit Based Projects card.
+//  · the customer's company-wide video credit (companyCredit) — bought in their
+//    portal, spendable on any of their projects. Assigning it here RESERVES the
+//    minutes against a named video; they're drawn down when it's signed off.
+//
+// A video with no board position is "planned": named and (usually) paid for out
+// of credit, but not started. That's how credit gets pre-assigned to work that
+// hasn't begun — including on a deal that hasn't been marked Good to go.
+export function ProductionPanel({ dealId, deal, videos, creditProject, companyCredit, hideCredits = false, isMobile, onOpenVideo }) {
   const { actions, showMsg } = useStore();
   const inProduction = !!deal.productionPhase;
   // Credit-based deals draw each video from the Credit Based Project pool; the
@@ -18,38 +30,33 @@ export function ProductionPanel({ dealId, deal, videos, creditProject, hideCredi
   const creditMode = !!creditProject;
   const remaining = creditProject ? creditProject.remaining : 0;
   const credits = deal.productionCredits || 0;
+  const clientCredit = hideCredits ? null : companyCredit || null;
+  const clientAvailable = clientCredit ? (clientCredit.available ?? clientCredit.remaining ?? 0) : 0;
   const [addOpen, setAddOpen] = useState(false);
+  const [addPlanned, setAddPlanned] = useState(false);
 
   const container = {
     background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12,
     padding: isMobile ? 16 : 24, marginBottom: 16,
   };
 
-  if (!inProduction) {
-    // A deal only becomes a project once someone marks it "Good to go" (the
-    // button at the top of the page) — that's the single gate now, and it
-    // notifies the project managers. Payment alone no longer enters production,
-    // so there's no ungated "Add to production" shortcut here.
-    return (
-      <div style={container}>
-        <PanelHeader />
-        <div style={{ fontSize: 13, color: BRAND.muted, marginTop: 12 }}>
-          This deal isn’t in production yet. Once it’s sold, use <strong>Good to go</strong> at the top of
-          the page to move it into Projects (one video in Pre-Production) and alert the project managers.
-        </div>
-      </div>
-    );
-  }
+  const planned = videos.filter(v => !v.productionPhase);
+  const live = videos.filter(v => v.productionPhase);
 
-  // Add one-or-many videos at once: the modal collects rows (name + credits on
-  // credit-based deals), then we create them in order so they land on the board
-  // in the order they were typed.
-  const createVideos = async (rows) => {
+  // Add one-or-many videos at once: the modal collects rows (name, plus credits
+  // and/or client credit where they apply), then we create them in order so they
+  // land on the board in the order they were typed.
+  const createVideos = async (rows, plannedFlag) => {
     for (const r of rows) {
       // eslint-disable-next-line no-await-in-loop
-      await actions.addProjectVideo(dealId, r.title || null, creditMode ? { credits: r.credits } : {});
+      await actions.addProjectVideo(dealId, r.title || null, {
+        ...(creditMode ? { credits: r.credits } : {}),
+        ...(r.creditMinutes ? { creditMinutes: r.creditMinutes } : {}),
+        ...(plannedFlag ? { planned: true } : {}),
+      });
     }
   };
+  const openAdd = (asPlanned) => { setAddPlanned(asPlanned); setAddOpen(true); };
   const addCredits = () => {
     const raw = window.prompt('How many credits to add?', '1');
     if (raw == null) return;
@@ -64,11 +71,64 @@ export function ProductionPanel({ dealId, deal, videos, creditProject, hideCredi
       .catch(e => showMsg(e.message || 'No credits available'));
   };
 
+  const clientCreditPill = clientCredit && (clientCredit.issued > 0 || clientAvailable !== 0) ? (
+    <span
+      title="The customer's own video credit — buy it in their portal, reserve it against a video here"
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: '#15803D', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 999, padding: '3px 10px' }}
+    >
+      <Wallet size={12} /> {fmtMins(clientAvailable)} client credit free
+    </span>
+  ) : null;
+
+  const addModal = addOpen ? (
+    <AddVideosModal
+      onClose={() => setAddOpen(false)}
+      onCreate={(rows) => createVideos(rows, addPlanned)}
+      showMsg={showMsg}
+      creditMode={creditMode}
+      remaining={remaining}
+      clientAvailable={clientCredit ? clientAvailable : 0}
+      planned={addPlanned}
+    />
+  ) : null;
+
+  if (!inProduction) {
+    // A deal only becomes a project once someone marks it "Good to go" (the
+    // button at the top of the page) — that's still the single gate for STARTING
+    // work. Planning it isn't starting it, though: a production manager can name
+    // the videos and reserve the client's credit against them now, and they move
+    // onto the board when the project goes live.
+    return (
+      <div style={container}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
+          <PanelHeader />
+          <div style={{ flex: 1 }} />
+          {clientCreditPill}
+          <button className="btn-ghost" onClick={() => openAdd(true)}><Plus size={14} /> Add planned video</button>
+        </div>
+        <div style={{ fontSize: 13, color: BRAND.muted, marginBottom: planned.length ? 12 : 0 }}>
+          This deal isn’t in production yet. Use <strong>Good to go</strong> at the top of the page to move it into
+          Projects and alert the project managers — or plan the videos now and reserve the client’s credit against them.
+        </div>
+        {planned.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {planned.map(v => (
+              <PlannedRow key={v.id} dealId={dealId} dealReference={deal.reference} video={v}
+                hideCredits={hideCredits} canStart={false} onOpen={() => onOpenVideo && onOpenVideo(v.id)} />
+            ))}
+          </div>
+        )}
+        {addModal}
+      </div>
+    );
+  }
+
   return (
     <div style={container}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
         <PanelHeader />
         <div style={{ flex: 1 }} />
+        {clientCreditPill}
         {hideCredits ? null : creditMode ? (
           // Credit-based deal: the pool lives in the Credit Based Project card, so
           // just show the balance here (topping up happens over there).
@@ -86,18 +146,13 @@ export function ProductionPanel({ dealId, deal, videos, creditProject, hideCredi
             <button className="btn-ghost" onClick={addCredits}><Coins size={14} /> Add credits</button>
           </>
         )}
-        <button className="btn" onClick={() => setAddOpen(true)}><Plus size={14} /> Add video</button>
+        <button className="btn-ghost" onClick={() => openAdd(true)} title="Name a video and reserve credit for it without starting it">
+          <Plus size={14} /> Plan a video
+        </button>
+        <button className="btn" onClick={() => openAdd(false)}><Plus size={14} /> Add video</button>
       </div>
 
-      {addOpen && (
-        <AddVideosModal
-          onClose={() => setAddOpen(false)}
-          onCreate={createVideos}
-          showMsg={showMsg}
-          creditMode={creditMode}
-          remaining={remaining}
-        />
-      )}
+      {addModal}
 
       {videos.length === 0 ? (
         <div style={{ color: BRAND.muted, fontSize: 13, fontStyle: 'italic', padding: '8px 0' }}>
@@ -107,7 +162,19 @@ export function ProductionPanel({ dealId, deal, videos, creditProject, hideCredi
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {videos.map(v => <VideoRow key={v.id} dealId={dealId} dealReference={deal.reference} video={v} onOpen={() => onOpenVideo && onOpenVideo(v.id)} />)}
+          {live.map(v => (
+            <VideoRow key={v.id} dealId={dealId} dealReference={deal.reference} video={v}
+              hideCredits={hideCredits} onOpen={() => onOpenVideo && onOpenVideo(v.id)} />
+          ))}
+          {planned.length > 0 && (
+            <div style={{ fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 4 }}>
+              Planned — not started
+            </div>
+          )}
+          {planned.map(v => (
+            <PlannedRow key={v.id} dealId={dealId} dealReference={deal.reference} video={v}
+              hideCredits={hideCredits} canStart onOpen={() => onOpenVideo && onOpenVideo(v.id)} />
+          ))}
         </div>
       )}
     </div>
@@ -116,18 +183,22 @@ export function ProductionPanel({ dealId, deal, videos, creditProject, hideCredi
 
 // Name one or many videos before creating them. Starts on a single "Video 1"
 // row; "Add another" appends "Video N" (editable). On credit-based deals each
-// row also carries how many credits the video is worth, which is subtracted
-// from the project balance. All rows are created in order when you hit the button.
-function AddVideosModal({ onClose, onCreate, showMsg, creditMode, remaining }) {
-  const [rows, setRows] = useState([{ name: 'Video 1', credits: '1' }]);
+// row also carries how many credits the video is worth, and where the customer
+// holds their own video credit each row can reserve minutes of it. All rows are
+// created in order when you hit the button.
+function AddVideosModal({ onClose, onCreate, showMsg, creditMode, remaining, clientAvailable, planned }) {
+  const [rows, setRows] = useState([{ name: 'Video 1', credits: '1', mins: '' }]);
   const [saving, setSaving] = useState(false);
+  const clientMode = clientAvailable > 0;
 
   const setAt = (i, patch) => setRows(arr => arr.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
-  const addRow = () => setRows(arr => [...arr, { name: `Video ${arr.length + 1}`, credits: '1' }]);
+  const addRow = () => setRows(arr => [...arr, { name: `Video ${arr.length + 1}`, credits: '1', mins: '' }]);
   const removeRow = (i) => setRows(arr => (arr.length <= 1 ? arr : arr.filter((_, idx) => idx !== i)));
 
   const totalCredits = rows.reduce((s, r) => s + (Number(r.credits) || 0), 0);
+  const totalMins = rows.reduce((s, r) => s + (Number(r.mins) || 0), 0);
   const overBudget = creditMode && totalCredits > remaining;
+  const overClient = clientMode && totalMins > clientAvailable;
 
   const submit = async () => {
     if (saving) return;
@@ -137,7 +208,17 @@ function AddVideosModal({ onClose, onCreate, showMsg, creditMode, remaining }) {
       }
       if (overBudget) { showMsg(`That’s ${totalCredits} credits but only ${remaining} remaining`); return; }
     }
-    const items = rows.map(r => ({ title: r.name.trim(), credits: Number(r.credits) || 0 }));
+    if (clientMode) {
+      if (rows.some(r => r.mins !== '' && (!Number.isFinite(Number(r.mins)) || Number(r.mins) < 0))) {
+        showMsg('Client credit must be a number of minutes (or blank)'); return;
+      }
+      if (overClient) { showMsg(`That reserves ${fmtMins(totalMins)} but only ${fmtMins(clientAvailable)} is free`); return; }
+    }
+    const items = rows.map(r => ({
+      title: r.name.trim(),
+      credits: Number(r.credits) || 0,
+      creditMinutes: Number(r.mins) || 0,
+    }));
     setSaving(true);
     try {
       await onCreate(items);
@@ -149,14 +230,29 @@ function AddVideosModal({ onClose, onCreate, showMsg, creditMode, remaining }) {
   };
 
   const count = rows.length;
+  const wide = creditMode || clientMode;
   return (
-    <Modal onClose={saving ? undefined : onClose} maxWidth={creditMode ? 520 : 460}>
-      <h2 style={{ margin: '0 0 4px', fontSize: 18, fontWeight: 700 }}>Add {count === 1 ? 'a video' : `${count} videos`}</h2>
+    <Modal onClose={saving ? undefined : onClose} maxWidth={wide ? 620 : 460}>
+      <h2 style={{ margin: '0 0 4px', fontSize: 18, fontWeight: 700 }}>
+        {planned ? `Plan ${count === 1 ? 'a video' : `${count} videos`}` : `Add ${count === 1 ? 'a video' : `${count} videos`}`}
+      </h2>
       <div style={{ fontSize: 13, color: BRAND.muted, marginBottom: 16 }}>
-        {creditMode
-          ? <>Name each video and set how many credits it’s worth. <strong>{remaining}</strong> credit{remaining === 1 ? '' : 's'} available.</>
-          : 'Name each video (e.g. “Hero film”, “Cutdown 30s”). You can add as many as you like.'}
+        {planned
+          ? 'Named but not started — it stays off the production board until someone starts it. Reserve credit against it now if you want the client’s balance to reflect it.'
+          : creditMode
+            ? <>Name each video and set how many credits it’s worth. <strong>{remaining}</strong> credit{remaining === 1 ? '' : 's'} available.</>
+            : 'Name each video (e.g. “Hero film”, “Cutdown 30s”). You can add as many as you like.'}
       </div>
+
+      {wide && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10.5, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 4 }}>
+          <span style={{ width: 16, flexShrink: 0 }} />
+          <span style={{ flex: 1 }}>Video</span>
+          {creditMode && <span style={{ width: 78, flexShrink: 0, textAlign: 'right' }}>Credits</span>}
+          {clientMode && <span style={{ width: 110, flexShrink: 0, textAlign: 'right' }}>Client credit</span>}
+          <span style={{ width: 30, flexShrink: 0 }} />
+        </div>
+      )}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {rows.map((row, i) => (
@@ -170,7 +266,7 @@ function AddVideosModal({ onClose, onCreate, showMsg, creditMode, remaining }) {
               placeholder={`Video ${i + 1}`}
               disabled={saving}
               style={{
-                flex: 1, padding: '8px 10px', fontSize: 14,
+                flex: 1, minWidth: 0, padding: '8px 10px', fontSize: 14,
                 border: '1px solid ' + BRAND.border, borderRadius: 8,
               }}
             />
@@ -190,6 +286,27 @@ function AddVideosModal({ onClose, onCreate, showMsg, creditMode, remaining }) {
                   border: '1px solid ' + BRAND.border, borderRadius: 8,
                 }}
               />
+            )}
+            {clientMode && (
+              <div style={{ position: 'relative', width: 110, flexShrink: 0 }}>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.5"
+                  value={row.mins}
+                  onChange={e => setAt(i, { mins: e.target.value })}
+                  onKeyDown={e => { if (e.key === 'Enter') submit(); }}
+                  aria-label="Client credit minutes"
+                  title="Minutes of the customer’s own video credit to reserve for this video"
+                  placeholder="0"
+                  disabled={saving}
+                  style={{
+                    width: '100%', padding: '8px 30px 8px 10px', fontSize: 14, textAlign: 'right',
+                    border: '1px solid ' + BRAND.border, borderRadius: 8,
+                  }}
+                />
+                <span style={{ position: 'absolute', right: 9, top: 9, fontSize: 12, color: BRAND.muted, pointerEvents: 'none' }}>min</span>
+              </div>
             )}
             <button
               type="button"
@@ -226,11 +343,17 @@ function AddVideosModal({ onClose, onCreate, showMsg, creditMode, remaining }) {
           {totalCredits} credit{totalCredits === 1 ? '' : 's'} · {Math.max(0, remaining - totalCredits)} would remain
         </div>
       )}
+      {clientMode && (
+        <div style={{ marginTop: 6, fontSize: 13, color: overClient ? '#B91C1C' : BRAND.muted }}>
+          Reserving {fmtMins(totalMins)} of client credit · {fmtMins(Math.max(0, clientAvailable - totalMins))} would stay free.
+          {' '}They’ll see it in their portal as reserved for these videos.
+        </div>
+      )}
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
         <button type="button" className="btn-ghost" onClick={onClose} disabled={saving}>Cancel</button>
-        <button type="button" className="btn" onClick={submit} disabled={saving || overBudget}>
-          {saving ? 'Adding…' : `Add ${count === 1 ? 'video' : `${count} videos`}`}
+        <button type="button" className="btn" onClick={submit} disabled={saving || overBudget || overClient}>
+          {saving ? 'Adding…' : `${planned ? 'Plan' : 'Add'} ${count === 1 ? 'video' : `${count} videos`}`}
         </button>
       </div>
     </Modal>
@@ -246,9 +369,137 @@ function PanelHeader() {
   );
 }
 
-function VideoRow({ dealId, dealReference, video, onOpen }) {
+// A video that's been named and (usually) paid for out of credit, but hasn't
+// started. No progress bar — there's no board position to draw.
+function PlannedRow({ dealId, dealReference, video, hideCredits, canStart, onOpen }) {
   const { actions, showMsg } = useStore();
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
+
+  const start = () => {
+    if (!window.confirm(`Start "${video.title}"? It moves onto the production board at Pre-Production.`)) return;
+    setBusy(true);
+    actions.startPlannedVideo(dealId, video.id)
+      .then(() => showMsg('Video started'))
+      .catch(e => showMsg(e.message || 'Could not start the video'))
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: '#FFFDF5', border: '1px dashed #FDE68A', borderRadius: 8 }}>
+      <Film size={15} color="#B45309" />
+      <button onClick={onOpen}
+        style={{ flex: 1, minWidth: 0, textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: 0,
+          fontSize: 13, fontWeight: 600, color: BRAND.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {video.title}
+      </button>
+      <RefBadge reference={videoReference(dealReference, video.videoNumber)} size={10} />
+      <span style={{ fontSize: 11, color: '#B45309', whiteSpace: 'nowrap' }}>Not started</span>
+      {!hideCredits && <CreditChip video={video} onEdit={() => setEditing(true)} />}
+      {canStart && (
+        <button onClick={start} disabled={busy} className="btn-ghost" title="Move onto the production board">
+          <Play size={13} /> Start
+        </button>
+      )}
+      <button onClick={onOpen} className="btn-icon" title="Open video"><ChevronRight size={14} /></button>
+      <button
+        onClick={() => { if (window.confirm(`Delete "${video.title}"? Any credit reserved for it goes back on the client's balance.`)) actions.deleteProjectVideo(dealId, video.id); }}
+        className="btn-icon" title="Delete video"
+      ><Trash2 size={13} /></button>
+      {editing && <AssignCreditModal dealId={dealId} video={video} onClose={() => setEditing(false)} />}
+    </div>
+  );
+}
+
+// The credit reserved against a video, as a clickable chip. Reads "+ Credit"
+// when there's none yet, so assigning is one click from the project page.
+export function CreditChip({ video, onEdit }) {
+  const mins = video.creditMinutes;
+  const spent = video.creditStatus === 'spent';
+  if (!mins) {
+    return (
+      <button onClick={onEdit} className="btn-ghost" title="Reserve the customer's video credit for this video"
+        style={{ fontSize: 11, padding: '2px 8px' }}>
+        <Wallet size={11} style={{ verticalAlign: -1, marginRight: 3 }} />Credit
+      </button>
+    );
+  }
+  return (
+    <button
+      onClick={spent ? undefined : onEdit}
+      disabled={spent}
+      title={spent ? 'This credit has been drawn down' : 'Change the credit reserved for this video'}
+      style={{
+        flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 4, cursor: spent ? 'default' : 'pointer',
+        fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap', borderRadius: 999, padding: '2px 9px',
+        color: spent ? BRAND.muted : '#15803D',
+        background: spent ? '#F1F5F9' : '#F0FDF4',
+        border: '1px solid ' + (spent ? BRAND.border : '#BBF7D0'),
+      }}
+    >
+      <Wallet size={11} /> {fmtMins(mins)}{spent ? ' used' : ''}
+    </button>
+  );
+}
+
+// Set or clear the client credit reserved against one video. Shared by the
+// project page and the video page.
+export function AssignCreditModal({ dealId, video, onClose }) {
+  const { actions, showMsg } = useStore();
+  const [mins, setMins] = useState(String(video.creditMinutes || ''));
+  const [saving, setSaving] = useState(false);
+
+  const save = (value) => {
+    const n = Number(value);
+    if (value !== '' && (!Number.isFinite(n) || n < 0)) { showMsg('Enter a number of minutes, or 0 to release it'); return; }
+    setSaving(true);
+    actions.setVideoCredit(video.id, value === '' ? 0 : n, dealId)
+      .then(() => { showMsg(n > 0 ? `Reserved ${fmtMins(n)} for this video` : 'Credit released back to their balance'); onClose(); })
+      .catch(e => { showMsg(e.message || 'Could not assign the credit'); setSaving(false); });
+  };
+
+  return (
+    <Modal onClose={saving ? undefined : onClose} maxWidth={440}>
+      <h2 style={{ margin: '0 0 4px', fontSize: 17, fontWeight: 700 }}>Client credit for “{video.title}”</h2>
+      <p style={{ margin: '0 0 16px', fontSize: 13, color: BRAND.muted, lineHeight: 1.55 }}>
+        Reserve minutes of the customer’s own video credit against this video. It comes off what they can spend on
+        anything new, but it isn’t drawn down until the video is signed off — and they see exactly this in their portal.
+      </p>
+      <div style={{ position: 'relative' }}>
+        <input
+          autoFocus
+          type="number"
+          min="0"
+          step="0.5"
+          value={mins}
+          onChange={e => setMins(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') save(mins); }}
+          placeholder="0"
+          disabled={saving}
+          style={{ width: '100%', padding: '10px 44px 10px 12px', fontSize: 16, border: '1px solid ' + BRAND.border, borderRadius: 8 }}
+        />
+        <span style={{ position: 'absolute', right: 12, top: 12, fontSize: 13, color: BRAND.muted, pointerEvents: 'none' }}>min</span>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginTop: 20 }}>
+        <button type="button" className="btn-ghost" disabled={saving || !video.creditMinutes}
+          onClick={() => save(0)} style={{ color: video.creditMinutes ? '#B91C1C' : BRAND.muted }}>
+          Release
+        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button type="button" className="btn-ghost" onClick={onClose} disabled={saving}>Cancel</button>
+          <button type="button" className="btn" onClick={() => save(mins)} disabled={saving}>
+            {saving ? 'Saving…' : 'Reserve'}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function VideoRow({ dealId, dealReference, video, hideCredits, onOpen }) {
+  const { actions, showMsg } = useStore();
+  const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
   const stageLabel = video.productionPhase ? (STAGE_LABEL[video.productionPhase]?.[video.productionStage] || video.productionStage) : null;
 
   const sendForReview = () => {
@@ -288,6 +539,8 @@ function VideoRow({ dealId, dealReference, video, onOpen }) {
           </span>
         )}
 
+        {!hideCredits && <CreditChip video={video} onEdit={() => setEditing(true)} />}
+
         {stageLabel && (
           <span style={{ fontSize: 11, color: BRAND.muted, whiteSpace: 'nowrap' }}>{stageLabel}</span>
         )}
@@ -309,6 +562,7 @@ function VideoRow({ dealId, dealReference, video, onOpen }) {
         revisionRound={video.revisionRound}
         onMove={moveStage}
       />
+      {editing && <AssignCreditModal dealId={dealId} video={video} onClose={() => setEditing(false)} />}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ChevronDown, ChevronRight, Wallet, FileText, X, Link2, HelpCircle } from 'lucide-react';
+import { ChevronDown, ChevronRight, Wallet, FileText, Film, X, Link2, HelpCircle } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { api } from '../../api.js';
@@ -35,6 +35,7 @@ export function CompanyCreditsCard({ companyId }) {
   const retainers = data?.retainers || [];
   const partnerCredits = data?.partnerCredits || [];
   const creditOrders = data?.creditOrders || [];
+  const allocations = data?.creditAllocations || [];
   const count = data ? retainers.length + partnerCredits.length : null;
 
   return (
@@ -58,6 +59,7 @@ export function CompanyCreditsCard({ companyId }) {
       {data && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <VideoCreditOrders companyId={companyId} orders={creditOrders} onChange={load} showMsg={showMsg} />
+          <ReservedForVideos allocations={allocations} />
           {count === 0 && creditOrders.length === 0 && (
             <Empty text="No credits allocated to this company yet — if they hold a balance under a different name, use “Link credit”." />
           )}
@@ -77,6 +79,37 @@ export function CompanyCreditsCard({ companyId }) {
         <CreditCheckModal companyId={companyId} onClose={() => setDebugging(false)} showMsg={showMsg} />
       )}
     </Card>
+  );
+}
+
+// How much of the balance above is already spoken for. A partner row's
+// "remaining" is issued minus used, which is the right number for the ledger —
+// but a producer looking at it needs to know that some of it is promised to
+// named videos before they offer it against something new. This is the same
+// split the client sees on their portal's Video credit page.
+function ReservedForVideos({ allocations }) {
+  const reserved = allocations.filter((a) => a.status === 'reserved');
+  if (!reserved.length) return null;
+  const total = Math.round(reserved.reduce((t, a) => t + (Number(a.minutes) || 0), 0) * 10) / 10;
+  return (
+    <div style={{ border: '1px solid #FDE68A', background: '#FFFBEB', borderRadius: 8, padding: '10px 12px' }}>
+      <div style={{ fontSize: 12.5, color: '#92400E', fontWeight: 700, marginBottom: 6 }}>
+        {fmtCredits(total)} min of this is reserved for specific videos
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {reserved.map((a) => (
+          <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: BRAND.ink }}>
+            <Film size={12} color={BRAND.muted} style={{ flexShrink: 0 }} />
+            <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {a.videoTitle}
+              {a.projectTitle && a.projectTitle !== a.videoTitle ? <span style={{ color: BRAND.muted }}> · {a.projectTitle}</span> : null}
+            </span>
+            {a.planned && <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 700, color: '#B45309' }}>NOT STARTED</span>}
+            <strong style={{ flexShrink: 0 }}>{fmtCredits(a.minutes)} min</strong>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, LayoutGrid, Film, ChevronRight, ExternalLink, CalendarDays } from 'lucide-react';
+import { ArrowLeft, LayoutGrid, Film, ChevronRight, ExternalLink, CalendarDays, Wallet } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
@@ -178,6 +178,9 @@ function PhaseGroup({ phase, projects, onOpenProject }) {
 // pipeline's DealRow.
 function ProjectRow({ project, onOpen }) {
   const { videos } = project;
+  // Rounded to one decimal: minutes can be halves, but a project row shouldn't
+  // show floating-point dust.
+  const creditMins = Math.round(videos.reduce((t, v) => t + (Number(v.creditMinutes) || 0), 0) * 10) / 10;
 
   // Count videos per (phase, stage) and render a chip for each occupied stage.
   const breakdown = useMemo(() => {
@@ -189,7 +192,9 @@ function ProjectRow({ project, onOpen }) {
     return Array.from(counts.entries()).map(([key, count]) => {
       const [phaseId, stageId] = key.split('|');
       const phase = PHASE_BY_ID[phaseId];
-      const label = STAGE_LABEL[phaseId]?.[stageId] || stageId || '—';
+      // No phase = planned but not started. Say so, rather than showing a
+      // stageless dash next to real board positions.
+      const label = phaseId ? (STAGE_LABEL[phaseId]?.[stageId] || stageId || '—') : 'Planned';
       return { color: phase?.color || BRAND.muted, label, count };
     });
   }, [videos]);
@@ -229,6 +234,15 @@ function ProjectRow({ project, onOpen }) {
             {fmtDate(project.startDate) && (
               <span title="Production start date" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: BRAND.blue }}>
                 · <CalendarDays size={12} /> Starts {fmtDate(project.startDate)}
+              </span>
+            )}
+            {/* How much of this project is being paid for out of the client's
+                video credit — the sum of what's reserved or drawn down across
+                its videos. */}
+            {creditMins > 0 && (
+              <span title="Client video credit assigned across this project's videos"
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#15803D', fontWeight: 700 }}>
+                · <Wallet size={12} /> {creditMins} min credit
               </span>
             )}
           </div>

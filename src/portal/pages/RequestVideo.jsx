@@ -32,10 +32,12 @@ export default function RequestVideo() {
   const [useCredit, setUseCredit] = useState(false);
 
   // Fetch the company's video-credit balance so we can offer to spend it.
+  // `available`, not `remaining`: minutes already set aside for videos we've
+  // planned with them can't be offered against a brand-new request as well.
   useEffect(() => {
     if (!companyId) return;
     portalApi.get(`video-credit?companyId=${encodeURIComponent(companyId)}`)
-      .then((d) => setCreditRemaining(d?.balance?.remaining || 0))
+      .then((d) => setCreditRemaining(d?.balance?.available ?? d?.balance?.remaining ?? 0))
       .catch(() => setCreditRemaining(0));
   }, [companyId]);
 

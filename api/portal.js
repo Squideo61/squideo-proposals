@@ -68,6 +68,11 @@ import {
   reconcileVideoCreditOrders,
 } from './_lib/videoCredit.js';
 import {
+  listVideoCreditAllocations,
+  allocationsByVideo,
+  settleSignedOffAllocations,
+} from './_lib/videoCreditAllocations.js';
+import {
   signPortalToken,
   portalCookieHeader,
   clearPortalCookieHeader,
@@ -1475,6 +1480,16 @@ async function meRoutes(req, res, user) {
   return res.status(405).json({ error: 'Method not allowed' });
 }
 
+// Tag a serialised video with the client's own credit set aside for it, so the
+// portal can say "6 min of your credit" beside the video rather than leaving
+// the deduction on the credit page unexplained. `reserved` means the minutes
+// are held for this video; `spent` means it's been signed off and drawn down.
+function withCreditMinutes(video, byVideo) {
+  const a = byVideo?.get(video.id);
+  if (!a) return video;
+  return { ...video, creditMinutes: a.minutes, creditStatus: a.status };
+}
+
 // ═════════════════════════ overview ═════════════════════════
 async function overviewRoute(req, res, user) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
@@ -1494,11 +1509,18 @@ async function overviewRoute(req, res, user) {
   const states = await gatherDealStates(deals.map((d) => d.id));
   await ensureDealExtrasTable();
 
+  // Credit our team has set aside against specific videos of theirs, so the
+  // project cards can say "6 min of your credit" on the video it's for. One
+  // lookup for the whole company rather than one per project.
+  const creditByVideo = await allocationsByVideo(
+    deals.flatMap((d) => (states.videos.get(d.id) || []).map((v) => v.id)),
+  ).catch(() => new Map());
+
   const projects = [];
   for (const deal of deals) {
     const rawVideos = states.videos.get(deal.id) || [];
     const nextStep = nextStepFor(deal, states);
-    const videos = rawVideos.map(serialisePortalVideo);
+    const videos = rawVideos.map((v) => withCreditMinutes(serialisePortalVideo(v), creditByVideo));
     const offers = extrasWindowOpen(deal) ? await computePortalOffers(deal) : [];
     const tasks = tasksFor(deal, states);
     projects.push(serialisePortalDeal(deal, {
@@ -1588,6 +1610,8 @@ async function projectRoute(req, res, user) {
   const offers = extrasWindowOpen(deal) ? await computePortalOffers(deal) : [];
 
   const rawVideos = states.videos.get(deal.id) || [];
+  // Credit set aside against these videos (see withCreditMinutes).
+  const projectCredit = await allocationsByVideo(rawVideos.map((v) => v.id)).catch(() => new Map());
   // Whether the signed-off video may be downloaded (deal paid in full or a staff
   // override) — gates the approved review-cut download below. Best-effort.
   let finalReleaseUnlocked = false;
@@ -1622,7 +1646,9 @@ async function projectRoute(req, res, user) {
       // see ProjectSchedule in the portal. A multi-video project schedules per
       // video; a single-video one is often scheduled from the deal page.
       schedule: clientSchedule(deal.production_schedule),
-      videos: rawVideos.map(serialisePortalVideo),
+      videos: rawVideos.map((v) => withCreditMinutes(
+        serialisePortalVideo(v), projectCredit,
+      )),
       proposal: prop ? { id: prop.id, signed: !!prop.signature } : null,
       reviews: states.revLinks.get(deal.id) || [],
       storyboards: states.sbLinks.get(deal.id) || [],
@@ -4078,16 +4104,38 @@ async function videoCreditRoute(req, res, user) {
   // Credit any of this company's invoice orders whose Xero invoice has been paid
   // since last look, so the balance below is up to date.
   await reconcileVideoCreditOrders([companyId]).catch(() => {});
-  const [balance, pricing] = await Promise.all([
+  // Any video that's been signed off since last look draws its reserved minutes
+  // down for real, so "reserved" below never lingers on finished work.
+  await settleSignedOffAllocations({ companyId }).catch(() => 0);
+  const [balance, pricing, allocations] = await Promise.all([
     companyCreditBalance(company).catch(() => ({ issued: 0, used: 0, remaining: 0 })),
     videoCreditPricingParams(companyId),
+    listVideoCreditAllocations({ companyId }).catch(() => []),
   ]);
+  const round = (n) => Math.round((Number(n) || 0) * 100) / 100;
   return res.status(200).json({
     balance: {
-      issued: Math.round(balance.issued * 100) / 100,
-      used: Math.round(balance.used * 100) / 100,
-      remaining: Math.round(balance.remaining * 100) / 100,
+      issued: round(balance.issued),
+      used: round(balance.used),
+      remaining: round(balance.remaining),
+      // Minutes our team has set aside for specific videos of theirs — often
+      // ones that haven't started yet. Still theirs, but spoken for, which is
+      // why `available` and not `remaining` is what they can spend on something
+      // new. The CRM shows the same split against the same videos.
+      reserved: round(balance.reserved),
+      available: round(balance.available),
     },
+    // What the reserved minutes are earmarked against, so the number is never
+    // just an unexplained deduction.
+    allocations: allocations.map((a) => ({
+      videoId: a.videoId,
+      dealId: a.dealId,
+      videoTitle: a.videoTitle,
+      projectTitle: a.projectTitle,
+      minutes: a.minutes,
+      status: a.status,
+      planned: a.planned,
+    })),
     pricing,
   });
 }

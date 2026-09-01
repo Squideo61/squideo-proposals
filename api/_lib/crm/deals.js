@@ -18,6 +18,7 @@ import { syncDealSchedule } from './schedule.js';
 import { sendNotification, ensurePoReceivedNotificationDefault } from '../notifications.js';
 import { getDealCreditProject } from './retainers.js';
 import { companyCreditTotals } from '../partnerCredits.js';
+import { allocationsByVideo, settleSignedOffAllocations } from '../videoCreditAllocations.js';
 import { isFreelancer, userOnDeal } from './access.js';
 import { quotedProjectExVat } from '../proposalPricing.js';
 import { APP_URL } from '../email.js';
@@ -1667,6 +1668,16 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         voiceoverBriefAt: v.voiceover_artist_id ? null : (v.voiceover_brief_at || null),
         createdAt: v.created_at, updatedAt: v.updated_at || null,
       }));
+      // Client credit earmarked against each video (see
+      // api/_lib/videoCreditAllocations.js). Money, so freelancers get none.
+      if (!freelancer && videos.length) {
+        const byVideo = await allocationsByVideo(videos.map(v => v.id)).catch(() => new Map());
+        for (const v of videos) {
+          const a = byVideo.get(v.id);
+          v.creditMinutes = a ? a.minutes : null;
+          v.creditStatus = a ? a.status : null;
+        }
+      }
     } catch (_) { /* project_videos not yet migrated */ }
 
     // Deal-level producers (team).
@@ -1717,6 +1728,9 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     let companyCredit = null;
     if (rows[0].company_id && !freelancer) {
       try {
+        // Settle first: a video signed off elsewhere should have moved its
+        // reserved minutes into "used" before we quote the balance back.
+        await settleSignedOffAllocations({ companyId: rows[0].company_id }).catch(() => 0);
         companyCredit = await companyCreditTotals(rows[0].company_id);
       } catch (err) {
         console.warn('[deal detail] company credit skipped', err.message);

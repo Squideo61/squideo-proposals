@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Check, ChevronDown, Clapperboard, Film, Plus, LayoutGrid, Search, X } from 'lucide-react';
+import { ArrowLeft, Check, ChevronDown, Clapperboard, Film, Plus, LayoutGrid, Search, Wallet, X } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile } from '../../utils.js';
@@ -43,7 +43,12 @@ export function ProductionView({ onBack, onOpenVideo, onOpenProject, onOpenProje
   });
   useEffect(() => { try { localStorage.setItem(PRODUCER_FILTER_STORAGE_KEY, producerFilter); } catch {} }, [producerFilter]);
 
-  const videos = useMemo(() => (state.productionVideos || []), [state.productionVideos]);
+  // Planned videos come down with the board list (the Projects overview counts
+  // them) but they have no board position, so they're not on the board.
+  const videos = useMemo(
+    () => (state.productionVideos || []).filter(v => v.productionPhase),
+    [state.productionVideos],
+  );
   // A video matches the producer filter if that person is any of its producers.
   const videoProducers = (v) => (v.producerEmails && v.producerEmails.length)
     ? v.producerEmails : (v.producerEmail ? [v.producerEmail] : []);
@@ -303,6 +308,24 @@ function VideoRow({ video, onOpen, showStage }) {
         <div style={{ fontSize: 11, color: BRAND.muted, display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden', whiteSpace: 'nowrap' }}>
           {showStage && <StageChip phase={video.productionPhase} stage={video.productionStage} />}
           <RefBadge reference={video.reference} size={10} />
+          {/* Paid for out of the client's credit — worth knowing at a glance
+              when scanning the board, since it changes what invoicing is due. */}
+          {video.creditMinutes ? (
+            <span
+              title={video.creditStatus === 'spent'
+                ? 'Drawn down from the client’s video credit'
+                : 'Reserved against the client’s video credit'}
+              style={{
+                flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 3,
+                fontSize: 10, fontWeight: 700, borderRadius: 999, padding: '0 6px',
+                color: video.creditStatus === 'spent' ? BRAND.muted : '#15803D',
+                background: video.creditStatus === 'spent' ? '#F1F5F9' : '#F0FDF4',
+                border: '1px solid ' + (video.creditStatus === 'spent' ? BRAND.border : '#BBF7D0'),
+              }}
+            >
+              <Wallet size={9} /> {video.creditMinutes} min
+            </span>
+          ) : null}
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {[video.title, (video.companyName && video.companyName !== video.projectTitle) ? video.companyName : null].filter(Boolean).join(' · ') || '—'}
           </span>

@@ -2236,9 +2236,39 @@ export function StoreProvider({ children }) {
           return Promise.all([actions.loadDealDetail(dealId), actions.loadProductionVideos()]);
         });
     },
-    addProjectVideo(dealId, title, { fromCredit = false, credits } = {}) {
-      return api.post('/api/crm/production/' + encodeURIComponent(dealId) + '/videos', { title, fromCredit, credits })
+    // `creditMinutes` earmarks the CUSTOMER'S company-wide video credit against
+    // the new video (see api/_lib/videoCreditAllocations.js) — distinct from
+    // `credits`, which spends a deal's own credit-project pool. `planned`
+    // creates it without a board position; the server forces that anyway on a
+    // deal that hasn't entered production.
+    addProjectVideo(dealId, title, { fromCredit = false, credits, creditMinutes, planned } = {}) {
+      return api.post('/api/crm/production/' + encodeURIComponent(dealId) + '/videos', { title, fromCredit, credits, creditMinutes, planned })
         .then((video) => Promise.all([actions.loadDealDetail(dealId), actions.loadProductionVideos()]).then(() => video));
+    },
+    // Assign (or, with 0, hand back) minutes of the customer's credit against
+    // one video. Reloads whatever's on screen so the balance can't go stale.
+    setVideoCredit(videoId, minutes, dealId = null) {
+      return api.post('/api/crm/production/video/' + encodeURIComponent(videoId) + '/credit', { minutes })
+        .then((resp) => Promise.all([
+          dealId ? actions.loadDealDetail(dealId) : null,
+          actions.loadVideo(videoId).catch(() => null),
+          actions.loadProductionVideos(),
+        ]).then(() => resp));
+    },
+    // Put a planned video onto the board at the project's first stage.
+    startPlannedVideo(dealId, videoId) {
+      return api.post('/api/crm/production/video/' + encodeURIComponent(videoId) + '/start', {})
+        .then((video) => Promise.all([
+          dealId ? actions.loadDealDetail(dealId) : null,
+          actions.loadProductionVideos(),
+        ]).then(() => video));
+    },
+    // The deal page's client-credit card: balance + every video the customer's
+    // credit is earmarked against, across all their projects.
+    loadDealCreditSummary(dealId) {
+      if (!dealId) return Promise.resolve(null);
+      return api.get('/api/crm/production/' + encodeURIComponent(dealId) + '/credit-summary')
+        .catch(() => null);
     },
     // "Add credits" on a credit-based project: create-or-top-up the deal's single
     // credit pool. Reloads the deal detail so the Videos panel's balance updates.

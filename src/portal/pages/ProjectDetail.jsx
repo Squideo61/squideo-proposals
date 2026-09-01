@@ -11,7 +11,7 @@ import {
 } from '../components.jsx';
 import { runCta } from './Dashboard.jsx';
 import {
-  ArrowLeft, Video, PlayCircle, LayoutPanelTop, Sparkles, Upload, FileSignature, Mic, Download, Lock,
+  ArrowLeft, Video, PlayCircle, LayoutPanelTop, Sparkles, Upload, FileSignature, Mic, Download, Lock, Wallet,
 } from 'lucide-react';
 
 function TasksCard({ tasks, dealId }) {
@@ -168,13 +168,23 @@ export default function ProjectDetail({ dealId }) {
                       <Mic size={12} /> {v.voiceover.artistName}
                     </div>
                   )}
+                  {/* Their own credit, on the video it's for — the same figure
+                      the Video credit page counts as reserved. */}
+                  {v.creditMinutes ? (
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11.5, color: '#15803D', marginTop: 2 }}>
+                      <Wallet size={12} />
+                      {v.creditMinutes} min of your credit{v.creditStatus === 'spent' ? ' used' : ' set aside'}
+                    </div>
+                  ) : null}
                 </div>
                 {/* Show the live board stage (client-friendly) as the status —
                     the old per-video `status` field is vestigial and stays
-                    "Not started" while the stage advances. */}
+                    "Not started" while the stage advances. A video with no board
+                    position hasn't started yet — say that rather than falling
+                    through to the vestigial field. */}
                 {v.production?.stageLabel
                   ? <StatusPill label={v.production.stageLabel} color={v.production.phaseColor || BRAND.blue} />
-                  : <StatusPill label={v.statusLabel} color={v.statusColor} />}
+                  : <StatusPill label="Not started yet" color="#94A3B8" />}
               </div>
             ))}
           </div>
