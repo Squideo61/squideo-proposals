@@ -406,6 +406,9 @@ export function StoreProvider({ children }) {
   // updating and the row staying stale until a manual page refresh. null until
   // the first poll primes it, so we never treat the initial load as "all new".
   const prevTrackingIds = useRef(null);
+  // When the deals / contacts / companies lists were last re-pulled on focus.
+  // They're otherwise loaded once per session (see refreshCore below).
+  const lastCoreRefresh = useRef(0);
 
   const showMsg = useCallback((m) => {
     setToast(m);
@@ -434,6 +437,9 @@ export function StoreProvider({ children }) {
       for (const c of (Array.isArray(contacts) ? contacts : [])) contactsMap[c.id] = c;
       const companiesMap = {};
       for (const c of (Array.isArray(companies) ? companies : [])) companiesMap[c.id] = c;
+      // These three lists are now current, so the focus refresh below can skip
+      // its next window rather than re-pulling them the moment the tab is used.
+      lastCoreRefresh.current = Date.now();
       const rolesMap = {};
       for (const r of (Array.isArray(roles) ? roles : [])) rolesMap[r.id] = r;
       const signaturesMap = {};
@@ -579,13 +585,49 @@ export function StoreProvider({ children }) {
         }
       }).catch(() => {});
     };
+    // Deals, contacts and companies are pulled once by fetchAll at session start
+    // and after that only patched by THIS tab's own mutations. So an edit made
+    // anywhere else — another tab, a colleague, the same user on their phone —
+    // never landed here: renaming an organisation left the old name on the deal
+    // page, the pipeline and every picker until a manual reload. Re-pull the
+    // three core lists when the tab comes back to the foreground, throttled so
+    // alt-tabbing doesn't refetch on every focus event. Rows are merged over
+    // what's cached (keeping locally-enriched fields) and the server's key set
+    // wins, so records deleted elsewhere drop out too.
+    const refreshCore = () => {
+      if (cancelled) return;
+      const now = Date.now();
+      if (now - lastCoreRefresh.current < 30_000) return;
+      lastCoreRefresh.current = now;
+      Promise.all([
+        api.get('/api/crm/deals').catch(() => null),
+        api.get('/api/crm/contacts').catch(() => null),
+        api.get('/api/crm/companies').catch(() => null),
+      ]).then(([deals, contacts, companies]) => {
+        if (cancelled) return;
+        const remap = (rows, cur) => {
+          if (!Array.isArray(rows)) return cur;
+          const map = {};
+          for (const r of rows) if (r && r.id) map[r.id] = { ...(cur[r.id] || {}), ...r };
+          return map;
+        };
+        setState(s => ({
+          ...s,
+          deals: remap(deals, s.deals),
+          contacts: remap(contacts, s.contacts),
+          companies: remap(companies, s.companies),
+        }));
+      }).catch(() => {});
+    };
+
     refresh(); // prime immediately so the bell badge is populated on load
-    const onVisible = () => { if (document.visibilityState === 'visible') refresh(); };
+    const onForeground = () => { refresh(); refreshCore(); };
+    const onVisible = () => { if (document.visibilityState === 'visible') onForeground(); };
     const interval = setInterval(() => {
       if (document.visibilityState === 'visible') refresh();
     }, 60_000);
     document.addEventListener('visibilitychange', onVisible);
-    window.addEventListener('focus', refresh);
+    window.addEventListener('focus', onForeground);
 
     // Instant updates on email-driven actions. The one-click Qualify /
     // Disqualify pages broadcast 'squideo:quote-request-actioned' so any
@@ -627,7 +669,7 @@ export function StoreProvider({ children }) {
       cancelled = true;
       clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisible);
-      window.removeEventListener('focus', refresh);
+      window.removeEventListener('focus', onForeground);
       window.removeEventListener('storage', onStorage);
       if (bc) { try { bc.close(); } catch { /* ignore */ } }
     };
