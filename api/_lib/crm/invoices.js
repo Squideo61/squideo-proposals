@@ -29,7 +29,7 @@ import {
 import { freeSubtitlesValue, proposalContentMinutes } from '../proposalPricing.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
-import { pendingExtrasForDeal, markExtrasInvoiced, markExtrasPaidForXeroInvoice, releaseExtrasForVoidedInvoice } from './extras.js';
+import { pendingExtrasForDeal, markExtrasInvoiced, markExtrasPaidForXeroInvoice, releaseExtrasForVoidedInvoice, recordSaleFromInvoice } from './extras.js';
 
 // Self-heal for db/migrations/20260703_manual_invoices_exclude_flag.sql so the
 // exclude_from_stats column exists even where the migration hasn't been run by
@@ -50,7 +50,7 @@ export function ensureInvoiceExcludeColumn() {
 // billed "now", or a PO quote turned into an invoice) reuse the exact same path.
 // Throws Error with a `.status` for caller-facing validation failures.
 export async function createXeroInvoiceForDeal(body, user) {
-  const { dealId, proposalId, companyId, contactName, lineItems, invoiceNumber, reference, issuedAt, dueAt, extraIds } = body || {};
+  const { dealId, proposalId, companyId, contactName, lineItems, invoiceNumber, reference, issuedAt, dueAt, extraIds, recordAsSale } = body || {};
 
   if (!Array.isArray(lineItems) || !lineItems.length) {
     const e = new Error('At least one line item required'); e.status = 400; throw e;
@@ -159,6 +159,20 @@ export async function createXeroInvoiceForDeal(body, user) {
     }
   }
 
+  // "Is this a new sale?" answered yes in the Create invoice modal. Extras named
+  // on the invoice are already recorded sales, so recording again would bill the
+  // same money to the sales figures twice — the flag is ignored there.
+  let recordedSaleIds = [];
+  if (recordAsSale && resolvedDealId && !(Array.isArray(extraIds) && extraIds.length)) {
+    recordedSaleIds = await recordSaleFromInvoice({
+      dealId: resolvedDealId,
+      lineItems,
+      xeroInvoiceId,
+      invoiceNumber: storedInvoiceNumber,
+      author: user,
+    });
+  }
+
   const pdfUrl = '/api/xero/invoice-pdf?invoiceId=' + encodeURIComponent(xeroInvoiceId);
   return {
     id: 'manual:' + newId,
@@ -168,6 +182,7 @@ export async function createXeroInvoiceForDeal(body, user) {
     amount: Number(totalAmount.toFixed(2)),
     status: 'issued',
     pdfUrl,
+    recordedAsSale: recordedSaleIds.length > 0,
   };
 }
 

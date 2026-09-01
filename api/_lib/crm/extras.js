@@ -7,7 +7,7 @@
 // later. Stage 2 will let "invoice now" raise a Xero invoice (xero_invoice_id /
 // invoice_number are already on the row for that).
 
-import sql from '../db.js';
+import sql, { batchWrite } from '../db.js';
 import { makeId, trimOrNull, numberOrNull } from './shared.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
@@ -48,13 +48,14 @@ function dealVatPercent(dealVatRate) {
 // finance has no proposal for. So it's announced as a sale, off the same key —
 // the audience and the "who needs to know about unbilled money" question are
 // identical, and splitting it would mean a second switch to keep in step.
-async function notifyExtraAdded({ dealId, dealTitle, description, amount, author, paymentType, invoiceNumber, isSale }) {
+async function notifyExtraAdded({ dealId, dealTitle, description, amount, author, paymentType, invoiceNumber, isSale, saleContext = ' (no proposal)' }) {
   try {
     await ensureExtraAddedNotificationDefault();
     const amountStr = '£' + (Number(amount) || 0).toFixed(2);
     const who = author?.name || author?.email || 'A production manager';
     const title = dealTitle || 'a deal';
-    const route = paymentType === 'invoice_now' ? 'invoiced now'
+    const route = paymentType === 'invoice_now'
+        ? (invoiceNumber ? `invoiced now (${invoiceNumber})` : 'invoiced now')
       : paymentType === 'po' ? 'raised as a PO quote'
       : paymentType === 'po_awaited' ? 'awaiting a purchase order'
       : paymentType === 'existing_invoice' ? `added to invoice ${invoiceNumber || ''}`.trim()
@@ -64,7 +65,7 @@ async function notifyExtraAdded({ dealId, dealTitle, description, amount, author
       excludeEmails: author?.email ? [author.email] : null,
       subject: isSale ? `Sale recorded — ${title}` : `Extra charge added — ${title}`,
       text: isSale
-        ? `${who} recorded a sale on ${title} (no proposal): ${description} (${amountStr} ex-VAT) — ${route}.`
+        ? `${who} recorded a sale on ${title}${saleContext}: ${description} (${amountStr} ex-VAT) — ${route}.`
         : `${who} added an extra charge to ${title}: ${description} (${amountStr} ex-VAT) — ${route}.`,
       inApp: {
         title: isSale ? `Sale recorded: ${amountStr} ex-VAT` : `Extra charge: ${amountStr} ex-VAT`,
@@ -165,6 +166,67 @@ export async function markExtrasInvoiced(extraIds, xeroInvoiceId, invoiceNumber)
      WHERE id = ANY(${ids}) AND status IN ('pending', 'quoted')
     RETURNING id`;
   return rows.length;
+}
+
+// Record a Xero invoice raised from the "Create invoice" modal as a new sale.
+//
+// Invoicing and selling aren't the same act — most invoices bill money the CRM
+// already knows about (a signed proposal's deposit or balance, an extra someone
+// logged). But an invoice raised for work sold off-proposal IS the sale, and
+// with nothing recorded against it the money is invisible to the sales figures,
+// to commission, and to everyone who isn't the person who raised it. That's the
+// gap "Add extra" filled, if you knew it was there. Here the modal asks, and a
+// yes lands the same deal_extras rows — one per billed line, already 'invoiced'
+// against this Xero invoice — plus the alert Admins and Directors would have got.
+//
+// Best-effort by design: the invoice is real in Xero by the time we get here, so
+// a failure to record it must not fail the request. Returns the ids created.
+export async function recordSaleFromInvoice({ dealId, lineItems, xeroInvoiceId, invoiceNumber, author }) {
+  if (!dealId) return [];
+  await ensureDealExtrasTable();
+
+  // One row per billed line, net of VAT and of any line discount, so the
+  // recorded sale totals exactly what the invoice bills. Zero-value lines (the
+  // 100%-off free subtitles, say) aren't sales and are skipped.
+  const rows = [];
+  for (const li of lineItems || []) {
+    const description = trimOrNull(li?.description);
+    const qty = Number(li?.quantity) || 1;
+    const price = Number(li?.unitAmount) || 0;
+    const disc = Number(li?.discountRate) || 0;
+    const net = Number((qty * price * (1 - disc / 100)).toFixed(2));
+    if (!description || net <= 0) continue;
+    rows.push({ id: makeId('xtr'), description, net, vatRate: (Number(li?.vatRate) || 0) / 100 });
+  }
+  if (!rows.length) return [];
+
+  const [dealRow] = await sql`SELECT title FROM deals WHERE id = ${dealId}`;
+  try {
+    await batchWrite(rows.map((r) => sql`
+      INSERT INTO deal_extras (
+        id, deal_id, description, amount, vat_rate, status, payment_type,
+        xero_invoice_id, invoice_number, created_by
+      ) VALUES (
+        ${r.id}, ${dealId}, ${r.description}, ${r.net}, ${r.vatRate}, 'invoiced', 'invoice_now',
+        ${xeroInvoiceId || null}, ${invoiceNumber || null}, ${author?.email || null}
+      )`));
+  } catch (err) {
+    console.error('[extras] recordSaleFromInvoice insert failed', err);
+    return [];
+  }
+
+  await notifyExtraAdded({
+    dealId,
+    dealTitle: dealRow?.title,
+    description: rows.map((r) => r.description).join(', '),
+    amount: rows.reduce((sum, r) => sum + r.net, 0),
+    author,
+    paymentType: 'invoice_now',
+    invoiceNumber,
+    isSale: true,
+    saleContext: '', // unlike the no-proposal case, this deal may well have one
+  });
+  return rows.map((r) => r.id);
 }
 
 // When an invoice settles, the extras billed on it are paid too — drop them

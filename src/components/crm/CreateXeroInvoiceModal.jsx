@@ -43,12 +43,24 @@ export function CreateXeroInvoiceModal({ dealId, companyId, deals, initialDealId
   const [paymentLabel, setPaymentLabel] = useState(null);
   const [loadingLines, setLoadingLines] = useState(false);
 
+  // Is this invoice itself the sale? Raising an invoice and making a sale look
+  // identical from here, but only one of them is news: work sold off-proposal is
+  // invisible to the sales figures and to Admins/Directors unless it's recorded.
+  // "Add extra" always could — you just had to know to. So the modal asks, and
+  // won't create the invoice until it's been answered.
+  //
+  // Lines that arrived carrying an `extraId` are a recorded sale being billed,
+  // so there's nothing to ask: recording it again would double-count the money.
+  const billsRecordedExtras = (initialLineItems || []).some((l) => l && l.extraId);
+  const [saleAnswer, setSaleAnswer] = useState(null); // null (unanswered) | 'yes' | 'no'
+
   // When a real deal is picked, pull its signed proposal's line items in,
   // honouring the payment plan (full vs 50/50 deposit vs Partner).
   useEffect(() => {
     if (!companyMode) return;
     setSuggestedProposalId(null);
     setPaymentLabel(null);
+    setSaleAnswer(null); // a different deal is a different question
     if (!dealChoice || dealChoice === '__new__') return;
     let cancelled = false;
     setLoadingLines(true);
@@ -60,6 +72,9 @@ export function CreateXeroInvoiceModal({ dealId, companyId, deals, initialDealId
           setLineItems(lines.map(l => ({ _key: ++_lineItemKey, ...l })));
           setSuggestedProposalId(data.proposalId || null);
           setPaymentLabel(data.paymentLabel || null);
+          // Billing a signed proposal's deposit/balance: the sale was counted at
+          // signature, so answer for them rather than inviting a double-count.
+          if (data.proposalId) setSaleAnswer('no');
         }
       })
       .catch(() => {})
@@ -86,6 +101,10 @@ export function CreateXeroInvoiceModal({ dealId, companyId, deals, initialDealId
     const vatAmt = exVat * vat / 100;
     return { exVat, vatAmt, total: exVat + vatAmt };
   });
+  // Company-level invoices (no deal at all) have nothing to record the sale
+  // against, so the question can't be asked there.
+  const askSale = (!!dealId || (companyMode && !!dealChoice)) && !billsRecordedExtras;
+
   const subtotal = lineCalcs.reduce((s, c) => s + c.exVat, 0);
   const totalVat = lineCalcs.reduce((s, c) => s + c.vatAmt, 0);
   const grandTotal = subtotal + totalVat;
@@ -103,6 +122,10 @@ export function CreateXeroInvoiceModal({ dealId, companyId, deals, initialDealId
     }
     if (companyMode && dealChoice === '__new__' && !newDealTitle.trim()) {
       showMsg?.('Enter a title for the new deal', 'error');
+      return;
+    }
+    if (askSale && saleAnswer === null) {
+      showMsg?.('Say whether this invoice is a new sale', 'error');
       return;
     }
     setSaving(true);
@@ -144,8 +167,11 @@ export function CreateXeroInvoiceModal({ dealId, companyId, deals, initialDealId
         // deal_extras 'invoiced' (and settle them when the invoice is paid).
         // Lines the user removed before submitting drop out here.
         extraIds: validLines.map(li => li.extraId).filter(Boolean),
+        // Yes → the server records the billed lines as a sale on the deal and
+        // alerts Admins + Directors that this person sold it.
+        recordAsSale: askSale && saleAnswer === 'yes',
       });
-      showMsg?.('Invoice created in Xero', 'success');
+      showMsg?.(result?.recordedAsSale ? 'Invoice created in Xero and recorded as a sale' : 'Invoice created in Xero', 'success');
       onCreated?.(result);
     } catch (err) {
       showMsg?.(err.message || 'Failed to create invoice', 'error');
@@ -357,6 +383,43 @@ export function CreateXeroInvoiceModal({ dealId, companyId, deals, initialDealId
           </div>
         )}
 
+        {/* Is this invoice a new sale? Sits next to the Create button because
+            that's the last thing anyone reads. */}
+        {askSale && (
+          <div style={{
+            border: '1px solid ' + (saleAnswer === null ? '#F59E0B' : BRAND.border),
+            background: saleAnswer === null ? '#FFFBEB' : BRAND.paper,
+            borderRadius: 8,
+            padding: 12,
+          }}>
+            <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 2 }}>Is this a new sale?</div>
+            <div style={{ fontSize: 12, color: BRAND.muted, marginBottom: 10 }}>
+              Say yes for work sold on top of (or instead of) a signed proposal — it's recorded
+              against the project and the directors and admins are told you sold it.
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              <SaleChoice
+                selected={saleAnswer === 'yes'}
+                onClick={() => setSaleAnswer('yes')}
+                label="Yes — record it as a sale"
+                hint="New work, not already on the books"
+              />
+              <SaleChoice
+                selected={saleAnswer === 'no'}
+                onClick={() => setSaleAnswer('no')}
+                label="No — just an invoice"
+                hint="Bills something already recorded"
+              />
+            </div>
+            {suggestedProposalId && saleAnswer === 'yes' && (
+              <div style={{ fontSize: 12, color: '#B45309', marginTop: 8 }}>
+                These lines came from the signed proposal, which already counts as a sale —
+                only say yes if you've changed them to something extra.
+              </div>
+            )}
+          </div>
+        )}
+
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
           <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
           <button type="submit" className="btn" disabled={saving}>
@@ -365,6 +428,30 @@ export function CreateXeroInvoiceModal({ dealId, companyId, deals, initialDealId
         </div>
       </form>
     </Modal>
+  );
+}
+
+// One of the two answers to "Is this a new sale?" — a pressed-state button
+// rather than a radio so the unanswered state is visibly unanswered.
+function SaleChoice({ selected, onClick, label, hint }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={selected}
+      style={{
+        flex: '1 1 200px',
+        textAlign: 'left',
+        cursor: 'pointer',
+        border: '1.5px solid ' + (selected ? BRAND.blue : BRAND.border),
+        background: selected ? 'rgba(56,189,248,0.10)' : '#fff',
+        borderRadius: 8,
+        padding: '8px 10px',
+      }}
+    >
+      <div style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink }}>{label}</div>
+      <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 1 }}>{hint}</div>
+    </button>
   );
 }
 
