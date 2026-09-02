@@ -18,7 +18,7 @@ import {
 } from '../src/lib/pipelineArchive.js';
 
 const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString();
-const SETTLED = { isPo: false, poReceivedAt: null, invoiced: true, depositPaid: false, paidInFull: true };
+const SETTLED = { isPo: false, poReceivedAt: null, invoiced: true, depositPaid: false, paidInFull: true, committed: true };
 // An old, finished, fully-settled deal — the baseline the exemptions vary from.
 const settledOld = (over = {}) => ({ id: 'd', stage: 'paid', stageChangedAt: daysAgo(90), saleStatus: SETTLED, ...over });
 
@@ -56,6 +56,7 @@ describe('archiveReason', () => {
 describe('money still outstanding exempts a deal from the age clear-out', () => {
   const outstanding = {
     'not invoiced yet':   { ...SETTLED, invoiced: false, paidInFull: false },
+    'unpaid PO balance':  { ...SETTLED, isPo: true, poReceivedAt: daysAgo(80), poNumber: 'PO-9', invoiced: true, paidInFull: false },
     'invoiced, unpaid':   { ...SETTLED, invoiced: true, paidInFull: false },
     'deposit paid only':  { ...SETTLED, invoiced: false, depositPaid: true, paidInFull: false },
     'PO not yet raised':  { ...SETTLED, isPo: true, poReceivedAt: null, invoiced: false, paidInFull: false },
@@ -68,6 +69,32 @@ describe('money still outstanding exempts a deal from the age clear-out', () => 
 
   it('still clears one that is settled in full against a received PO', () => {
     expect(archiveReason(settledOld({ saleStatus: { ...SETTLED, isPo: true, poReceivedAt: daysAgo(80), poNumber: 'PO-9' } }))).toBe('age');
+  });
+
+  // "Pending invoice" is where a signed deal lands when the CRM holds no
+  // invoice row for it — which is also every deal invoiced straight in Xero and
+  // everything from before the CRM did invoicing. Left as evidence of money
+  // owed, that pill pinned years of legacy deals to the board permanently.
+  it('does not treat a bare "pending invoice" as money owed when nothing is committed', () => {
+    const noRecord = { ...SETTLED, invoiced: false, paidInFull: false, committed: false };
+    expect(archiveReason(settledOld({ saleStatus: noRecord }))).toBe('age');
+  });
+
+  it('still exempts an uninvoiced deal once a signed total exists to invoice', () => {
+    const owed = { ...SETTLED, invoiced: false, paidInFull: false, committed: true };
+    expect(archiveReason(settledOld({ saleStatus: owed }))).toBe(null);
+  });
+
+  it('keeps trusting the later pills without a committed total', () => {
+    // Invoiced-but-unpaid and deposit-paid are positive statements about money,
+    // not fallbacks, so they hold the deal on the board on their own.
+    for (const saleStatus of [
+      { ...SETTLED, paidInFull: false, committed: false },
+      { ...SETTLED, invoiced: false, depositPaid: true, paidInFull: false, committed: false },
+      { ...SETTLED, isPo: true, poReceivedAt: null, invoiced: false, paidInFull: false, committed: false },
+    ]) {
+      expect(archiveReason(settledOld({ saleStatus }))).toBe(null);
+    }
   });
 });
 

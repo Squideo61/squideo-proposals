@@ -518,6 +518,14 @@ export async function annotateDeals(rows) {
         // new money figure is exposed (freelancers see saleStatus).
         paidInFull: (committedByDeal.get(r.id) || 0) > 0.005
           && (paidByDeal.get(r.id) || 0) >= (committedByDeal.get(r.id) || 0) - 0.005,
+        // Whether the CRM holds a signed total for this deal at all. "Pending
+        // invoice" is the fallback state — it's what a signed deal shows
+        // whenever no invoice row exists, which includes everything invoiced
+        // straight in Xero and everything from before the CRM did invoicing. So
+        // that pill only means real outstanding money when there's a committed
+        // amount behind it. A boolean, like paidInFull, so no new money figure
+        // is exposed (freelancers see saleStatus).
+        committed: (committedByDeal.get(r.id) || 0) > 0.005,
       },
       tracking: {
         tracked: proposalOpens + emailOpens > 0,

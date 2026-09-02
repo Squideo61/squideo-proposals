@@ -45,5 +45,14 @@ export function describeSaleStatus(deal) {
 const SETTLED_PILLS = new Set(['paid', 'po']);
 
 export function hasOutstandingMoney(deal) {
-  return describeSaleStatus(deal).some(p => !SETTLED_PILLS.has(p.key));
+  return describeSaleStatus(deal).some((p) => {
+    if (SETTLED_PILLS.has(p.key)) return false;
+    // "Pending invoice" is the bottom of the ladder — where a signed deal lands
+    // when the CRM holds no invoice for it. That covers anything invoiced
+    // straight in Xero, or done before the CRM did invoicing, so on its own it
+    // is an absence of information rather than money owed. It only counts as
+    // outstanding when there's a signed total behind it to invoice.
+    if (p.key === 'pending-invoice') return !!deal?.saleStatus?.committed;
+    return true;
+  });
 }
