@@ -65,8 +65,28 @@ if (inIframe) {
   } catch { /* ignore */ }
 }
 
+/*
+ * ?info=0 hides the form's own contact panel.
+ *
+ * The new squideo.com/contact puts the phone number, the business hours and the
+ * registered address in its own right-hand column beside this iframe, so the
+ * panel inside the frame is the same information a second time — Adam spotted
+ * the hours listed twice on one screen.
+ *
+ * A URL FLAG RATHER THAN A CONFIG CHANGE, because Duda embeds this same page
+ * today and its /contact has no column of its own: switching showInfo off
+ * globally would take the details off the live site. Default stays on, so
+ * nothing that does not ask for it changes.
+ */
+let hideInfo = false;
+try {
+  hideInfo = new URLSearchParams(window.location.search).get('info') === '0';
+} catch { /* ignore */ }
+
 const container = document.getElementById('contact-root');
-createRoot(container).render(<ContactForm getAttribution={getAttribution} />);
+createRoot(container).render(
+  <ContactForm getAttribution={getAttribution} {...(hideInfo ? { showInfo: false } : {})} />,
+);
 
 // Auto-resize: post the rendered height to the embedding page so the iframe can
 // adjust. Reuses the quote form's `squideo-quote-form:height` message type so the
