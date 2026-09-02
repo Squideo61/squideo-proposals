@@ -34,3 +34,16 @@ export function describeSaleStatus(deal) {
 
   return pills;
 }
+
+// Does this deal still have money in the air — anything from "we haven't raised
+// the invoice yet" through to a 50/50 balance that's still outstanding?
+//
+// Read off the same pills the rows show, so what keeps a deal on the pipeline
+// board is exactly what the user can see on it. A bare "PO <number>" isn't an
+// outstanding state on its own (it sits alongside whatever the payment state
+// is), and "Paid" is the end of the ladder — everything else is unfinished.
+const SETTLED_PILLS = new Set(['paid', 'po']);
+
+export function hasOutstandingMoney(deal) {
+  return describeSaleStatus(deal).some(p => !SETTLED_PILLS.has(p.key));
+}

@@ -2042,7 +2042,13 @@ export function StoreProvider({ children }) {
       return done;
     },
     moveDealStage(dealId, stage, lostReason) {
-      const patch = { stage, stageChangedAt: new Date().toISOString(), lostReason: lostReason || null };
+      // Moving a deal clears both pipeline-archive overrides server-side (it's
+      // live work again), so the optimistic patch says the same — otherwise an
+      // archived deal dragged to a new stage would vanish until the next load.
+      const patch = {
+        stage, stageChangedAt: new Date().toISOString(), lostReason: lostReason || null,
+        pipelineArchivedAt: null, pipelineArchivedBy: null, pipelineRestoredAt: null,
+      };
       return mutate(
         { kind: 'deal', id: dealId, patch, errorMsg: 'Failed to move deal' },
         () => api.post('/api/crm/deals/' + encodeURIComponent(dealId) + '/stage', { stage, lostReason }),
@@ -2077,6 +2083,34 @@ export function StoreProvider({ children }) {
             label: `${hot ? 'Flag' : 'Unflag'} ${before.title || 'deal'} as hot`,
             undo: () => actions.toggleDealHot(dealId, !hot),
             redo: () => actions.toggleDealHot(dealId, hot),
+          };
+        },
+      );
+    },
+    // Clear a finished deal off the Sales Pipeline board, or restore one the
+    // age rule cleared automatically. Display-only — the deal itself is
+    // untouched — and reversible from the undo stack like any other action.
+    setDealArchived(dealId, archived) {
+      return mutate(
+        {
+          kind: 'deal', id: dealId, errorMsg: 'Failed to update the pipeline archive',
+          patch: archived
+            ? { pipelineArchivedAt: new Date().toISOString(), pipelineRestoredAt: null }
+            : { pipelineArchivedAt: null, pipelineArchivedBy: null, pipelineRestoredAt: new Date().toISOString() },
+        },
+        () => api.post('/api/crm/deals/' + encodeURIComponent(dealId) + '/pipeline-archive', { archived }),
+        (s, resp) => resp?.deal
+          ? applyOne(s, { kind: 'deal', id: resp.deal.id, patch: resp.deal })
+          : s,
+        (snap) => {
+          const before = snap.deals[dealId] || {};
+          // Nothing to undo if it already holds that override — note a restore
+          // IS a change on an age-cleared deal, which has neither timestamp.
+          if (archived ? before.pipelineArchivedAt : before.pipelineRestoredAt) return null;
+          return {
+            label: `${archived ? 'Archive' : 'Restore'} ${before.title || 'deal'}`,
+            undo: () => actions.setDealArchived(dealId, !archived),
+            redo: () => actions.setDealArchived(dealId, archived),
           };
         },
       );

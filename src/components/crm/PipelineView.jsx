@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, Archive, Check, ChevronDown, Plus, KanbanSquare, Eye, Mail, FileText, CheckSquare, Flame } from 'lucide-react';
+import { ArrowLeft, Archive, ArchiveRestore, Check, ChevronDown, Plus, KanbanSquare, Eye, Mail, FileText, CheckSquare, Flame, Search } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, formatRelativeTime, useIsMobile, dealDisplayName } from '../../utils.js';
 import { Modal, RefBadge } from '../ui.jsx';
 import { describeSaleStatus } from '../../lib/saleStatus.js';
+import { CLEAR_AFTER_DAYS, CLEARED_STAGES, splitArchived, isArchived, describeArchive, daysInStage } from '../../lib/pipelineArchive.js';
 import { PIPELINE_STAGES } from '../../lib/stages.js';
 import { XeroContactPicker } from './XeroContactPicker.jsx';
 import { CompanySearchPicker } from './CompanySearchPicker.jsx';
@@ -16,40 +17,17 @@ export { PIPELINE_STAGES };
 const STAGE_BY_ID = Object.fromEntries(PIPELINE_STAGES.map(s => [s.id, s]));
 
 const OWNER_FILTER_STORAGE_KEY = 'squideo.pipeline.ownerFilter';
-const SHOW_OLDER_STORAGE_KEY = 'squideo.pipeline.showOlder';
+const SHOW_ARCHIVED_STORAGE_KEY = 'squideo.pipeline.showArchived';
 
-// Paid and Lost are terminal: nothing more happens there, but every deal we've
-// ever won or lost piles up in them forever, which is what buries the live end
-// of the pipeline. So a deal that's sat in one of those stages for more than a
-// month is treated as history and dropped out of the list — it's untouched in
-// the CRM (deal page, Finance, search, reporting all unchanged), just not
-// cluttering the board. Each stage can reveal its own older deals on demand.
-const CLEARED_STAGES = new Set(['paid', 'lost']);
-export const CLEAR_AFTER_DAYS = 30;
-
-// Splits a stage's deals into what still belongs on the board and what's aged
-// out. Falls back to createdAt so a legacy deal with no stage_changed_at ages
-// out too, rather than sticking at the top of Paid forever.
-export function splitOlderDeals(stageId, deals) {
-  if (!CLEARED_STAGES.has(stageId)) return { current: deals, older: [] };
-  const cutoff = Date.now() - CLEAR_AFTER_DAYS * 86400000;
-  const current = [];
-  const older = [];
-  for (const d of deals) {
-    const at = new Date(d.stageChangedAt || d.createdAt || 0).getTime();
-    (Number.isNaN(at) || at === 0 || at >= cutoff ? current : older).push(d);
-  }
-  return { current, older };
-}
-
-// Which stages the user has chosen to keep their older deals revealed in, as
+// Which stages are currently showing their archived deals in place, as
 // { stageId: true }. Persisted so the choice survives navigation, like the
-// owner filter.
-function readShowOlder() {
-  try { return JSON.parse(localStorage.getItem(SHOW_OLDER_STORAGE_KEY) || '{}') || {}; } catch { return {}; }
+// owner filter. (The full archive lives behind the header's Archive button;
+// this is just the in-context peek.)
+function readShowArchived() {
+  try { return JSON.parse(localStorage.getItem(SHOW_ARCHIVED_STORAGE_KEY) || '{}') || {}; } catch { return {}; }
 }
-function writeShowOlder(map) {
-  try { localStorage.setItem(SHOW_OLDER_STORAGE_KEY, JSON.stringify(map)); } catch {}
+function writeShowArchived(map) {
+  try { localStorage.setItem(SHOW_ARCHIVED_STORAGE_KEY, JSON.stringify(map)); } catch {}
 }
 
 export function PipelineView({ onBack, onOpenDeal }) {
@@ -114,22 +92,22 @@ export function PipelineView({ onBack, onOpenDeal }) {
     return out;
   }, [deals]);
 
-  // Which closed stages are currently showing their older-than-30-days deals.
-  const [showOlder, setShowOlder] = useState(readShowOlder);
-  const toggleOlder = (stageId) => setShowOlder((prev) => {
+  // Which stages are currently showing their archived deals in place.
+  const [showArchived, setShowArchived] = useState(readShowArchived);
+  const toggleArchived = (stageId) => setShowArchived((prev) => {
     const next = { ...prev };
     if (next[stageId]) delete next[stageId]; else next[stageId] = true;
-    writeShowOlder(next);
+    writeShowArchived(next);
     return next;
   });
 
-  // How many finished deals are currently off the board, so the header count
-  // matches the rows and says where the rest went.
-  const clearedCount = useMemo(() => (
-    PIPELINE_STAGES.reduce((n, s) => (
-      showOlder[s.id] ? n : n + splitOlderDeals(s.id, grouped[s.id] || []).older.length
-    ), 0)
-  ), [grouped, showOlder]);
+  // Everything currently off the board, newest first — what the Archive button
+  // opens, and what the header count refers to.
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const archivedDeals = useMemo(() => (
+    deals.filter(d => isArchived(d))
+      .sort((a, b) => new Date(b.pipelineArchivedAt || b.stageChangedAt || 0) - new Date(a.pipelineArchivedAt || a.stageChangedAt || 0))
+  ), [deals]);
 
   const handleDrop = (deal, toStage) => {
     if (!deal || deal.stage === toStage) return;
@@ -164,14 +142,19 @@ export function PipelineView({ onBack, onOpenDeal }) {
           >
             <Flame size={14} fill={hotOnly ? '#EA580C' : 'none'} /> Hot{hotCount > 0 ? ` · ${hotCount}` : ''}
           </button>
+          {archivedDeals.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setArchiveOpen(true)}
+              className="btn-ghost"
+              title="Finished deals that have been put away — still in the CRM, and restorable from here"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13 }}
+            >
+              <Archive size={14} /> Archive · {archivedDeals.length}
+            </button>
+          )}
           <span style={{ fontSize: 13, color: BRAND.muted }}>
-            {deals.length - clearedCount} deals
-            {clearedCount > 0 && (
-              <span title={`Deals that have been paid or lost for over ${CLEAR_AFTER_DAYS} days are cleared off the board. They're still in the CRM — open a stage's "Show older" link to see them.`}>
-                {' '}· {clearedCount} cleared
-              </span>
-            )}
-            {' '}· all amounts ex-VAT (net)
+            {deals.length - archivedDeals.length} deals · all amounts ex-VAT (net)
           </span>
         </div>
         <button onClick={() => setCreating(true)} className="btn"><Plus size={16} /> New deal</button>
@@ -199,8 +182,8 @@ export function PipelineView({ onBack, onOpenDeal }) {
                 onDrop={(deal) => handleDrop(deal, s.id)}
                 onOpenDeal={onOpenDeal}
                 taskAssignee={ownerFilter}
-                showOlder={!!showOlder[s.id]}
-                onToggleOlder={() => toggleOlder(s.id)}
+                showArchived={!!showArchived[s.id]}
+                onToggleArchived={() => toggleArchived(s.id)}
               />
             </React.Fragment>
           );
@@ -208,6 +191,13 @@ export function PipelineView({ onBack, onOpenDeal }) {
       </div>
 
       {creating && <NewDealModal onClose={() => setCreating(false)} onCreated={(d) => { setCreating(false); if (d) onOpenDeal(d.id); }} />}
+      {archiveOpen && (
+        <ArchiveModal
+          deals={archivedDeals}
+          onClose={() => setArchiveOpen(false)}
+          onOpenDeal={(id) => { setArchiveOpen(false); onOpenDeal(id); }}
+        />
+      )}
     </div>
   );
 }
@@ -297,13 +287,13 @@ function OwnerOption({ label, selected, onClick }) {
   );
 }
 
-function StageRow({ stage, deals, onDrop, onOpenDeal, taskAssignee, showOlder, onToggleOlder }) {
+function StageRow({ stage, deals, onDrop, onOpenDeal, taskAssignee, showArchived, onToggleArchived }) {
   const [hover, setHover] = useState(false);
   const [collapsed, setCollapsed] = useState(stage.defaultCollapsed ?? false);
-  // In Paid/Lost, anything older than a month is cleared off the board unless
-  // this stage has been expanded to show it. Elsewhere `older` is always empty.
-  const { current, older } = useMemo(() => splitOlderDeals(stage.id, deals), [stage.id, deals]);
-  const shown = showOlder ? deals : current;
+  // Finished deals that have been put away — by the age rule in Paid/Lost, or
+  // by hand in any stage — unless this stage is showing them in place.
+  const { current, archived } = useMemo(() => splitArchived(deals), [deals]);
+  const shown = showArchived ? deals : current;
   // Column total mirrors the cards: prefer the proposal-derived (signed/proposed)
   // value, falling back to a manual deal value. It counts what's on screen, so
   // the header always adds up to the rows beneath it.
@@ -355,9 +345,9 @@ function StageRow({ stage, deals, onDrop, onOpenDeal, taskAssignee, showOlder, o
           {total > 0 && (
             <span style={{ fontSize: 12, color: BRAND.muted, fontVariantNumeric: 'tabular-nums' }}>· {formatGBP(total)}</span>
           )}
-          {older.length > 0 && !showOlder && (
+          {archived.length > 0 && !showArchived && (
             <span style={{ fontSize: 11, color: BRAND.muted, fontStyle: 'italic' }}>
-              · {older.length} cleared
+              · {archived.length} archived
             </span>
           )}
         </div>
@@ -367,31 +357,27 @@ function StageRow({ stage, deals, onDrop, onOpenDeal, taskAssignee, showOlder, o
         <>
           {shown.length === 0 ? (
             <div style={{ padding: '12px 8px', color: BRAND.muted, fontSize: 12, fontStyle: 'italic' }}>
-              {older.length > 0 ? `Nothing in the last ${CLEAR_AFTER_DAYS} days` : 'No deals'}
+              {archived.length > 0 ? 'Nothing live — everything here is archived' : 'No deals'}
             </div>
           ) : (
             <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 8, overflow: 'hidden' }}>
               {shown.map(d => <DealRow key={d.id} deal={d} onOpen={() => onOpenDeal(d.id)} taskAssignee={taskAssignee} />)}
             </div>
           )}
-          {older.length > 0 && (
+          {archived.length > 0 && (
             <button
               type="button"
-              onClick={onToggleOlder}
-              aria-expanded={!!showOlder}
+              onClick={onToggleArchived}
+              aria-expanded={!!showArchived}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 8, padding: '4px 2px',
                 background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit',
                 fontSize: 12, fontWeight: 600, color: BRAND.blue,
               }}
-              title={showOlder
-                ? `Clear deals that have been ${stage.label.toLowerCase()} for over ${CLEAR_AFTER_DAYS} days off the board again`
-                : `These are still in the CRM — this just shows them on the board`}
+              title="Archived deals are still in the CRM — this only changes what the board shows"
             >
               <Archive size={13} />
-              {showOlder
-                ? `Hide ${older.length} older than ${CLEAR_AFTER_DAYS} days`
-                : `Show ${older.length} older than ${CLEAR_AFTER_DAYS} days`}
+              {showArchived ? `Hide ${archived.length} archived` : `Show ${archived.length} archived`}
             </button>
           )}
         </>
@@ -583,7 +569,27 @@ function DealRow({ deal, onOpen, taskAssignee }) {
   // Placeholder companies ("Not Applicable" etc.) aren't a real name — fall back
   // to the deal title so a renamed one-off shows its new title here too.
   const name = dealDisplayName(company?.name, deal.title);
-  const ageDays = daysSince(deal.stageChangedAt);
+  const ageDays = daysInStage(deal);
+  // Rows only offer the archive toggle where putting a deal away makes sense:
+  // one that's already archived (so it can come straight back), or a finished
+  // one in Paid/Lost that the age rule hasn't taken yet.
+  const archived = isArchived(deal);
+  const archiveBtn = (archived || CLEARED_STAGES.has(deal.stage)) ? (
+    <button
+      type="button"
+      draggable={false}
+      onClick={(e) => { e.stopPropagation(); actions.setDealArchived(deal.id, !archived); }}
+      title={archived
+        ? 'Archived — click to restore it to the pipeline'
+        : 'Clear off the pipeline. It stays in the CRM in full; this only hides it from this board.'}
+      aria-label={archived ? 'Restore to the pipeline' : 'Clear off the pipeline'}
+      style={{ display: 'inline-flex', alignItems: 'center', background: 'none', border: 'none',
+        cursor: 'pointer', padding: 0, flexShrink: 0,
+        color: archived ? BRAND.blue : BRAND.muted, opacity: archived ? 1 : 0.4 }}
+    >
+      {archived ? <ArchiveRestore size={14} /> : <Archive size={14} />}
+    </button>
+  ) : null;
   // Value shown: signed/proposed value derived by the backend, else the manual
   // value. So a deal with a proposal shows a figure even before it's signed.
   const shownValue = deal.effectiveValue != null ? deal.effectiveValue : deal.value;
@@ -677,6 +683,7 @@ function DealRow({ deal, onOpen, taskAssignee }) {
             <span style={{ fontSize: 10, color: ageDays > 14 ? '#92400E' : BRAND.muted, flexShrink: 0 }} title={`${ageDays} days in stage`}>{ageDays}d</span>
           )}
           <Avatar user={owner} fallback={deal.ownerEmail} />
+          {archiveBtn}
         </div>
         {/* Row 2: meta chips. Only rendered when there's at least one, so cards
             with no chips stay short instead of carrying an empty gap. */}
@@ -714,7 +721,9 @@ function DealRow({ deal, onOpen, taskAssignee }) {
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(); } }}
       onMouseEnter={(e) => { e.currentTarget.style.background = BRAND.paper; }}
       onMouseLeave={(e) => { e.currentTarget.style.background = 'white'; }}
-      style={{ borderTop: '1px solid ' + BRAND.border, background: 'white', cursor: 'grab', padding: '8px 12px' }}
+      style={{ borderTop: '1px solid ' + BRAND.border, background: 'white', cursor: 'grab', padding: '8px 12px',
+        // Revealed archived rows read as put-away rather than live pipeline.
+        opacity: archived ? 0.62 : 1 }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
@@ -770,8 +779,125 @@ function DealRow({ deal, onOpen, taskAssignee }) {
           </span>
         )}
         <Avatar user={owner} fallback={deal.ownerEmail} />
+        {/* Archive / restore sits at the far right, mirroring the flame's faint
+            always-there toggle at the far left. */}
+        <span style={{ display: 'inline-flex', width: 14, justifyContent: 'center', flexShrink: 0 }}>{archiveBtn}</span>
       </div>
     </div>
+  );
+}
+
+// The archive: everything currently off the board, in one searchable list, with
+// a way back onto it. Deliberately a plain list rather than a second pipeline —
+// these are finished deals, so what matters is finding one and restoring it.
+function ArchiveModal({ deals, onClose, onOpenDeal }) {
+  const { state, actions } = useStore();
+  const isMobile = useIsMobile();
+  const [q, setQ] = useState('');
+  // Restoring removes the row from `deals` on the next render, so the list
+  // shrinks as you work through it — no stale rows to reason about.
+  const [restoring, setRestoring] = useState(null);
+
+  const rows = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return deals.filter((d) => {
+      if (!needle) return true;
+      const company = d.companyId ? state.companies?.[d.companyId]?.name : null;
+      return [dealDisplayName(company, d.title), d.reference, company]
+        .some(v => (v || '').toLowerCase().includes(needle));
+    });
+  }, [deals, q, state.companies]);
+
+  const restore = async (deal) => {
+    setRestoring(deal.id);
+    try { await actions.setDealArchived(deal.id, false); } finally { setRestoring(null); }
+  };
+
+  return (
+    <Modal onClose={onClose} fullScreenOnMobile>
+      <h2 style={{ margin: '0 0 4px', fontSize: 18, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <Archive size={18} color={BRAND.blue} /> Pipeline archive
+      </h2>
+      <p style={{ margin: '0 0 14px', fontSize: 13, color: BRAND.muted, lineHeight: 1.45 }}>
+        Deals that are off the board — put away by hand, or paid/lost for over {CLEAR_AFTER_DAYS} days with
+        nothing outstanding. They're untouched in the CRM: open one, or restore it to the pipeline.
+      </p>
+
+      <div style={{ position: 'relative', marginBottom: 12 }}>
+        <Search size={14} color={BRAND.muted} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)' }} />
+        <input
+          className="input"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search the archive…"
+          style={{ paddingLeft: 30 }}
+          autoFocus={!isMobile}
+        />
+      </div>
+
+      {rows.length === 0 ? (
+        <div style={{ padding: '24px 8px', textAlign: 'center', color: BRAND.muted, fontSize: 13, fontStyle: 'italic' }}>
+          {deals.length === 0 ? 'Nothing archived yet' : 'No archived deal matches that'}
+        </div>
+      ) : (
+        <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 8, overflow: 'hidden', maxHeight: '55vh', overflowY: 'auto' }}>
+          {rows.map((d, i) => {
+            const stage = STAGE_BY_ID[d.stage];
+            const company = d.companyId ? state.companies?.[d.companyId]?.name : null;
+            const value = d.effectiveValue != null ? d.effectiveValue : d.value;
+            return (
+              <div
+                key={d.id}
+                style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: 'white',
+                  borderTop: i === 0 ? 'none' : '1px solid ' + BRAND.border }}
+              >
+                <button
+                  type="button"
+                  onClick={() => onOpenDeal(d.id)}
+                  style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3, alignItems: 'flex-start',
+                    background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}
+                >
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 6, maxWidth: '100%' }}>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: BRAND.ink, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {dealDisplayName(company, d.title)}
+                    </span>
+                    <RefBadge reference={d.reference} size={10} />
+                  </span>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: BRAND.muted }}>
+                    {stage && (
+                      <span style={{ fontSize: 9, fontWeight: 700, color: stage.fg, background: stage.bg, padding: '1px 5px',
+                        borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3 }}>
+                        {stage.label}
+                      </span>
+                    )}
+                    {describeArchive(d, stage?.label)}
+                  </span>
+                </button>
+                {value != null && (
+                  <span style={{ fontSize: 13, fontWeight: 700, color: BRAND.ink, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
+                    {formatGBP(value)}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => restore(d)}
+                  disabled={restoring === d.id}
+                  className="btn-ghost"
+                  title="Put this deal back on the pipeline board"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, flexShrink: 0 }}
+                >
+                  <ArchiveRestore size={13} /> {restoring === d.id ? 'Restoring…' : 'Restore'}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 14 }}>
+        <button type="button" onClick={onClose} className="btn-ghost">Close</button>
+      </div>
+    </Modal>
   );
 }
 
@@ -785,13 +911,6 @@ function Avatar({ user, fallback, size = 18 }) {
         : initial}
     </div>
   );
-}
-
-function daysSince(iso) {
-  if (!iso) return null;
-  const t = new Date(iso).getTime();
-  if (Number.isNaN(t)) return null;
-  return Math.max(0, Math.floor((Date.now() - t) / 86400000));
 }
 
 // How a manually-created deal's lead was generated. These map to Marketing lead

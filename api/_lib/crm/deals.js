@@ -80,6 +80,25 @@ export function ensureDealHot() {
   return dealHotEnsured;
 }
 
+// Self-heal for db/migrations/20260902_deal_pipeline_archive.sql — the manual
+// overrides on the pipeline's automatic clear-out of finished deals (archived
+// by hand / kept on the board despite its age). Cached so it runs at most once
+// per warm instance. Never rejects into the caller: the pipeline archive is a
+// display nicety, and a failed ALTER must not 500 the deals list.
+let dealArchiveEnsured = null;
+export function ensureDealPipelineArchive() {
+  if (dealArchiveEnsured) return dealArchiveEnsured;
+  dealArchiveEnsured = (async () => {
+    await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS pipeline_archived_at TIMESTAMPTZ`;
+    await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS pipeline_archived_by TEXT`;
+    await sql`ALTER TABLE deals ADD COLUMN IF NOT EXISTS pipeline_restored_at TIMESTAMPTZ`;
+  })().catch((err) => {
+    dealArchiveEnsured = null;
+    console.warn('[deals] pipeline archive columns unavailable', err.message);
+  });
+  return dealArchiveEnsured;
+}
+
 // Allocate the next reference for a deal formed now: YYMM of today plus the
 // next free sequence in that month. Races are settled by the unique index —
 // the caller retries — so two deals created at the same instant can't collide.
@@ -574,6 +593,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
   await ensureDealHot();
   await ensureDealVat();
   await ensureDealReference();
+  await ensureDealPipelineArchive();
   if (!id) {
     if (req.method === 'GET') {
       // Optional filter by stage, owner. Default: everything (Kanban renders
@@ -659,6 +679,12 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
              stage_changed_at = NOW(),
              last_activity_at = NOW(),
              lost_reason = ${stage === 'lost' ? trimOrNull(lostReason) : null},
+             -- Moving a deal is an act of live pipeline work, so it drops both
+             -- pipeline-archive overrides: the age clock restarts here anyway,
+             -- and an archived deal must never land invisibly in its new stage.
+             pipeline_archived_at = NULL,
+             pipeline_archived_by = NULL,
+             pipeline_restored_at = NULL,
              updated_at = NOW()
        WHERE id = ${id}
     `;
@@ -690,6 +716,33 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       UPDATE deals SET hot = ${hot}, updated_at = NOW() WHERE id = ${id}
       RETURNING id
     `;
+    if (!updated.length) return res.status(404).json({ error: 'Not found' });
+    const rows = await sql`SELECT * FROM deals WHERE id = ${id}`;
+    const [deal] = await annotateDeals(rows);
+    return res.status(200).json({ ok: true, deal });
+  }
+
+  // Pipeline archive — clear a finished deal off the Sales Pipeline board, or
+  // restore one the age rule cleared automatically. POST { archived: bool }.
+  //
+  // Display-only, and deliberately so: the deal, its finance, its files and all
+  // reporting are untouched — this is only about what the board shows. The two
+  // timestamps are mutually exclusive, so restoring always beats the automatic
+  // rule and archiving always beats a previous restore.
+  if (action === 'pipeline-archive') {
+    if (req.method !== 'POST') return res.status(405).end();
+    const archived = !!(req.body && req.body.archived);
+    const updated = archived
+      ? await sql`
+          UPDATE deals
+             SET pipeline_archived_at = NOW(), pipeline_archived_by = ${user?.email || null},
+                 pipeline_restored_at = NULL, updated_at = NOW()
+           WHERE id = ${id} RETURNING id`
+      : await sql`
+          UPDATE deals
+             SET pipeline_archived_at = NULL, pipeline_archived_by = NULL,
+                 pipeline_restored_at = NOW(), updated_at = NOW()
+           WHERE id = ${id} RETURNING id`;
     if (!updated.length) return res.status(404).json({ error: 'Not found' });
     const rows = await sql`SELECT * FROM deals WHERE id = ${id}`;
     const [deal] = await annotateDeals(rows);
@@ -2116,6 +2169,14 @@ export function serialiseDeal(r) {
   // annotateDeals); omitted on partial selects so the optimistic merge never
   // blanks it on a stage move / edit.
   if ('hot' in r) out.hot = !!r.hot;
+  // Pipeline-archive overrides — whether this deal has been cleared off the
+  // Sales Pipeline board by hand, or deliberately kept on it. Guarded like the
+  // rest so a partial select never blanks them on an optimistic merge.
+  if ('pipeline_archived_at' in r) {
+    out.pipelineArchivedAt = r.pipeline_archived_at || null;
+    out.pipelineArchivedBy = r.pipeline_archived_by || null;
+  }
+  if ('pipeline_restored_at' in r) out.pipelineRestoredAt = r.pipeline_restored_at || null;
   // Where the lead came from, and whether the client was already promised the
   // portal's 10%. Guarded like the rest: a partial select must not blank them.
   if ('lead_source' in r) out.leadSource = r.lead_source || null;
