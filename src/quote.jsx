@@ -55,7 +55,25 @@ createRoot(container).render(<QuoteRequestForm getAttribution={getAttribution} /
 if (inIframe) {
   let lastHeight = 0;
   const sendHeight = () => {
-    const h = document.documentElement.scrollHeight;
+    /*
+     * ROUNDED UP, and measured off the rect as well as scrollHeight.
+     *
+     * scrollHeight is an integer. A document that lays out at 1073.41px
+     * reports 1073, the embedding page sets the frame to exactly that, and the
+     * leftover 0.41px is overflow — which some browsers draw a scrollbar for
+     * and others quietly absorb. That is the scrollbar Adam had down the side
+     * of the embedded quote form: not a height handshake that failed, one that
+     * succeeded to the nearest pixel and left a fraction over.
+     *
+     * Rounding UP cannot run away, even though #quote-root is min-height:
+     * 100vh and so grows to whatever the frame is set to: at 1074 the content
+     * measures 1074, which ceils to 1074 again and stops. Rounding up by less
+     * than a pixel is also invisible, where being a pixel short is not.
+     */
+    const h = Math.ceil(Math.max(
+      document.documentElement.scrollHeight,
+      document.documentElement.getBoundingClientRect().height,
+    ));
     if (h !== lastHeight) {
       lastHeight = h;
       try {
