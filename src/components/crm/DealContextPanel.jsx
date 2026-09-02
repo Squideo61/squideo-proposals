@@ -1395,6 +1395,8 @@ function describeEvent(e) {
     case 'storyboard_revision_assigned':  return `Storyboard revisions assigned${p.assignee ? ` to ${p.assignee}` : ''}`;
     case 'revision_submitted_to_client':  return `Video submitted to the client${p.version ? ` (v${p.version})` : ''}`;
     case 'storyboard_submitted_to_client': return `Storyboard submitted to the client${p.version ? ` (v${p.version})` : ''}`;
+    case 'revision_reopened_for_client':  return 'Video review reopened for the client';
+    case 'storyboard_reopened_for_client': return 'Storyboard review reopened for the client';
     case 'review_email_sent': return `Review email sent${p.item ? `: ${p.item}` : ''}`;
     default:              return e.eventType;
   }

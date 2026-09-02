@@ -10,6 +10,7 @@ import { RevisionAnalyticsModal } from '../RevisionAnalyticsModal.jsx';
 import { DealLinkSummary, AssigneeSelect, CommentDone, CommentFlag, InternalNote, VideoLinkBanner } from './RevisionsView.jsx';
 import { SearchBox } from './ProductionView.jsx';
 import ReviewEmailComposer from './ReviewEmailComposer.jsx';
+import { ReopenReviewButton } from './ReopenReviewModal.jsx';
 
 const APPROVED_CHIP = { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '1px 8px',
   borderRadius: 999, background: '#16A34A', color: '#fff', fontSize: 11, fontWeight: 700 };
@@ -330,7 +331,7 @@ function ProjectDetail({ projectId, onBack }) {
             </div>
           )}
           <StoryboardCard key={activeStoryboard.id} projectId={projectId} storyboard={activeStoryboard}
-            shareToken={detail.shareToken} commentsByVersion={commentsByVersion} />
+            shareToken={detail.shareToken} commentsByVersion={commentsByVersion} viewers={viewers} />
         </>
       )}
     </div>
@@ -338,7 +339,7 @@ function ProjectDetail({ projectId, onBack }) {
 }
 
 // One storyboard within a project: its own upload dropzone + list of draft PDFs.
-function StoryboardCard({ projectId, storyboard, shareToken, commentsByVersion }) {
+function StoryboardCard({ projectId, storyboard, shareToken, commentsByVersion, viewers = [] }) {
   const { actions, showMsg } = useStore();
   const fileInputRef = useRef(null);
   const [progress, setProgress] = useState(null);
@@ -387,6 +388,13 @@ function StoryboardCard({ projectId, storyboard, shareToken, commentsByVersion }
               Pending review
             </span>}
         <span style={{ fontSize: 12, color: BRAND.muted }}>{versions.length} draft{versions.length === 1 ? '' : 's'}</span>
+        {/* Only offered while the approval still covers the draft the client is
+            holding — once a newer draft is out, that draft is already open. */}
+        {approvalIsCurrent && (
+          <ReopenReviewButton
+            kind="storyboard" itemTitle={storyboard.title} viewers={viewers} showMsg={showMsg}
+            onReopen={(opts) => actions.reopenStoryboardReview(projectId, storyboard.id, opts)} />
+        )}
         <button
           onClick={() => { if (window.confirm(`Delete "${storyboard.title}" and all its drafts?`)) actions.deleteStoryboard(projectId, storyboard.id); }}
           className="btn-ghost" style={{ marginLeft: 'auto' }} title="Delete storyboard"><Trash2 size={14} /></button>

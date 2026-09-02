@@ -20,6 +20,7 @@
 //   POST   /api/storyboards/comment?token=…       — leave a per-slide / anchored comment
 //   POST   /api/storyboards/asset-token?token=…   — client-upload token for a comment asset
 //   POST   /api/storyboards/approve?token=…       — client approves one storyboard
+//   POST   /api/storyboards/reopen?storyboardId=… — staff undo that finalisation
 //   POST   /api/storyboards/viewer?token=…        — record a reviewer (name + email gate)
 //   POST   /api/storyboards/view?token=…          — record a per-draft view
 import crypto from 'crypto';
@@ -31,7 +32,7 @@ import { sendNotification, resolveDealTeamEmails, ensureRevisionCompleteNotifica
 import { revisionFeedbackHtml, reviewContextLine, APP_URL } from '../_lib/email.js';
 import { getRole } from '../_lib/userRoles.js';
 import { isFreelancer, freelancerStoryboardProjectIds } from '../_lib/crm/access.js';
-import { submitStoryboardToClient, reviewEmailContext } from '../_lib/crm/clientReview.js';
+import { submitStoryboardToClient, reopenReviewForClient, reviewEmailContext } from '../_lib/crm/clientReview.js';
 
 // Storyboard PDFs share the PUBLIC revision Blob store (so clients can fetch the
 // bytes directly via the share link), reading REVISION_BLOB_READ_WRITE_TOKEN
@@ -346,6 +347,25 @@ export default async function handler(req, res) {
         actor: user, email: req.body?.email || null,
       });
       if (result.error === 'no-draft') return res.status(400).json({ error: 'Upload a draft before submitting to the client.' });
+      if (result.error) return res.status(404).json({ error: 'Storyboard not found' });
+      return res.status(200).json(result);
+    }
+
+    // Undo a client's "Finalise and send revisions" (see the revisions router).
+    // Clears approved_version too, so the signed-off draft reopens rather than
+    // only drafts newer than it. Freelancers can't reopen a client review.
+    if (action === 'reopen') {
+      if (req.method !== 'POST') return res.status(405).end();
+      const storyboardId = req.query.storyboardId ? String(req.query.storyboardId) : null;
+      if (!storyboardId) return res.status(400).json({ error: 'storyboardId required' });
+      if (isFreelancer(await getRole(user.role))) {
+        return res.status(403).json({ error: 'Only Squideo staff can reopen a client review.' });
+      }
+      const body = req.body || {};
+      const result = await reopenReviewForClient({
+        kind: 'storyboard', itemId: storyboardId, actorEmail: user.email,
+        notifyViewers: !!body.notifyViewers, note: body.note || null,
+      });
       if (result.error) return res.status(404).json({ error: 'Storyboard not found' });
       return res.status(200).json(result);
     }

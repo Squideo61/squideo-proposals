@@ -4191,6 +4191,14 @@ export function StoreProvider({ children }) {
         .then((resp) => actions.loadRevisionDetail(projectId).then(() => resp));
     },
 
+    // Undo a client's finalisation so the same draft reopens for comments.
+    // `projectId` may be null when called from the deal's video page, which has
+    // no revisions-project detail loaded to refresh.
+    reopenRevisionReview(projectId, videoId, { notifyViewers = false, note = null } = {}) {
+      return api.post('/api/revisions/reopen?videoId=' + encodeURIComponent(videoId), { notifyViewers, note })
+        .then((resp) => (projectId ? actions.loadRevisionDetail(projectId).then(() => resp) : resp));
+    },
+
     // ---------- Public revision viewer (no auth) ----------
     // The endpoint doubles as a presence heartbeat: when viewerEmail is sent
     // along, the server bumps last_seen and returns activeViewers + per-comment
@@ -4391,6 +4399,12 @@ export function StoreProvider({ children }) {
     submitStoryboardToClient(projectId, storyboardId, email = null) {
       return api.post('/api/storyboards/submit?storyboardId=' + encodeURIComponent(storyboardId), { email })
         .then((resp) => actions.loadStoryboardDetail(projectId).then(() => resp));
+    },
+
+    // Undo a client's storyboard finalisation (see reopenRevisionReview).
+    reopenStoryboardReview(projectId, storyboardId, { notifyViewers = false, note = null } = {}) {
+      return api.post('/api/storyboards/reopen?storyboardId=' + encodeURIComponent(storyboardId), { notifyViewers, note })
+        .then((resp) => (projectId ? actions.loadStoryboardDetail(projectId).then(() => resp) : resp));
     },
 
     // ---------- Public storyboard viewer (no auth) ----------

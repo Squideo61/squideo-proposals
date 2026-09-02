@@ -11,7 +11,7 @@
 
 import sql from '../db.js';
 import { notifyPortalUser } from '../portal/notifications.js';
-import { sendMail, APP_URL } from '../email.js';
+import { sendMail, reviewReopenedHtml, APP_URL } from '../email.js';
 import { performGmailSend } from './gmail.js';
 
 // The anonymous client review links (same format the "Copy link" buttons use).
@@ -151,6 +151,126 @@ export async function submitStoryboardToClient({ storyboardId, actorEmail, email
     shareToken: row.share_token,
     ...mail,
   };
+}
+
+// ── Reopening a finalised review ────────────────────────────────────────────
+// Finalising is a one-way door for the client: approved_at locks every draft of
+// a video (and the approved draft and older ones of a storyboard), so a
+// reviewer who hits it early — before their colleagues have finished — can't
+// undo it themselves. This is the team's way back: it clears the approval so
+// the same draft reopens for comments, without needing a new draft uploaded.
+//
+// `kind` is 'video' | 'storyboard'; `itemId` is a revision_videos.id or a
+// storyboards.id. Set `notifyViewers` to email everyone who has opened the
+// share link that it's open again. Returns { ok, itemTitle, wasApproved,
+// notified } or { error }.
+export async function reopenReviewForClient({
+  kind, itemId, actorEmail, notifyViewers = false, note = null,
+}) {
+  const isSb = kind === 'storyboard';
+  const [row] = isSb
+    ? await sql`
+        SELECT sb.id, sb.title, sb.project_id, sb.approved_at, sb.approved_by,
+               sp.title AS project_title, sp.share_token, d.company_id,
+               COALESCE(sp.deal_id, d.id) AS deal_id
+          FROM storyboards sb
+          JOIN storyboard_projects sp ON sp.id = sb.project_id
+          LEFT JOIN deals d ON (d.id = sp.deal_id OR d.storyboard_project_id = sp.id)
+         WHERE sb.id = ${itemId}`
+    : await sql`
+        SELECT rv.id, rv.title, rv.project_id, rv.approved_at, rv.approved_by,
+               rp.title AS project_title, rp.share_token, d.company_id,
+               COALESCE(rp.deal_id, d.id) AS deal_id
+          FROM revision_videos rv
+          JOIN revision_projects rp ON rp.id = rv.project_id
+          LEFT JOIN deals d ON (d.id = rp.deal_id OR d.revision_project_id = rp.id)
+         WHERE rv.id = ${itemId}`;
+  if (!row) return { error: 'not-found' };
+
+  const wasApproved = !!row.approved_at;
+  const cleanNote = typeof note === 'string' ? note.trim().slice(0, 500) : '';
+
+  // Clearing feedback_submitted_at alongside the approval puts the review back
+  // to "out with the client": the team's "client sent feedback" pills and the
+  // portal's ball-in-court both read those two columns, and a reopened review
+  // is genuinely still waiting on the client. The comments themselves are
+  // untouched — nothing the client already wrote is lost.
+  if (isSb) {
+    // approved_version is what isDraftLocked() gates on, so it has to go too or
+    // the draft stays locked however NULL approved_at is.
+    await sql`
+      UPDATE storyboards
+         SET approved_at = NULL, approved_by = NULL, approved_version = NULL,
+             feedback_submitted_at = NULL
+       WHERE id = ${itemId}`;
+    await sql`UPDATE storyboard_projects SET updated_at = NOW() WHERE id = ${row.project_id}`;
+  } else {
+    await sql`
+      UPDATE revision_videos
+         SET approved_at = NULL, approved_by = NULL, feedback_submitted_at = NULL
+       WHERE id = ${itemId}`;
+    await sql`UPDATE revision_projects SET updated_at = NOW() WHERE id = ${row.project_id}`;
+  }
+
+  await notifyPortalUser({
+    companyId: row.company_id,
+    dealId: row.deal_id,
+    key: isSb ? 'portal.storyboard_reopened' : 'portal.revision_reopened',
+    title: `Your review of "${row.title}" is open again`,
+    body: cleanNote || 'We have reopened it so you can add more comments.',
+    link: portalReviewLinkFor(isSb ? 'storyboard' : 'video', row.share_token, itemId),
+  });
+  await logDealEvent(row.deal_id,
+    isSb ? 'storyboard_reopened_for_client' : 'revision_reopened_for_client',
+    { [isSb ? 'storyboard' : 'video']: row.title, previouslyApprovedBy: row.approved_by || null,
+      note: cleanNote || null, emailed: !!notifyViewers }, actorEmail);
+
+  let notified = 0;
+  if (notifyViewers) notified = await emailReopenedViewers({ isSb, row, itemId, note: cleanNote });
+
+  return { ok: true, itemTitle: row.title, wasApproved, notified };
+}
+
+// Everyone who has actually opened the share link for this project. They are
+// anonymous reviewers (no portal account, often not the billing contact), so
+// the share-link viewer table is the only place their address exists.
+async function emailReopenedViewers({ isSb, row, itemId, note }) {
+  const viewers = isSb
+    ? await sql`SELECT DISTINCT lower(email) AS email FROM storyboard_viewers
+                 WHERE project_id = ${row.project_id} AND email IS NOT NULL`
+    : await sql`SELECT DISTINCT lower(email) AS email FROM revision_viewers
+                 WHERE project_id = ${row.project_id} AND email IS NOT NULL`;
+  // Never mail our own team their client's reopen notice.
+  const to = viewers.map(v => v.email).filter(e => e && !e.endsWith('@squideo.co.uk'));
+  if (!to.length) return 0;
+  const link = reviewUrlFor(isSb ? 'storyboard' : 'video', row.share_token, itemId);
+  const message = {
+    subject: `Your review of "${row.title}" is open again`,
+    html: reviewReopenedHtml({
+      kind: isSb ? 'storyboard' : 'video',
+      itemTitle: row.title, projectTitle: row.project_title, link, note,
+    }),
+    text: `We've reopened "${row.title}" so you can add more comments. `
+      + `Everything you'd already left is still there.${note ? ` ${note}` : ''}`
+      + (link ? ` ${link}` : ''),
+    throwOnError: true,
+  };
+  // One send per person rather than a single multi-recipient To: — a client's
+  // review committee is often several organisations who haven't been introduced,
+  // and a shared header would hand each of them the others' addresses. One
+  // address bouncing also then only costs that one send.
+  let notified = 0;
+  for (const address of to) {
+    try {
+      await sendMail({ ...message, to: address });
+      notified += 1;
+    } catch (err) {
+      // The reopen itself has already happened and is the point of the action —
+      // a bounced covering email must not roll it back or 500 the request.
+      console.warn('[clientReview] reopen email failed', address, err.message);
+    }
+  }
+  return notified;
 }
 
 // ── The covering email ──────────────────────────────────────────────────────

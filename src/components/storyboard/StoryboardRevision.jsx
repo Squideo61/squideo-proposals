@@ -427,6 +427,23 @@ export function StoryboardRevision({ token, data, api, showMsg, identity = null,
         if (!alive || !d) return;
         if (Array.isArray(d.comments)) setComments(d.comments);
         if (Array.isArray(d.activeViewers)) setActiveViewers(d.activeViewers);
+        // Approval state is polled too so that a team reopening a finalised
+        // storyboard (CRM "Reopen for feedback") unlocks an already-open tab
+        // instead of leaving the reviewer staring at a dead Finalise button.
+        if (Array.isArray(d.storyboards)) {
+          setApprovals(prev => {
+            const next = { ...prev };
+            for (const sb of d.storyboards) {
+              next[sb.id] = sb.approvedAt ? { at: sb.approvedAt, version: sb.approvedVersion ?? null } : null;
+            }
+            return next;
+          });
+          setSubmitted(prev => {
+            const next = { ...prev };
+            for (const sb of d.storyboards) next[sb.id] = sb.feedbackSubmittedAt || null;
+            return next;
+          });
+        }
       } catch { /* polling is best-effort */ }
     };
     tick();

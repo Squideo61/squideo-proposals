@@ -9,6 +9,7 @@
 //   GET    /api/revisions/detail?id=…             — full project + versions + comments
 //   POST   /api/revisions/upload-token            — Vercel Blob client-upload token handler
 //   POST   /api/revisions/versions?projectId=…    — register a freshly-uploaded version
+//   POST   /api/revisions/reopen?videoId=…       — undo a client's finalisation
 //   DELETE /api/revisions/versions?id=…           — delete a version (+ blob)
 //
 // Public (no auth, keyed by share_token) routes:
@@ -23,7 +24,7 @@ import { sendNotification, resolveDealTeamEmails, ensureRevisionCompleteNotifica
 import { revisionFeedbackHtml, reviewContextLine, APP_URL } from '../_lib/email.js';
 import { getRole } from '../_lib/userRoles.js';
 import { isFreelancer, freelancerRevisionProjectIds } from '../_lib/crm/access.js';
-import { submitRevisionToClient, reviewEmailContext } from '../_lib/crm/clientReview.js';
+import { submitRevisionToClient, reopenReviewForClient, reviewEmailContext } from '../_lib/crm/clientReview.js';
 
 // Self-heal for db/migrations/20260605_revision_feedback.sql. Idempotent +
 // cached so we only run the ALTERs once per warm lambda.
@@ -254,6 +255,26 @@ export default async function handler(req, res) {
         actor: user, email: req.body?.email || null,
       });
       if (result.error === 'no-draft') return res.status(400).json({ error: 'Upload a draft before submitting to the client.' });
+      if (result.error) return res.status(404).json({ error: 'Revision not found' });
+      return res.status(200).json(result);
+    }
+
+    // Undo a client's "Finalise and send revisions". Approval is a one-way door
+    // for the client (every draft of the video locks), so when a reviewer hits
+    // it before their colleagues have finished, this is the only way back in
+    // short of uploading a new draft. Freelancers can't reopen a client review.
+    if (action === 'reopen') {
+      if (req.method !== 'POST') return res.status(405).end();
+      const videoId = req.query.videoId ? String(req.query.videoId) : null;
+      if (!videoId) return res.status(400).json({ error: 'videoId required' });
+      if (isFreelancer(await getRole(user.role))) {
+        return res.status(403).json({ error: 'Only Squideo staff can reopen a client review.' });
+      }
+      const body = req.body || {};
+      const result = await reopenReviewForClient({
+        kind: 'video', itemId: videoId, actorEmail: user.email,
+        notifyViewers: !!body.notifyViewers, note: body.note || null,
+      });
       if (result.error) return res.status(404).json({ error: 'Revision not found' });
       return res.status(200).json(result);
     }

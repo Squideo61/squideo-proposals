@@ -15,6 +15,7 @@ import { DealConversation } from './DealConversation.jsx';
 import { AssigneePicker } from './TaskFormModal.jsx';
 import { PdfPage } from '../storyboard/PdfPage.jsx';
 import ReviewEmailComposer from './ReviewEmailComposer.jsx';
+import { ReopenReviewButton } from './ReopenReviewModal.jsx';
 import { ClientBriefBlock } from './ClientBriefBlock.jsx';
 import { AssignCreditModal } from './ProductionPanel.jsx';
 import { fmtMins } from './ClientCreditCard.jsx';
@@ -699,7 +700,7 @@ const reviewPill = (color, bg) => ({ fontSize: 11, fontWeight: 700, color, backg
 // the file still lands in the Revisions system (what the client reviews, where
 // comments live), but staff upload + see the summary inline. "Open in Revisions"
 // jumps to the full comment thread. This is the in-place summary + gateway.
-function MilestoneReviewSummary({ kind, status, onOpen, onSubmit, onUpload, uploadProgress, busy }) {
+function MilestoneReviewSummary({ kind, status, onOpen, onSubmit, onUpload, uploadProgress, busy, onReopen, itemTitle, showMsg }) {
   const fileRef = useRef(null);
   const label = kind === 'storyboard' ? 'Storyboard Revisions' : 'Video Revisions';
   const accept = kind === 'storyboard' ? 'application/pdf' : 'video/*';
@@ -725,6 +726,13 @@ function MilestoneReviewSummary({ kind, status, onOpen, onSubmit, onUpload, uplo
             {status?.approvedAt
               ? <span style={reviewPill('#16A34A', '#DCFCE7')}>Approved by client</span>
               : status?.clientSubmittedVersion != null && <span style={reviewPill('#B45309', '#FEF3C7')}>Pending client approval</span>}
+            {/* Undo a finalisation the client pressed too early — the same
+                control as the Revisions section, where producers working out
+                of the video page can reach it. */}
+            {status?.approvedAt && onReopen && (
+              <ReopenReviewButton kind={kind} itemTitle={itemTitle} showMsg={showMsg}
+                onReopen={onReopen} style={{ padding: '1px 6px' }} />
+            )}
             {status?.feedbackSubmittedAt && !status?.approvedAt && <span style={reviewPill('#2563EB', '#DBEAFE')}>Client sent feedback</span>}
             {status?.commentCount > 0 && <span style={reviewPill(BRAND.muted, '#F1F5F9')}>{status.commentCount} comment{status.commentCount === 1 ? '' : 's'}{status.openCommentCount > 0 ? ` · ${status.openCommentCount} open` : ''}</span>}
           </div>
@@ -878,6 +886,15 @@ function MilestoneRow({ m, index, videoId, video, approval, assets, open, onTogg
   // see ReviewEmailComposer.
   const [composerOpen, setComposerOpen] = useState(false);
   function submitReview() { setComposerOpen(true); }
+  // Reopening changes what the client's pills say here, so reload the video
+  // rather than leaving a stale "Approved by client" on screen.
+  async function reopenReview(opts) {
+    const resp = m.id === 'storyboard'
+      ? await actions.reopenStoryboardReview(null, reviewLinkedId, opts)
+      : await actions.reopenRevisionReview(null, reviewLinkedId, opts);
+    await actions.loadVideo(videoId);
+    return resp;
+  }
   const reviewHasUnsent = (reviewStatus?.versionCount || 0) > 0
     && (reviewStatus?.latestVersionNumber || 0) > (reviewStatus?.clientSubmittedVersion ?? 0);
   // Inline "link a Google Doc" form (alternative to uploading a file).
@@ -963,7 +980,9 @@ function MilestoneRow({ m, index, videoId, video, approval, assets, open, onTogg
           {isReviewMilestone ? (
             <>
             <MilestoneReviewSummary kind={m.id} status={reviewStatus} onOpen={openReview} onSubmit={submitReview}
-              onUpload={uploadDraft} uploadProgress={reviewUpload} busy={reviewBusy} />
+              onUpload={uploadDraft} uploadProgress={reviewUpload} busy={reviewBusy}
+              itemTitle={video?.title} showMsg={showMsg}
+              onReopen={reviewLinkedId ? reopenReview : null} />
             {composerOpen && (
               <ReviewEmailComposer
                 kind={m.id === 'storyboard' ? 'storyboard' : 'video'}

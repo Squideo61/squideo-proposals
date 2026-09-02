@@ -401,6 +401,23 @@ export function revisionFeedbackHtml({ kind = 'video', projectTitle, itemTitle, 
   return shell(inner);
 }
 
+// A finalised review has been reopened by the team so the client can carry on
+// commenting — usually because someone hit "Finalise" before their colleagues
+// had finished. Goes to the reviewers on the share link, so it's deliberately
+// short: what changed, why (if the producer left a note), and the way back in.
+export function reviewReopenedHtml({ kind = 'video', itemTitle, projectTitle, link, note }) {
+  const label = kind === 'storyboard' ? 'storyboard' : 'video';
+  const title = itemTitle || projectTitle || 'your ' + label;
+  const inner = `
+    <h2 style="margin:0 0 12px;font-size:18px;font-weight:700;">Your review of ${escapeHtml(title)} is open again</h2>
+    <p style="margin:0 0 12px;">We've reopened <strong>${escapeHtml(title)}</strong>${projectTitle && itemTitle && projectTitle !== itemTitle ? ` in <strong>${escapeHtml(projectTitle)}</strong>` : ''} so you can add more comments. Everything you'd already left is still there.</p>
+    ${note ? `<p style="margin:0 0 12px;padding:10px 12px;background:#FAFBFC;border:1px solid #E5E9EE;border-radius:8px;">${escapeHtml(note)}</p>` : ''}
+    <p style="margin:0 0 12px;">When your team has finished, hit <strong>Finalise and send revisions</strong> again to send it all over.</p>
+    ${link ? `<p style="margin:0;">${ctaButton(link, 'Carry on reviewing')}</p>` : ''}
+  `;
+  return shell(inner);
+}
+
 // How the client chose to pay, as stored on the signature (ClientView).
 const PAYMENT_OPTION_LABELS = {
   '5050': '50/50 split — 50% deposit, balance on approval',

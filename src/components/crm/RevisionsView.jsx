@@ -6,6 +6,7 @@ import { useIsMobile, formatRelativeTime } from '../../utils.js';
 import { inspectVideoUrl, checkVideoForStreaming, bitrateMbps, BITRATE_WARN_MBPS } from '../../lib/mp4Inspect.js';
 import { Modal } from '../ui.jsx';
 import { RevisionAnalyticsModal } from '../RevisionAnalyticsModal.jsx';
+import { ReopenReviewButton } from './ReopenReviewModal.jsx';
 import { SearchBox } from './ProductionView.jsx';
 
 // Compact <select> linking a project to a CRM deal (its team gets the client
@@ -590,7 +591,7 @@ function ProjectDetail({ projectId, onBack }) {
               </span>
             </div>
           )}
-          <VideoCard key={activeVideo.id} projectId={projectId} video={activeVideo} commentsByVersion={commentsByVersion} />
+          <VideoCard key={activeVideo.id} projectId={projectId} video={activeVideo} commentsByVersion={commentsByVersion} viewers={viewers} />
         </>
       )}
     </div>
@@ -777,7 +778,7 @@ function DraftBlock({ projectId, video, version, comments, isMobile }) {
   );
 }
 
-function VideoCard({ projectId, video, commentsByVersion }) {
+function VideoCard({ projectId, video, commentsByVersion, viewers = [] }) {
   const { actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   const fileInputRef = useRef(null);
@@ -838,6 +839,13 @@ function VideoCard({ projectId, video, commentsByVersion }) {
           ? <span style={APPROVED_CHIP}><CheckCircle2 size={11} /> Approved</span>
           : <span style={{ ...APPROVED_CHIP, background: '#F59E0B' }}>Pending review</span>}
         <span style={{ fontSize: 12, color: BRAND.muted }}>{versions.length} draft{versions.length === 1 ? '' : 's'}</span>
+        {/* Approval locks every draft of this video for the client, so this is
+            their only way back in short of us sending a whole new draft. */}
+        {video.approvedAt && (
+          <ReopenReviewButton
+            kind="video" itemTitle={video.title} viewers={viewers} showMsg={showMsg}
+            onReopen={(opts) => actions.reopenRevisionReview(projectId, video.id, opts)} />
+        )}
         <button
           onClick={() => { if (window.confirm(`Delete "${video.title}" and all its drafts?`)) actions.deleteRevisionVideo(projectId, video.id); }}
           className="btn-ghost" style={{ marginLeft: 'auto' }} title="Delete video"><Trash2 size={14} /></button>

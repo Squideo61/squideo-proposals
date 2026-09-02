@@ -3438,6 +3438,8 @@ function describeEvent(e) {
     case 'storyboard_revision_assigned':  return `Storyboard revisions assigned${p.assignee ? ` to ${p.assignee}` : ''}`;
     case 'revision_submitted_to_client':  return `Video submitted to the client: ${p.video || 'video'}${p.version ? ` (v${p.version})` : ''}`;
     case 'storyboard_submitted_to_client': return `Storyboard submitted to the client: ${p.storyboard || 'storyboard'}${p.version ? ` (v${p.version})` : ''}`;
+    case 'revision_reopened_for_client':  return `Video review reopened for the client: ${p.video || 'video'}${p.emailed ? ' (reviewers emailed)' : ''}`;
+    case 'storyboard_reopened_for_client': return `Storyboard review reopened for the client: ${p.storyboard || 'storyboard'}${p.emailed ? ' (reviewers emailed)' : ''}`;
     case 'review_email_sent': return `Review email sent${p.item ? `: ${p.item}` : ''}${p.to?.length ? ` → ${p.to.join(', ')}` : ''}`;
     default:              return e.eventType;
   }
