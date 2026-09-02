@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, Check, ChevronDown, Plus, KanbanSquare, Eye, Mail, FileText, CheckSquare, Flame } from 'lucide-react';
+import { ArrowLeft, Archive, Check, ChevronDown, Plus, KanbanSquare, Eye, Mail, FileText, CheckSquare, Flame } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, formatRelativeTime, useIsMobile, dealDisplayName } from '../../utils.js';
@@ -16,6 +16,41 @@ export { PIPELINE_STAGES };
 const STAGE_BY_ID = Object.fromEntries(PIPELINE_STAGES.map(s => [s.id, s]));
 
 const OWNER_FILTER_STORAGE_KEY = 'squideo.pipeline.ownerFilter';
+const SHOW_OLDER_STORAGE_KEY = 'squideo.pipeline.showOlder';
+
+// Paid and Lost are terminal: nothing more happens there, but every deal we've
+// ever won or lost piles up in them forever, which is what buries the live end
+// of the pipeline. So a deal that's sat in one of those stages for more than a
+// month is treated as history and dropped out of the list — it's untouched in
+// the CRM (deal page, Finance, search, reporting all unchanged), just not
+// cluttering the board. Each stage can reveal its own older deals on demand.
+const CLEARED_STAGES = new Set(['paid', 'lost']);
+export const CLEAR_AFTER_DAYS = 30;
+
+// Splits a stage's deals into what still belongs on the board and what's aged
+// out. Falls back to createdAt so a legacy deal with no stage_changed_at ages
+// out too, rather than sticking at the top of Paid forever.
+export function splitOlderDeals(stageId, deals) {
+  if (!CLEARED_STAGES.has(stageId)) return { current: deals, older: [] };
+  const cutoff = Date.now() - CLEAR_AFTER_DAYS * 86400000;
+  const current = [];
+  const older = [];
+  for (const d of deals) {
+    const at = new Date(d.stageChangedAt || d.createdAt || 0).getTime();
+    (Number.isNaN(at) || at === 0 || at >= cutoff ? current : older).push(d);
+  }
+  return { current, older };
+}
+
+// Which stages the user has chosen to keep their older deals revealed in, as
+// { stageId: true }. Persisted so the choice survives navigation, like the
+// owner filter.
+function readShowOlder() {
+  try { return JSON.parse(localStorage.getItem(SHOW_OLDER_STORAGE_KEY) || '{}') || {}; } catch { return {}; }
+}
+function writeShowOlder(map) {
+  try { localStorage.setItem(SHOW_OLDER_STORAGE_KEY, JSON.stringify(map)); } catch {}
+}
 
 export function PipelineView({ onBack, onOpenDeal }) {
   const { state, actions, showMsg } = useStore();
@@ -79,6 +114,23 @@ export function PipelineView({ onBack, onOpenDeal }) {
     return out;
   }, [deals]);
 
+  // Which closed stages are currently showing their older-than-30-days deals.
+  const [showOlder, setShowOlder] = useState(readShowOlder);
+  const toggleOlder = (stageId) => setShowOlder((prev) => {
+    const next = { ...prev };
+    if (next[stageId]) delete next[stageId]; else next[stageId] = true;
+    writeShowOlder(next);
+    return next;
+  });
+
+  // How many finished deals are currently off the board, so the header count
+  // matches the rows and says where the rest went.
+  const clearedCount = useMemo(() => (
+    PIPELINE_STAGES.reduce((n, s) => (
+      showOlder[s.id] ? n : n + splitOlderDeals(s.id, grouped[s.id] || []).older.length
+    ), 0)
+  ), [grouped, showOlder]);
+
   const handleDrop = (deal, toStage) => {
     if (!deal || deal.stage === toStage) return;
     actions.moveDealStage(deal.id, toStage);
@@ -112,7 +164,15 @@ export function PipelineView({ onBack, onOpenDeal }) {
           >
             <Flame size={14} fill={hotOnly ? '#EA580C' : 'none'} /> Hot{hotCount > 0 ? ` · ${hotCount}` : ''}
           </button>
-          <span style={{ fontSize: 13, color: BRAND.muted }}>{deals.length} deals · all amounts ex-VAT (net)</span>
+          <span style={{ fontSize: 13, color: BRAND.muted }}>
+            {deals.length - clearedCount} deals
+            {clearedCount > 0 && (
+              <span title={`Deals that have been paid or lost for over ${CLEAR_AFTER_DAYS} days are cleared off the board. They're still in the CRM — open a stage's "Show older" link to see them.`}>
+                {' '}· {clearedCount} cleared
+              </span>
+            )}
+            {' '}· all amounts ex-VAT (net)
+          </span>
         </div>
         <button onClick={() => setCreating(true)} className="btn"><Plus size={16} /> New deal</button>
       </header>
@@ -139,6 +199,8 @@ export function PipelineView({ onBack, onOpenDeal }) {
                 onDrop={(deal) => handleDrop(deal, s.id)}
                 onOpenDeal={onOpenDeal}
                 taskAssignee={ownerFilter}
+                showOlder={!!showOlder[s.id]}
+                onToggleOlder={() => toggleOlder(s.id)}
               />
             </React.Fragment>
           );
@@ -235,12 +297,17 @@ function OwnerOption({ label, selected, onClick }) {
   );
 }
 
-function StageRow({ stage, deals, onDrop, onOpenDeal, taskAssignee }) {
+function StageRow({ stage, deals, onDrop, onOpenDeal, taskAssignee, showOlder, onToggleOlder }) {
   const [hover, setHover] = useState(false);
   const [collapsed, setCollapsed] = useState(stage.defaultCollapsed ?? false);
+  // In Paid/Lost, anything older than a month is cleared off the board unless
+  // this stage has been expanded to show it. Elsewhere `older` is always empty.
+  const { current, older } = useMemo(() => splitOlderDeals(stage.id, deals), [stage.id, deals]);
+  const shown = showOlder ? deals : current;
   // Column total mirrors the cards: prefer the proposal-derived (signed/proposed)
-  // value, falling back to a manual deal value.
-  const total = deals.reduce((s, d) => s + (Number(d.effectiveValue ?? d.value) || 0), 0);
+  // value, falling back to a manual deal value. It counts what's on screen, so
+  // the header always adds up to the rows beneath it.
+  const total = shown.reduce((s, d) => s + (Number(d.effectiveValue ?? d.value) || 0), 0);
   return (
     <div
       onDragOver={(e) => { e.preventDefault(); setHover(true); }}
@@ -284,23 +351,50 @@ function StageRow({ stage, deals, onDrop, onOpenDeal, taskAssignee }) {
           <span style={{ fontSize: 13, fontWeight: 700, color: stage.color, textTransform: 'uppercase', letterSpacing: 0.4 }}>
             {stage.label}
           </span>
-          <span style={{ fontSize: 12, color: BRAND.muted }}>· {deals.length}</span>
+          <span style={{ fontSize: 12, color: BRAND.muted }}>· {shown.length}</span>
           {total > 0 && (
             <span style={{ fontSize: 12, color: BRAND.muted, fontVariantNumeric: 'tabular-nums' }}>· {formatGBP(total)}</span>
+          )}
+          {older.length > 0 && !showOlder && (
+            <span style={{ fontSize: 11, color: BRAND.muted, fontStyle: 'italic' }}>
+              · {older.length} cleared
+            </span>
           )}
         </div>
         <span style={{ fontSize: 11, color: BRAND.muted }}>{collapsed ? 'Show' : 'Hide'}</span>
       </button>
       {!collapsed && (
-        deals.length === 0 ? (
-          <div style={{ padding: '12px 8px', color: BRAND.muted, fontSize: 12, fontStyle: 'italic' }}>
-            No deals
-          </div>
-        ) : (
-          <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 8, overflow: 'hidden' }}>
-            {deals.map(d => <DealRow key={d.id} deal={d} onOpen={() => onOpenDeal(d.id)} taskAssignee={taskAssignee} />)}
-          </div>
-        )
+        <>
+          {shown.length === 0 ? (
+            <div style={{ padding: '12px 8px', color: BRAND.muted, fontSize: 12, fontStyle: 'italic' }}>
+              {older.length > 0 ? `Nothing in the last ${CLEAR_AFTER_DAYS} days` : 'No deals'}
+            </div>
+          ) : (
+            <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 8, overflow: 'hidden' }}>
+              {shown.map(d => <DealRow key={d.id} deal={d} onOpen={() => onOpenDeal(d.id)} taskAssignee={taskAssignee} />)}
+            </div>
+          )}
+          {older.length > 0 && (
+            <button
+              type="button"
+              onClick={onToggleOlder}
+              aria-expanded={!!showOlder}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 8, padding: '4px 2px',
+                background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: 12, fontWeight: 600, color: BRAND.blue,
+              }}
+              title={showOlder
+                ? `Clear deals that have been ${stage.label.toLowerCase()} for over ${CLEAR_AFTER_DAYS} days off the board again`
+                : `These are still in the CRM — this just shows them on the board`}
+            >
+              <Archive size={13} />
+              {showOlder
+                ? `Hide ${older.length} older than ${CLEAR_AFTER_DAYS} days`
+                : `Show ${older.length} older than ${CLEAR_AFTER_DAYS} days`}
+            </button>
+          )}
+        </>
       )}
     </div>
   );
