@@ -12,6 +12,25 @@
       html, body { margin: 0; padding: 0; background: transparent; }
       body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
       #brief-start-root { padding: 4px; box-sizing: border-box; }
+
+      /*
+       * ?theme=dark — the two things the component's inline styles cannot set.
+       *
+       * A pseudo-element and a form-control accent are not properties of an
+       * element, so no amount of style={{}} reaches them. Left alone on a
+       * translucent input, the placeholder stays the browser's default dark grey
+       * on a near-navy field (unreadable) and the checkbox stays the OS blue
+       * against a cyan button. Both look like bugs rather than like a theme.
+       *
+       * `color-scheme` is the load-bearing one: it tells the browser this
+       * document is dark, which is what stops Chrome and Safari painting their
+       * own light backgrounds into autofilled inputs — the failure that turns a
+       * carefully translucent field solid yellow-white the moment somebody's
+       * browser fills their name in.
+       */
+      html[data-theme="dark"] { color-scheme: dark; }
+      html[data-theme="dark"] input::placeholder { color: #8FA9BA; opacity: 1; }
+      html[data-theme="dark"] input[type="checkbox"] { accent-color: #2BB8E6; }
     </style>
   </head>
   <body>

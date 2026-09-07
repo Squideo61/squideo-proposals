@@ -75,8 +75,26 @@ if (inIframe) {
 // ?variant=landing is the whole landing page without the site chrome, for the
 //                  Duda page that mirrors squideo.com/online-brief-builder.
 // Default stays compact — a page with its own selling copy wants only the card.
-const requested = new URLSearchParams(window.location.search).get('variant');
+const params = new URLSearchParams(window.location.search);
+const requested = params.get('variant');
 const variant = ['full', 'landing', 'card'].includes(requested) ? requested : 'compact';
+
+// ?theme=dark  the card goes translucent-on-navy instead of opaque white.
+//
+// For a host that has already painted a dark band behind the frame — the brief
+// band on squideo.com's homepage does exactly that, and an opaque white card
+// was the only thing in the section not sharing its background. Sophie's note,
+// 2026-09-07: "can the grey space around the form be transparent?".
+//
+// Opt-in, and the default is unchanged, because the same embed still lands on
+// white elsewhere: /online-brief-builder puts it on a paper band. Same shape as
+// the /reviews embed's ?theme, deliberately — one convention for "this is going
+// somewhere dark" across every embed the CRM serves.
+//
+// Also set on <html> so brief-start.html can reach the two things an inline
+// style cannot: ::placeholder, and the checkbox's accent-color.
+const theme = params.get('theme') === 'dark' ? 'dark' : 'light';
+document.documentElement.dataset.theme = theme;
 
 const container = document.getElementById('brief-start-root');
 // The landing variant's bands run edge to edge and paint their own backgrounds,
@@ -86,7 +104,9 @@ if (variant === 'landing') container.style.padding = '0';
 // The no-JS fallback in the HTML is real content a crawler can read; clear it
 // before mounting so it can't show through behind the form.
 container.innerHTML = '';
-createRoot(container).render(<BriefStart getAttribution={getAttribution} variant={variant} />);
+createRoot(container).render(
+  <BriefStart getAttribution={getAttribution} variant={variant} theme={theme} />,
+);
 
 // Auto-resize: post the rendered height to the embedding page so the iframe can
 // adjust. Reuses the quote form's `squideo-quote-form:height` message type so the

@@ -100,14 +100,18 @@ const STEPS = [
 //                       iframing into Duda. Mirrors
 //                       squideo.com/online-brief-builder so the two sites make
 //                       the same offer in the same words until Duda retires.
-export function BriefStart({ getAttribution, variant = 'compact' }) {
+export function BriefStart({ getAttribution, variant = 'compact', theme = 'light' }) {
   // 'card' is 'full' without the pitch column: the host has already made the
   // pitch and only wants the card. squideo-web's brief band renders the same
   // eyebrow, headline, intro and bullets as BriefPromo does, so embedding
   // 'full' beside it said everything twice, and 'compact' put a second,
   // longer version of the intro inside the card.
   const carded = variant === 'full' || variant === 'landing' || variant === 'card';
-  const form = <BriefStartForm getAttribution={getAttribution} full={carded} />;
+  // The landing variant paints its own navy band and puts the card on it, so it
+  // wants the LIGHT card whatever the host asked for — a transparent card on a
+  // band this file drew itself would be a hole in its own hero.
+  const cardTheme = variant === 'landing' ? 'light' : theme;
+  const form = <BriefStartForm getAttribution={getAttribution} full={carded} theme={cardTheme} />;
   if (variant === 'landing') return <BriefLanding>{form}</BriefLanding>;
   if (variant === 'full') return <BriefPromo>{form}</BriefPromo>;
   return form;
@@ -264,7 +268,13 @@ function Bullets({ tone }) {
   );
 }
 
-function BriefStartForm({ getAttribution, full = false }) {
+function BriefStartForm({ getAttribution, full = false, theme = 'light' }) {
+  const t = PALETTES[theme] ?? PALETTES.light;
+  const CARD = cardStyle(t, full);
+  const H2 = headingStyle(t);
+  const P = bodyStyle(t);
+  const INPUT = inputStyle(t);
+
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [consent, setConsent] = useState(false);
@@ -335,7 +345,7 @@ function BriefStartForm({ getAttribution, full = false }) {
   }
 
   return (
-    <form onSubmit={submit} style={full ? { ...CARD, boxShadow: '0 14px 40px rgba(15,42,61,.10)' } : CARD}>
+    <form onSubmit={submit} style={CARD}>
       {/* In the full variant the column beside this has already made the pitch,
           so repeating it here would just push the fields below the fold. */}
       <h2 style={H2}>{full ? 'Start your brief' : 'Build your video brief'}</h2>
@@ -379,7 +389,7 @@ function BriefStartForm({ getAttribution, full = false }) {
       <label style={{
         display: 'flex', gap: 9, alignItems: 'flex-start', maxWidth: 380,
         margin: '14px auto 0', textAlign: 'left', fontSize: 12.5,
-        color: BRAND.muted, lineHeight: 1.5, cursor: 'pointer',
+        color: t.fine, lineHeight: 1.5, cursor: 'pointer',
       }}>
         <input
           type="checkbox" checked={consent}
@@ -392,7 +402,7 @@ function BriefStartForm({ getAttribution, full = false }) {
       {/* The full variant already says this as a bullet in the column beside
           the card, and saying it twice in one eyeful reads as protesting. */}
       {!full && (
-        <div style={{ marginTop: 12, fontSize: 12, color: BRAND.muted }}>
+        <div style={{ marginTop: 12, fontSize: 12, color: t.fine }}>
           Free. No card. No password to remember.
         </div>
       )}
@@ -404,31 +414,87 @@ function BriefStartForm({ getAttribution, full = false }) {
 // src/styles.css, which only main.jsx and portal.jsx import. /course learned
 // this the hard way — its signup button renders unstyled because it reaches for
 // a class its own bundle never loads.
-const CARD = {
-  background: '#fff',
-  border: `1px solid ${BRAND.border}`,
+/*
+ * TWO PALETTES, BECAUSE THE CARD DOES NOT ALWAYS LAND ON WHITE.
+ *
+ * Sophie, 2026-09-07: on the homepage the card reads as "a larger grey box
+ * around the actual form", and she wants the space around it transparent, "like
+ * the other forms". She is right, and the reason is that this card was drawn for
+ * a white page. squideo-web's homepage puts it in a NAVY band, where an opaque
+ * white panel is the only thing on the section not sharing its background —
+ * every other form on that site (components/blocks/LeadForm.tsx) sits on the
+ * navy as a translucent panel with pale text.
+ *
+ * A THEME RATHER THAN A REDESIGN. The same card still has to work on white:
+ * /online-brief-builder embeds it on a paper band and the `landing` variant
+ * paints its own hero around it. So `light` stays exactly as it was, byte for
+ * byte, and `dark` is opt-in per embed — the same trick /reviews uses with
+ * ?theme, for the same reason.
+ *
+ * WHY NOT FULLY TRANSPARENT. "Transparent" is the ask and a bare form floating
+ * on a band is not the answer to it: the fields would have nothing to belong to
+ * and the eye would lose where the offer starts. 6% white is transparent in the
+ * sense that matters — the navy reads straight through it — while still drawing
+ * an edge. It is the same value LeadForm's panel uses on the guide pages, which
+ * is what "like the other forms" resolves to.
+ */
+const PALETTES = {
+  light: {
+    cardBg: '#fff',
+    cardBorder: BRAND.border,
+    shadow: '0 14px 40px rgba(15,42,61,.10)',
+    heading: BRAND.ink,
+    body: BRAND.muted,
+    fine: BRAND.muted,
+    inputBg: '#fff',
+    inputBorder: BRAND.border,
+    inputText: BRAND.ink,
+  },
+  dark: {
+    cardBg: 'rgba(255,255,255,.06)',
+    cardBorder: 'rgba(255,255,255,.16)',
+    // No drop shadow: a shadow tuned for a white card on white reads as a smudge
+    // on navy, and the panel is already separated from the band by its edge.
+    shadow: 'none',
+    heading: '#fff',
+    // Not pure white for body copy on saturated navy — it vibrates and is
+    // genuinely harder to read. Same call the band around it makes.
+    body: '#DCEEF7',
+    fine: '#8FA9BA',
+    inputBg: 'rgba(255,255,255,.10)',
+    inputBorder: 'rgba(255,255,255,.22)',
+    inputText: '#fff',
+  },
+};
+
+const cardStyle = (t, full) => ({
+  background: t.cardBg,
+  border: `1px solid ${t.cardBorder}`,
   borderRadius: 14,
   padding: '26px 22px',
   textAlign: 'center',
   maxWidth: 520,
   margin: '0 auto',
   boxSizing: 'border-box',
-};
+  ...(full && t.shadow !== 'none' ? { boxShadow: t.shadow } : {}),
+});
 
-const H2 = { margin: '0 0 8px', fontSize: 21, fontWeight: 800, color: BRAND.ink };
+const headingStyle = (t) => ({
+  margin: '0 0 8px', fontSize: 21, fontWeight: 800, color: t.heading,
+});
 
-const P = {
+const bodyStyle = (t) => ({
   margin: '0 auto 18px', maxWidth: 440, fontSize: 14,
-  lineHeight: 1.6, color: BRAND.muted,
-};
+  lineHeight: 1.6, color: t.body,
+});
 
 // 16px: below it, iOS Safari zooms the page on focus and does not zoom back out
 // — worse inside an iframe, where the parent page zooms with it.
-const INPUT = {
+const inputStyle = (t) => ({
   width: '100%', boxSizing: 'border-box', padding: '12px 13px',
-  border: `1px solid ${BRAND.border}`, borderRadius: 9, fontSize: 16,
-  fontFamily: 'inherit', color: BRAND.ink, background: '#fff', lineHeight: 1.4,
-};
+  border: `1px solid ${t.inputBorder}`, borderRadius: 9, fontSize: 16,
+  fontFamily: 'inherit', color: t.inputText, background: t.inputBg, lineHeight: 1.4,
+});
 
 const BTN = {
   display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7,
