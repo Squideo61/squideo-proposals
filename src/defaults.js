@@ -180,6 +180,53 @@ export function makeContentCreditTemplate(base) {
   return tpl;
 }
 
+// Blueprint for the "Monthly Plan" proposal template — a client committing to
+// a monthly spend from the start, with no project purchase up front. The thing
+// they sign is the commitment itself, so there is no base price, no manual
+// discount and no Partner Programme add-on: the plan IS the proposal.
+//
+// Front-loading is set per proposal rather than here, because it is a decision
+// about a particular client rather than a standing offer. See
+// api/_lib/monthlyPlan.js for what it does and why it forces a minimum term.
+export const MONTHLY_PLAN_TEMPLATE_NAME = 'Monthly Plan';
+export function makeMonthlyPlanTemplate(base) {
+  const tpl = JSON.parse(JSON.stringify(base || DEFAULT_PROPOSAL));
+  delete tpl.clientName;
+  delete tpl.contactBusinessName;
+  delete tpl.clientLogo;
+  delete tpl.projectVision;
+  delete tpl._number;
+  delete tpl._views;
+  delete tpl._createdAt;
+  tpl.name = MONTHLY_PLAN_TEMPLATE_NAME;
+  tpl.proposalTitle = tpl.proposalTitle || 'Monthly Content Plan';
+  // Left blank so the builder's placeholder guides what to write, rather than
+  // inheriting the standard proposal's single-video requirement — which is the
+  // one thing this proposal type is not.
+  tpl.requirement = '';
+  tpl.requirementSummary = '';
+  // No project to buy, and nothing to discount: a cheaper plan is a lower
+  // monthly rate, not a discount line on a price the client never sees.
+  tpl.basePrice = 0;
+  tpl.discount = null;
+  tpl.partnerProgramme = {
+    ...(tpl.partnerProgramme || {}),
+    enabled: true,
+    mode: 'monthly',
+    creditOnly: false,
+    minutesPerMonth: 1,
+    // A starting point to change per client, not a policy. Deliberately well
+    // under the standard per-minute rate: the commitment is what buys the rate.
+    monthlyRatePerMin: 300,
+    frontLoadMinutes: 0,
+    minTermMonths: 0,
+    description: 'A monthly plan turns video from a series of one-off purchases into something that just happens.\n- One agreed monthly figure, budgeted once — no new quote, approval and purchase order every time\n- Production capacity reserved for you each month, so work starts when you need it rather than when a slot frees up\n- The same team and the same style across everything you make\n\nAnything you don\u2019t use rolls forward, so a quiet month is never wasted.',
+  };
+  // No 50/50: half of a recurring charge is not a deposit.
+  tpl.paymentOptions = ['full', 'po'];
+  return tpl;
+}
+
 export const NEXT_STEPS = [
   'Accept this quote to guarantee a production slot in our creative schedule.',
   "We'll invoice your initial payment or arrange supplier setup with you for Purchase Orders.",

@@ -8,6 +8,7 @@ import { advanceStage, dealIdForProposal, xeroContactIdForProposal } from '../_l
 import { computeProposalCheckout } from '../_lib/proposalPricing.js';
 import { completeVoiceoverUpgrade } from '../_lib/voiceover.js';
 import { completeVideoCreditTopup } from '../_lib/videoCredit.js';
+import { ensureMonthlyPlanTerms } from '../_lib/partnerCredits.js';
 import { escapeHtml } from '../_lib/crm/shared.js';
 import {
   lineItemsForProject,
@@ -54,6 +55,10 @@ async function upsertPartnerSubscription({ subscription, proposalId, statusOverr
     const clientKey = deriveClientKey(billing, sig.email, pid);
     const clientName = deriveClientName(billing, sig.email, pid);
     const creditsPerMonth = Number(sigData.partnerCredits) || 1;
+    // Monthly Plan terms as signed. Read off the signature rather than the
+    // proposal because a proposal can be edited after signing and an agreement
+    // cannot — the whole reason ClientView writes them into amountBreakdown.
+    const planTerms = sigData.amountBreakdown?.monthlyPlan || null;
     const status = statusOverride || subscription.status || 'active';
     const currentPeriodEnd = subscription.current_period_end
       ? new Date(subscription.current_period_end * 1000).toISOString()
@@ -79,6 +84,20 @@ async function upsertPartnerSubscription({ subscription, proposalId, statusOverr
         canceled_at        = COALESCE(EXCLUDED.canceled_at, partner_subscriptions.canceled_at),
         updated_at         = NOW()
     `;
+
+    // A separate statement, like the company link: a workspace that has not run
+    // 20260908_monthly_plan.sql yet still gets the subscription itself, which
+    // matters far more than recording the terms alongside it.
+    if (planTerms) {
+      await ensureMonthlyPlanTerms()
+        .then(() => sql`
+          UPDATE partner_subscriptions
+             SET front_load_minutes = ${Number(planTerms.frontLoadMinutes) || 0},
+                 min_term_months    = ${Number(planTerms.minTermMonths) || 0}
+           WHERE stripe_subscription_id = ${subscription.id}
+        `)
+        .catch((err) => console.warn('[stripe] monthly plan terms not recorded', err.message));
+    }
   } catch (err) {
     console.error('[stripe] upsertPartnerSubscription failed', err);
   }
@@ -785,6 +804,26 @@ export default async function handler(req, res) {
         const vatRate = Number(partner.vatRate) || 0;
         const projectGross = partner.projectExVat * (1 + vatRate);
         const partnerMonthlyGross = partner.partnerExVat * (1 + vatRate);
+        const isMonthlyPlan = !!partner.monthlyPlan;
+
+        // A Monthly Plan has no project — basePrice is £0 — so this line is
+        // whatever extras they added alongside it, and usually nothing at all.
+        // Stripe will not take a zero-amount line, and a "£0.00 project" row on
+        // a receipt reads as a mistake even where it would.
+        const projectLine = Math.round(projectGross * 100) > 0 ? [{
+          price_data: {
+            currency: 'gbp',
+            product_data: {
+              // Credit-only quotes aren't discounted, so don't label them so.
+              name: partner.creditOnly
+                ? 'Squideo Content Credit'
+                  + (partner.baseCreditMinutes ? ` (${partner.baseCreditMinutes} min)` : '')
+                : (isMonthlyPlan ? 'Optional extras' : 'Video production - discounted project'),
+            },
+            unit_amount: Math.round(projectGross * 100),
+          },
+          quantity: 1,
+        }] : [];
 
         const session = await stripe.checkout.sessions.create({
           mode: 'payment',
@@ -792,27 +831,16 @@ export default async function handler(req, res) {
           customer_creation: 'always',
           payment_intent_data: { setup_future_usage: 'off_session' },
           line_items: [
-            {
-              price_data: {
-                currency: 'gbp',
-                product_data: {
-                  // Credit-only quotes aren't discounted, so don't label them so.
-                  name: partner.creditOnly
-                    ? 'Squideo Content Credit'
-                      + (partner.baseCreditMinutes ? ` (${partner.baseCreditMinutes} min)` : '')
-                    : 'Video production - discounted project',
-                },
-                unit_amount: Math.round(projectGross * 100),
-              },
-              quantity: 1,
-            },
+            ...projectLine,
             {
               price_data: {
                 currency: 'gbp',
                 product_data: {
                   name: (partner.creditOnly
                     ? 'Squideo Content Credit - additional minutes'
-                    : 'Squideo Partner Programme - first month')
+                    : (isMonthlyPlan
+                        ? 'Squideo Monthly Plan - first month'
+                        : 'Squideo Partner Programme - first month'))
                     + (partner.partnerCredits ? ` (${partner.partnerCredits} min credit)` : ''),
                 },
                 unit_amount: Math.round(partnerMonthlyGross * 100),

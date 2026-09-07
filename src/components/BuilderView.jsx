@@ -11,6 +11,7 @@ import { extraHasVariants, extraUnitPrice, extraNetUnitPrice, extrasDiscountRate
 import { InclusionsBankManager } from './InclusionsBankManager.jsx';
 import { ClientLinkPanel } from './crm/ClientLinkPanel.jsx';
 import { aiSampleArtists, proposalSampleArtistId } from '../lib/proposalSampleVoice.js';
+import { isMonthlyPlan, monthlyPlanFor, monthlyPlanProblems } from '../../api/_lib/monthlyPlan.js';
 
 // Fetch a Vimeo video's title + thumbnail via our /api/vimeo-oembed proxy
 // (the app CSP blocks calling vimeo.com from the browser). Returns
@@ -488,6 +489,13 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
   const isCreditOnly = !!(data.partnerProgramme?.enabled
     && data.partnerProgramme?.mode === 'oneoff'
     && data.partnerProgramme?.creditOnly);
+  // Monthly Plan: the client commits to a monthly spend from the start, with
+  // no project up front. Like Content Credit it is a different SHAPE of
+  // proposal rather than an add-on, so it owns its config in Pricing and the
+  // Partner Programme section disappears.
+  const isMonthlyType = isMonthlyPlan(data);
+  const monthlyPlan = isMonthlyType ? monthlyPlanFor(data) : null;
+  const monthlyProblems = isMonthlyType ? monthlyPlanProblems(data) : [];
   const creditRatePerMin = Number(data.partnerProgramme?.standardRatePerMin) || Number(data.basePrice) || 0;
   const minutesToPrice = (n) => Math.round((Number(n) || 0) * creditRatePerMin * 100) / 100;
   // Minutes of content the proposal covers — previews what length-scaled extras
@@ -516,7 +524,13 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
       (data.videoOptions || []).length < 2 && !data.requirement?.trim() && 'Requirement',
     ].filter(Boolean),
     pricing: [
-      !basePriceOk && (data.partnerProgramme?.enabled ? 'Base price must be £0 or more' : 'Base price must be greater than 0'),
+      // A Monthly Plan has no base price by definition, so that check would
+      // only ever fire spuriously. Its own problems replace it — every one of
+      // them is a way to put a figure in front of a client that the business
+      // cannot honour.
+      !isMonthlyType && !basePriceOk
+        && (data.partnerProgramme?.enabled ? 'Base price must be £0 or more' : 'Base price must be greater than 0'),
+      ...monthlyProblems,
     ].filter(Boolean),
   };
   const totalIssues = Object.values(issues).flat().length;
@@ -688,8 +702,10 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
           {[
             { key: 'standard', label: 'Standard', hint: 'Quote a project, with the Partner Programme as an optional add-on.' },
             { key: 'credit', label: 'Content Credit', hint: 'Quote an amount of minutes; the client can add more at a discount.' },
+            { key: 'monthly', label: 'Monthly Plan', hint: 'No project up front — the client commits to a monthly spend from the start.' },
           ].map((opt) => {
-            const active = (isCreditOnly ? 'credit' : 'standard') === opt.key;
+            const current = isCreditOnly ? 'credit' : (isMonthlyType ? 'monthly' : 'standard');
+            const active = current === opt.key;
             return (
               <button
                 key={opt.key}
@@ -697,11 +713,30 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
                 onClick={() => update({
                   partnerProgramme: {
                     ...data.partnerProgramme,
-                    enabled: opt.key === 'credit' ? true : data.partnerProgramme?.enabled,
+                    enabled: opt.key === 'standard' ? data.partnerProgramme?.enabled : true,
                     ...(opt.key === 'credit'
                       ? { mode: 'oneoff', creditOnly: true, quotedMinutes: data.partnerProgramme?.quotedMinutes ?? 1 }
                       : { creditOnly: false }),
+                    ...(opt.key === 'monthly'
+                      ? {
+                          mode: 'monthly',
+                          minutesPerMonth: data.partnerProgramme?.minutesPerMonth ?? 1,
+                          // Seeded from the standard rate so the plan prices
+                          // immediately rather than opening at £0 a month.
+                          monthlyRatePerMin: data.partnerProgramme?.monthlyRatePerMin
+                            ?? data.partnerProgramme?.standardRatePerMin ?? 0,
+                        }
+                      : {}),
+                    // Leaving Monthly Plan puts the programme back to the
+                    // recurring add-on it was, rather than stranding a mode no
+                    // other proposal type understands.
+                    ...(opt.key !== 'monthly' && isMonthlyType ? { mode: opt.key === 'credit' ? 'oneoff' : 'subscription' } : {}),
                   },
+                  // There is no project on a Monthly Plan. Zeroing it here means
+                  // the pipeline value comes from the commitment (see
+                  // quotedProjectExVat) rather than from a stale project price
+                  // the client is never shown.
+                  ...(opt.key === 'monthly' ? { basePrice: 0, discount: null } : {}),
                   // Content Credit shows a single requirement box, so collapse the
                   // two fields into `requirement` using the same precedence the
                   // client view applies — otherwise summary text would keep showing
@@ -1147,7 +1182,75 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
         {/* Minutes of content. On a Content Credit proposal this also prices the
             quote (minutes × rate); on a standard proposal it's just the figure
             that per-minute extras scale off. */}
-        {(data.videoOptions || []).length === 0 && (
+        {isMonthlyType && (
+          <div style={{ border: '1px solid #BBF7D0', background: '#F0FDF4', borderRadius: 10, padding: 14, marginBottom: 14 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.6, textTransform: 'uppercase', color: '#15803D', marginBottom: 4 }}>
+              Monthly plan
+            </div>
+            <p style={{ fontSize: 12, color: '#166534', margin: '0 0 12px', lineHeight: 1.5 }}>
+              What the client commits to from day one. There is no project price on this proposal type — this is the quote.
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12 }}>
+              <Field label="Minutes per month">
+                <PriceInput
+                  className="input" min="0.5" step="0.5"
+                  value={data.partnerProgramme?.minutesPerMonth ?? 1}
+                  onChange={(n) => update({ partnerProgramme: { ...data.partnerProgramme, minutesPerMonth: n } })}
+                />
+              </Field>
+              <Field label="Rate per minute (£/min)">
+                <PriceInput
+                  className="input" min="0" step="1"
+                  value={data.partnerProgramme?.monthlyRatePerMin ?? data.partnerProgramme?.standardRatePerMin ?? 0}
+                  onChange={(n) => update({ partnerProgramme: { ...data.partnerProgramme, monthlyRatePerMin: n } })}
+                />
+              </Field>
+            </div>
+            <div style={{ fontSize: 13, color: '#166534', margin: '2px 0 14px' }}>
+              The client sees{' '}
+              <strong style={{ color: BRAND.ink }}>
+                {formatGBP(monthlyPlan.monthlyExVat)}{(Number(data.vatRate) || 0) > 0 ? ' + VAT' : ''} per month
+              </strong>
+              {monthlyPlan.hasTerm && <> · {formatGBP(monthlyPlan.commitmentExVat)} over {monthlyPlan.minTermMonths} months</>}
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12 }}>
+              <Field label="Produce in advance (minutes)">
+                <PriceInput
+                  className="input" min="0" step="0.5"
+                  value={data.partnerProgramme?.frontLoadMinutes ?? 0}
+                  onChange={(n) => update({ partnerProgramme: { ...data.partnerProgramme, frontLoadMinutes: n } })}
+                />
+                <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 4 }}>
+                  How far ahead we will produce before their payments have covered it. Shown to the client as a benefit.
+                  Leave at 0 for none.
+                </div>
+              </Field>
+              <Field label="Minimum term (months)">
+                <PriceInput
+                  className="input" min="0" step="1"
+                  value={data.partnerProgramme?.minTermMonths ?? 0}
+                  onChange={(n) => update({ partnerProgramme: { ...data.partnerProgramme, minTermMonths: n } })}
+                />
+                <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 4 }}>
+                  {monthlyPlan.hasFrontLoad
+                    ? `Required while producing in advance — the advance takes ${monthlyPlan.payOffMonths} ${monthlyPlan.payOffMonths === 1 ? 'month' : 'months'} to pay off.`
+                    : '0 means cancel any time, which is the right default when nothing is produced in advance.'}
+                </div>
+              </Field>
+            </div>
+
+            {monthlyProblems.length > 0 && (
+              <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 12px', marginTop: 4 }}>
+                {monthlyProblems.map((p) => (
+                  <div key={p} style={{ fontSize: 12.5, color: '#991B1B', lineHeight: 1.55 }}>{p}</div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {(data.videoOptions || []).length === 0 && !isMonthlyType && (
           <Field label={isCreditOnly ? 'Minutes of content credit quoted' : 'Minutes of content this proposal covers'}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <PriceInput
@@ -1172,6 +1275,7 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
           </Field>
         )}
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12 }}>
+          {!isMonthlyType && (
           <Field label={isCreditOnly ? 'Project base price (ex VAT) — override' : 'Project base price (ex VAT)'} error={!basePriceOk}>
             <PriceInput className="input" value={data.basePrice} onChange={(n) => update({ basePrice: n })} />
             {data.partnerProgramme?.enabled && Number(data.basePrice) === 0 && (
@@ -1180,18 +1284,24 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
               </div>
             )}
           </Field>
+          )}
           <Field label="VAT rate (%)">
             <PriceInput step="1" className="input" value={Math.round(data.vatRate * 100)} onChange={(n) => update({ vatRate: n / 100 })} />
           </Field>
         </div>
 
-        {/* Simple manual discount on the base price (standard flow only). */}
+        {/* Simple manual discount on the base price (standard flow only) — a
+            Monthly Plan has no base price to discount, and discounting the
+            monthly rate is done by setting a lower rate. */}
+        {!isMonthlyType && (
         <DiscountEditor
           basePrice={data.basePrice}
           discount={data.discount}
           onChange={(discount) => update({ discount })}
           isMobile={isMobile}
         />
+        )}
+        {!isMonthlyType && (
         <Field label="Standard rate per minute (£/min)">
           <PriceInput
             min="0" step="1"
@@ -1210,6 +1320,7 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
               : 'The headline per-minute rate used in the Partner Programme — independent of the project base price above.'}
           </div>
         </Field>
+        )}
 
         {/* Content Credit proposals own their credit config here — there is no
             Partner Programme section on this proposal type. */}
@@ -1576,7 +1687,7 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
       {/* ── Partner Programme ──
           Absent on Content Credit proposals: there the credit config lives in
           Pricing and the proposal isn't a project + partner add-on at all. */}
-      {!isCreditOnly && (
+      {!isCreditOnly && !isMonthlyType && (
       <Section
         title="Partner Programme"
         color="#b45309"

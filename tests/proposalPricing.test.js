@@ -445,3 +445,102 @@ describe('freeSubtitlesValue', () => {
     expect(formatFreeSubtitlesValue({ optionalExtras: [{ id: 'subtitles', price: 99.5 }] }, 1)).toBe('99.50');
   });
 });
+
+// ── Monthly Plan ────────────────────────────────────────────────────────────
+// The client commits to a monthly spend from the start and there is no project
+// to buy. Signing IS the opt-in, and the commitment is fixed by the proposal,
+// so the checkout must take both from the proposal and ignore what the
+// signature claims about either.
+describe('computeProposalCheckout — Monthly Plan', () => {
+  const monthlyProposal = {
+    basePrice: 0,
+    vatRate: 0.2,
+    videoOptions: [],
+    optionalExtras: [{ id: 'voiceover', price: 125 }],
+    partnerProgramme: {
+      enabled: true,
+      mode: 'monthly',
+      minutesPerMonth: 1,
+      monthlyRatePerMin: 300,
+    },
+  };
+
+  it('charges the first month and nothing else', () => {
+    const out = computeProposalCheckout(monthlyProposal, { paymentOption: 'full' });
+    expect(out.amountGross).toBe(360);          // 300 + VAT
+    expect(out.partnerExVat).toBe(300);
+    expect(out.projectExVat).toBe(0);
+  });
+
+  it('charges it even when the signature says the client opted out', () => {
+    // There is nothing to opt out OF: the monthly plan is the whole proposal.
+    const out = computeProposalCheckout(monthlyProposal, { partnerSelected: false });
+    expect(out.partnerSelected).toBe(true);
+    expect(out.amountGross).toBe(360);
+  });
+
+  it('ignores a signature that understates the commitment', () => {
+    const out = computeProposalCheckout(monthlyProposal, { partnerSelected: true, partnerCredits: 0.1 });
+    expect(out.partnerCredits).toBe(1);
+    expect(out.amountGross).toBe(360);
+  });
+
+  it('refuses to halve a recurring charge', () => {
+    // Half of a monthly payment is not a deposit — it is a wrong first payment
+    // with nothing later to reconcile it against.
+    const out = computeProposalCheckout(monthlyProposal, { paymentOption: '5050' });
+    expect(out.isDeposit).toBe(false);
+    expect(out.amountGross).toBe(360);
+  });
+
+  it('applies no tier discount, because the stated rate is the deal', () => {
+    const laddered = {
+      ...monthlyProposal,
+      partnerProgramme: {
+        ...monthlyProposal.partnerProgramme,
+        minutesPerMonth: 2,
+        discountRate: 0.5, extraDiscountPerCredit: 0.1, maxDiscount: 0.9,
+      },
+    };
+    expect(computeProposalCheckout(laddered, {}).partnerExVat).toBe(600);
+  });
+
+  it('adds a selected extra on top of the first month, once', () => {
+    const out = computeProposalCheckout(monthlyProposal, {
+      selectedExtras: [{ id: 'voiceover' }],
+    });
+    expect(out.projectExVat).toBe(125);
+    expect(out.amountGross).toBe(510);          // (300 + 125) + VAT
+  });
+
+  it('carries the agreed terms through for whatever creates the subscription', () => {
+    const out = computeProposalCheckout({
+      ...monthlyProposal,
+      partnerProgramme: { ...monthlyProposal.partnerProgramme, frontLoadMinutes: 6, minTermMonths: 12 },
+    }, {});
+    expect(out.monthlyPlan).toMatchObject({
+      minutesPerMonth: 1, monthlyExVat: 300, frontLoadMinutes: 6, minTermMonths: 12,
+    });
+  });
+
+  it('leaves monthlyPlan null on every other proposal type', () => {
+    expect(computeProposalCheckout(baseProposal, {}).monthlyPlan).toBe(null);
+  });
+});
+
+describe('quotedProjectExVat — Monthly Plan', () => {
+  const pp = (extra) => ({
+    basePrice: 0,
+    partnerProgramme: { mode: 'monthly', minutesPerMonth: 1, monthlyRatePerMin: 300, ...extra },
+  });
+
+  it('is the committed value when there is a minimum term', () => {
+    expect(quotedProjectExVat(pp({ minTermMonths: 12 }))).toBe(3600);
+  });
+
+  it('annualises a cancel-any-time plan rather than booking it at nothing', () => {
+    // basePrice is £0 on this proposal type, so reading it raw would put a live
+    // recurring client on the pipeline worth nothing at all.
+    expect(quotedProjectExVat(pp({}))).toBe(3600);
+  });
+});

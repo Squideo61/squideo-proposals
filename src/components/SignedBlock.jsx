@@ -92,18 +92,30 @@ export function SignedBlock({ signed, payment, paymentChoice, vatRate, onPayNow,
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span>{signed.amountBreakdown.creditOnly
                   ? 'Extra content credit'
-                  : (signed.amountBreakdown.oneoff ? 'Content credit (one-off)' : 'First month Partner Programme')}</span>
+                  : (signed.amountBreakdown.oneoff
+                      ? 'Content credit (one-off)'
+                      : (signed.amountBreakdown.monthly ? 'First month' : 'First month Partner Programme'))}</span>
                 <span><strong>{formatGBP(signed.amountBreakdown.partnerExVat)}</strong>{showVat && ' + VAT'}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, paddingTop: 6, borderTop: '1px solid #A5D6A7', fontWeight: 700 }}>
                 <span>Total committed{signed.amountBreakdown.oneoff ? '' : ' today'}</span>
                 <span>{formatGBP(signed.amountBreakdown.projectExVat + signed.amountBreakdown.partnerExVat)}{showVat && ' + VAT'}</span>
               </div>
-              {!signed.amountBreakdown.oneoff && (
-                <div style={{ fontSize: 12, color: '#15803D', marginTop: 6 }}>
-                  Then {formatGBP(signed.amountBreakdown.partnerExVat)}{showVat && ' + VAT'} / month - cancel any time.
-                </div>
-              )}
+              {!signed.amountBreakdown.oneoff && (() => {
+                // "Cancel any time" is true of the Partner Programme and of a
+                // Monthly Plan with no minimum term. Saying it on a plan that
+                // HAS one — which is the case whenever we have produced content
+                // in advance — would misstate the thing they just signed.
+                const term = Number(signed.amountBreakdown.monthlyPlan?.minTermMonths) || 0;
+                const monthly = formatGBP(signed.amountBreakdown.partnerExVat);
+                return (
+                  <div style={{ fontSize: 12, color: '#15803D', marginTop: 6 }}>
+                    {term > 0
+                      ? <>Then {monthly}{showVat && ' + VAT'} / month for a minimum term of {term} months.</>
+                      : <>Then {monthly}{showVat && ' + VAT'} / month - cancel any time.</>}
+                  </div>
+                );
+              })()}
               {signed.amountBreakdown.oneoff && (() => {
                 // Credit-only: the quoted minutes are content credit too, so the
                 // banked total is base + added.

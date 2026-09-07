@@ -3,7 +3,10 @@ import { FileText, Pencil, Plus, Trash2, Sparkles } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, makeId } from '../../utils.js';
-import { makeContentCreditTemplate, CONTENT_CREDIT_TEMPLATE_NAME } from '../../defaults.js';
+import {
+  makeContentCreditTemplate, CONTENT_CREDIT_TEMPLATE_NAME,
+  makeMonthlyPlanTemplate, MONTHLY_PLAN_TEMPLATE_NAME,
+} from '../../defaults.js';
 
 // Admin → Proposals. One place to manage what new proposals are built from:
 //   • the workspace Default proposal (the base every new proposal clones), and
@@ -20,6 +23,7 @@ export function DefaultProposalTab({ onEditDefault, onCreateTemplate, onEditTemp
     .map(([id, t]) => ({ id, ...t }))
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   const hasContentCredit = templates.some(t => (t.name || '') === CONTENT_CREDIT_TEMPLATE_NAME);
+  const hasMonthlyPlan = templates.some(t => (t.name || '') === MONTHLY_PLAN_TEMPLATE_NAME);
 
   const gbp = (n) => '£' + (Number(n) || 0).toLocaleString('en-GB', { maximumFractionDigits: 0 });
   const summary = [
@@ -36,6 +40,13 @@ export function DefaultProposalTab({ onEditDefault, onCreateTemplate, onEditTemp
     tpl.createdAt = Date.now();
     actions.saveTemplate(makeId(), tpl);
     showMsg('Added template: ' + CONTENT_CREDIT_TEMPLATE_NAME);
+  };
+
+  const seedMonthlyPlan = () => {
+    const tpl = makeMonthlyPlanTemplate(state.defaultProposal);
+    tpl.createdAt = Date.now();
+    actions.saveTemplate(makeId(), tpl);
+    showMsg('Added template: ' + MONTHLY_PLAN_TEMPLATE_NAME);
   };
 
   const removeTemplate = (id, name) => {
@@ -111,6 +122,22 @@ export function DefaultProposalTab({ onEditDefault, onCreateTemplate, onEditTemp
               </div>
             </div>
             <button onClick={seedContentCredit} className="btn"><Plus size={14} /> Add this template</button>
+          </div>
+        )}
+
+        {!hasMonthlyPlan && (
+          <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 10, padding: '14px 16px', marginBottom: 14, display: 'flex', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+            <Sparkles size={18} color="#15803D" style={{ flexShrink: 0, marginTop: 2 }} />
+            <div style={{ flex: 1, minWidth: 200 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: '#166534', marginBottom: 2 }}>Monthly Plan template</div>
+              <div style={{ fontSize: 13, color: '#166534', lineHeight: 1.5 }}>
+                No project up front — the client commits to a monthly spend from
+                day one (for example £300 + VAT a month). You can also agree to
+                produce a few minutes in advance and let their payments cover it.
+                Built from your current default.
+              </div>
+            </div>
+            <button onClick={seedMonthlyPlan} className="btn"><Plus size={14} /> Add this template</button>
           </div>
         )}
 

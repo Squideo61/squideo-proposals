@@ -1,6 +1,21 @@
 import sql from './db.js';
 import { reservedMinutesFor, reservedMinutesByPool } from './videoCreditAllocations.js';
 
+// Runtime self-heal for db/migrations/20260908_monthly_plan.sql. Separate from
+// the company link below so a failure in one cannot take the other with it.
+// Never rethrows to its caller past the first attempt: these columns are
+// recorded FOR a subscription, and a workspace that has not run the migration
+// yet must still be able to take the subscription itself.
+let monthlyPlanTermsEnsured = null;
+export function ensureMonthlyPlanTerms() {
+  if (monthlyPlanTermsEnsured) return monthlyPlanTermsEnsured;
+  monthlyPlanTermsEnsured = (async () => {
+    await sql`ALTER TABLE partner_subscriptions ADD COLUMN IF NOT EXISTS front_load_minutes NUMERIC`;
+    await sql`ALTER TABLE partner_subscriptions ADD COLUMN IF NOT EXISTS min_term_months INTEGER`;
+  })().catch((err) => { monthlyPlanTermsEnsured = null; throw err; });
+  return monthlyPlanTermsEnsured;
+}
+
 // Runtime self-heal for db/migrations/20260730_credit_company_link.sql.
 // Module-cached; resets on failure so a later call retries.
 let creditCompanyLinkEnsured = null;

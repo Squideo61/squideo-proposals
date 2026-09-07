@@ -6,6 +6,8 @@
 // client saw — while never trusting any client-supplied amount/total. Used by
 // the Stripe checkout route to reject tampered (under-payment) amounts.
 
+import { isMonthlyPlan, monthlyPlanFor } from './monthlyPlan.js';
+
 const VARIANT_ELIGIBLE_IDS = new Set(['translatedsubs', 'fulltranslate']);
 
 // Mirror of extraHasVariants in src/defaults.js.
@@ -167,6 +169,14 @@ const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 // deal, in its value, and everywhere the pipeline totals those up.
 export function quotedProjectExVat(proposalData) {
   if (!proposalData) return null;
+  // A Monthly Plan quotes no project at all, so basePrice is £0 and reading it
+  // raw would put a live recurring client on the pipeline at nothing. What it
+  // is worth is what they have committed to: the minimum term where there is
+  // one, and a year otherwise — the usual way recurring revenue is booked.
+  if (isMonthlyPlan(proposalData)) {
+    const plan = monthlyPlanFor(proposalData);
+    return plan.hasTerm ? plan.commitmentExVat : round2(plan.monthlyExVat * 12);
+  }
   const opts = Array.isArray(proposalData.videoOptions) ? proposalData.videoOptions : [];
   const raw = opts.length ? (opts[0]?.price ?? proposalData.basePrice) : proposalData.basePrice;
   const base = Number(raw);
@@ -214,8 +224,17 @@ export function computeProposalCheckout(proposalData, signatureData) {
     extrasTotal += extraNetUnitPrice(e, contentMinutes, extrasRate) * qty;
   }
 
-  const partnerSelected = sig.partnerSelected === true;
-  const partnerCredits = Math.max(1, Number(sig.partnerCredits) || 1);
+  // A Monthly Plan IS the proposal, so signing is the opt-in and the monthly
+  // commitment is whatever the proposal says. Both are taken from the PROPOSAL
+  // rather than the signature: on a standard proposal the client chooses how
+  // many credits to take, so that has to come from what they signed, but here
+  // reading it from the signature would only create a way to sign up for less
+  // than the proposal quotes.
+  const monthly = isMonthlyPlan(data) ? monthlyPlanFor(data) : null;
+  const partnerSelected = monthly ? true : sig.partnerSelected === true;
+  const partnerCredits = monthly
+    ? monthly.minutesPerMonth
+    : Math.max(1, Number(sig.partnerCredits) || 1);
 
   // --- Standard (non-partner) totals ---
   // The manual discount applies whichever route the client took: opting into the
@@ -235,13 +254,22 @@ export function computeProposalCheckout(proposalData, signatureData) {
   const partnerBaseDiscount   = pp.discountRate ?? 0.10;
   const partnerExtraPerCredit = pp.extraDiscountPerCredit ?? 0;
   const partnerMaxDiscount    = pp.maxDiscount ?? partnerBaseDiscount;
-  const effectiveDiscount = Math.min(
+  // The tier ladder rewards buying more minutes at once. A Monthly Plan has
+  // nothing to reward — the rate is stated and the monthly amount is the deal —
+  // so no discount is applied and the entered rate stands.
+  const effectiveDiscount = monthly ? 0 : Math.min(
     partnerBaseDiscount + Math.max(0, partnerCredits - 1) * partnerExtraPerCredit,
     partnerMaxDiscount
   );
-  const standardRatePerMin = Number(pp.standardRatePerMin) || Number(data.basePrice) || 0;
+  const standardRatePerMin = monthly
+    ? monthly.ratePerMin
+    : (Number(pp.standardRatePerMin) || Number(data.basePrice) || 0);
   const partnerRatePerMin  = standardRatePerMin * (1 - effectiveDiscount);
-  const partnerSubtotal     = partnerRatePerMin * partnerCredits;   // ex VAT (recurring)
+  // Taken from the plan when there is one, so the figure charged is the same
+  // rounded penny the proposal showed rather than a re-multiplication of it.
+  const partnerSubtotal     = monthly
+    ? monthly.monthlyExVat
+    : partnerRatePerMin * partnerCredits;   // ex VAT (recurring)
   const partnerTotal        = partnerSubtotal * (1 + vatRate);      // gross
   // Credit-only proposals quote the deliverable in minutes at the standard rate
   // and discount ONLY the extra minutes added on the proposal, so the project
@@ -270,7 +298,9 @@ export function computeProposalCheckout(proposalData, signatureData) {
   // 50/50 split and is billed once. `partnerTotal` here is that one-time block.
   const isOneoff = pp.mode === 'oneoff';
   const paymentOption = sig.paymentOption || 'full';
-  const isDeposit = paymentOption === '5050' && (isOneoff || !partnerSelected);
+  // Never on a Monthly Plan: half of a recurring charge is not a deposit, it is
+  // a wrong first payment with nothing to reconcile it against later.
+  const isDeposit = !monthly && paymentOption === '5050' && (isOneoff || !partnerSelected);
 
   // Gross amount collected *now*. Mirrors ClientView.dueNowTotal + the deposit
   // split. Subscription partner always pays the full discounted project + first
@@ -297,5 +327,16 @@ export function computeProposalCheckout(proposalData, signatureData) {
     amountGross: round2(amountGross),
     projectExVat: round2(discountedSubtotal),
     partnerExVat: round2(partnerSubtotal),
+    // Present only on a Monthly Plan. Carries the agreed terms through to
+    // whatever creates the subscription, so the advance ceiling and the term
+    // are recorded from the proposal that was actually signed rather than
+    // re-derived later from a proposal that may since have been edited.
+    monthlyPlan: monthly ? {
+      minutesPerMonth: monthly.minutesPerMonth,
+      ratePerMin: monthly.ratePerMin,
+      monthlyExVat: monthly.monthlyExVat,
+      frontLoadMinutes: monthly.frontLoadMinutes,
+      minTermMonths: monthly.minTermMonths,
+    } : null,
   };
 }

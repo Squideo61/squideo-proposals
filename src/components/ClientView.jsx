@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { BRAND, CONFIG, DEFAULT_PHOTOS } from '../theme.js';
 import { SQUIDEO_LOGO, NEXT_STEPS, extraHasVariants, extraHasQuantity, extraUnitPrice, extraNetUnitPrice, extrasDiscountRate, formatFreeSubtitlesValue, resolveExtraPricing, applyInclusionTokens } from '../defaults.js';
+import { frontLoadSummary, isMonthlyPlan, monthlyPlanFor } from '../../api/_lib/monthlyPlan.js';
 import { useStore } from '../store.jsx';
 import { formatGBP, sendNotification, useIsMobile, computeBaseDiscount, EMBED_FILL_STYLE } from '../utils.js';
 import { openPrintWindow, openReceiptWindow, printOptionsForSigned } from '../utils/printProposal.js';
@@ -568,6 +569,15 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
   // quoted minutes are never discounted. Purely a budget-maximiser: add more
   // credit now, get a better rate on what you add.
   const isCreditOnly = isOneoff && !!data.partnerProgramme?.creditOnly;
+  // Monthly Plan: the client commits to a monthly spend from the start and
+  // there is no project to buy. Signing IS the opt-in, the commitment is fixed
+  // by the proposal rather than dialled here, and the rate is stated rather
+  // than discounted — the tier ladder rewards buying more minutes at once, and
+  // there is nothing to reward. Mirrored server-side in api/_lib/monthlyPlan.js,
+  // which this imports rather than restates.
+  const isMonthly = isMonthlyPlan(data);
+  const monthlyPlan = isMonthly ? monthlyPlanFor(data) : null;
+  const frontLoad = isMonthly ? frontLoadSummary(data) : null;
   const quotedMinutes = contentMinutes;
   // Adding credit IS the opt-in on a credit-only proposal — there's no separate
   // "add to proposal" button, so selection tracks the stepper.
@@ -583,7 +593,7 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
   const partnerBaseDiscount   = data.partnerProgramme.discountRate          ?? 0.10;
   const partnerExtraPerCredit = data.partnerProgramme.extraDiscountPerCredit ?? 0;
   const partnerMaxDiscount    = data.partnerProgramme.maxDiscount            ?? partnerBaseDiscount;
-  const effectiveDiscount = Math.min(
+  const effectiveDiscount = isMonthly ? 0 : Math.min(
     partnerBaseDiscount + Math.max(0, partnerCredits - 1) * partnerExtraPerCredit,
     partnerMaxDiscount
   );
@@ -591,9 +601,14 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
   // (independent of basePrice — basePrice is the project price, not a per-min
   // rate) times the live tier-ladder discount. Falls back to basePrice for
   // legacy proposals saved before standardRatePerMin existed.
-  const standardRatePerMin = Number(data.partnerProgramme?.standardRatePerMin) || Number(data.basePrice) || 0;
+  const standardRatePerMin = isMonthly
+    ? monthlyPlan.ratePerMin
+    : (Number(data.partnerProgramme?.standardRatePerMin) || Number(data.basePrice) || 0);
   const partnerRatePerMin = standardRatePerMin * (1 - effectiveDiscount);
-  const partnerSubtotal = partnerRatePerMin * partnerCredits;
+  // Read off the plan rather than re-multiplied, so the figure shown is the
+  // same rounded penny the checkout will charge — and so it is right on the
+  // first render, before the effect below has synced partnerCredits.
+  const partnerSubtotal = isMonthly ? monthlyPlan.monthlyExVat : partnerRatePerMin * partnerCredits;
   const partnerVat = partnerSubtotal * data.vatRate;
   const partnerTotal = partnerSubtotal + partnerVat;
   // No further partner discount on a project that's already free, nor on one
@@ -626,6 +641,17 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
   const incVat = (n) => formatGBP(n * (1 + (data.vatRate || 0)));
   // When VAT is 0%, drop every "+ VAT" / "inc. VAT" reference from the proposal.
   const showVat = (Number(data.vatRate) || 0) > 0;
+
+  // A Monthly Plan has nothing to opt into: the plan is the proposal, so the
+  // programme is always on and the commitment is whatever the proposal says.
+  // Done in an effect rather than in the initial state because on a public link
+  // the proposal arrives a beat after mount, so the state seeded then would be
+  // seeded from nothing.
+  useEffect(() => {
+    if (signed || !isMonthly) return;
+    setPartnerSelected(true);
+    setPartnerCredits(monthlyPlan.minutesPerMonth);
+  }, [signed, isMonthly, monthlyPlan?.minutesPerMonth]);
 
   const handleSign = async () => {
     if (!sigName.trim() || !sigEmail.trim() || !sigAccepted) {
@@ -699,6 +725,20 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
         // post-sign payment prompt use this to drop the "/month, cancel any time"
         // language for a single upfront credit purchase.
         oneoff: isOneoff,
+        // The Monthly Plan terms as signed. Nested inside amountBreakdown
+        // deliberately: that key is already on the public signature allowlist
+        // in api/signatures/[id].js, and these ARE the amounts. Recorded here
+        // so the advance ceiling and the minimum term come from the proposal
+        // that was signed, not from one that may since have been edited.
+        monthly: isMonthly,
+        monthlyPlan: monthlyPlan ? {
+          minutesPerMonth: monthlyPlan.minutesPerMonth,
+          ratePerMin: monthlyPlan.ratePerMin,
+          monthlyExVat: monthlyPlan.monthlyExVat,
+          frontLoadMinutes: monthlyPlan.frontLoadMinutes,
+          minTermMonths: monthlyPlan.minTermMonths,
+          commitmentExVat: monthlyPlan.commitmentExVat,
+        } : null,
       } : null,
       // Lock the agreed blanket extras discount the same way. Unlike the base
       // discount this one applies on the Partner route too, so it's recorded
@@ -1161,7 +1201,7 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
             price, so this summary row would just repeat it — only show it for
             the single-price flow, or when a manual discount needs the
             strikethrough/discounted total. */}
-        {(!videoOptions || manualDiscount > 0) && !isCreditOnly && (
+        {(!videoOptions || manualDiscount > 0) && !isCreditOnly && !isMonthly && (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '14px 16px', border: '1px solid ' + BRAND.border, borderRadius: 10, fontSize: 16, fontWeight: 700 }}>
             <span>
               {videoOptions
@@ -1180,6 +1220,66 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '8px 16px', fontSize: 13, color: '#15803d', fontWeight: 600 }}>
             <span>{discountLabel}{(signed?.discountApplied?.type ?? data.discount?.type) !== 'amount' && (Number(signed?.discountApplied?.value ?? data.discount?.value) > 0) ? ` (${Number(signed?.discountApplied?.value ?? data.discount?.value)}% off)` : ''}</span>
             <span>−{formatGBP(manualDiscount)}</span>
+          </div>
+        )}
+
+        {/* Monthly Plan: the commitment sits here, directly under what's
+            included, because it IS the quote — there is no project price above
+            it and nothing for the client to configure. */}
+        {isMonthly && (
+          <div style={{ background: BRAND.ink, color: 'white', padding: 20, borderRadius: 10, marginBottom: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: 20, fontWeight: 800, gap: 12, flexWrap: 'wrap' }}>
+              <span>Monthly plan</span>
+              <span>
+                {formatGBP(monthlyPlan.monthlyExVat)}
+                <span style={{ fontWeight: 500, fontSize: 14, opacity: 0.75 }}>
+                  {showVat ? ' + VAT' : ''} / month
+                </span>
+              </span>
+            </div>
+            <div style={{ fontSize: 13, opacity: 0.85, marginTop: 6, lineHeight: 1.6 }}>
+              {fmtMins(monthlyPlan.minutesPerMonth)} of finished content every month at {formatGBP(monthlyPlan.ratePerMin)} per minute,
+              produced to everything set out above.
+            </div>
+
+            {frontLoad && (
+              <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid rgba(255,255,255,0.2)' }}>
+                <div style={{ fontSize: 15, fontWeight: 700 }}>
+                  Start with up to {frontLoad.label}, straight away
+                </div>
+                <div style={{ fontSize: 12.5, opacity: 0.85, marginTop: 4, lineHeight: 1.6 }}>
+                  You don&apos;t have to wait for your minutes to build up. We&apos;ll begin producing up to{' '}
+                  {frontLoad.label} of content from the start, and you carry on paying{' '}
+                  {formatGBP(monthlyPlan.monthlyExVat)}{showVat ? ' + VAT' : ''} a month at the same rate
+                  until it&apos;s covered
+                  {frontLoad.payOffMonths > 0 && <> — about {frontLoad.payOffMonths} {frontLoad.payOffMonths === 1 ? 'month' : 'months'}</>}.
+                </div>
+              </div>
+            )}
+
+            <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid rgba(255,255,255,0.2)' }}>
+              {monthlyPlan.hasTerm ? (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, flexWrap: 'wrap', fontSize: 14 }}>
+                  <span style={{ opacity: 0.85 }}>
+                    Minimum term {monthlyPlan.minTermMonths} months
+                  </span>
+                  <span style={{ fontWeight: 700 }}>
+                    {formatGBP(monthlyPlan.commitmentExVat)}
+                    <span style={{ fontWeight: 500, fontSize: 13, opacity: 0.75 }}>{showVat ? ' + VAT' : ''} in total</span>
+                  </span>
+                </div>
+              ) : (
+                <div style={{ fontSize: 12.5, opacity: 0.8 }}>
+                  No minimum term — you can cancel any time.
+                </div>
+              )}
+            </div>
+
+            {data.partnerProgramme?.description && (
+              <div style={{ fontSize: 12.5, opacity: 0.85, marginTop: 14, paddingTop: 14, borderTop: '1px solid rgba(255,255,255,0.2)', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
+                {data.partnerProgramme.description}
+              </div>
+            )}
           </div>
         )}
 
@@ -1367,7 +1467,10 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
 
         {/* Credit-only proposals add credit inline at the total instead — the
             standalone opt-in panel is the Partner Programme shape, not this one. */}
-        {data.partnerProgramme.enabled && !isCreditOnly && (
+        {/* The Partner Programme is an add-on to a project. A Monthly Plan is
+            already a recurring commitment, so offering it a second one on the
+            same proposal is nonsense. */}
+        {data.partnerProgramme.enabled && !isCreditOnly && !isMonthly && (
           <div style={{ position: 'relative', marginTop: savingPerMin > 0 && !isMobile ? 24 : 16, marginBottom: 16, background: '#FFFAEB', border: '1px solid #C9A227', borderRadius: 12, padding: isMobile ? 12 : 16 }}>
             {/* Keyed off the per-minute saving, not the project discount: on an
                 already-discounted project there's no project win, but "save up
@@ -1680,7 +1783,14 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
               'full': { title: fullTitle, desc: 'Pay upfront via card or BACS.' },
               'po': { title: 'Purchase Order', desc: 'Raise a Purchase Order - our team will be in touch to set up supplier details and confirm payment.' },
             };
-            return (data.paymentOptions || ['5050', 'full']).map((key) => {
+            // A Monthly Plan cannot be split: half of a recurring charge is
+            // not a deposit. It is already disabled below by the partner rule,
+            // but showing a struck-out option on a proposal whose whole subject
+            // is one monthly figure invites the question of what it would have
+            // meant. Better absent.
+            return (data.paymentOptions || ['5050', 'full'])
+              .filter((key) => !(isMonthly && key === '5050'))
+              .map((key) => {
               const cfg = OPTION_CONFIG[key];
               if (!cfg) return null;
               // The one-off Content Credit can still be split 50/50; only the
