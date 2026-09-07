@@ -1896,6 +1896,49 @@ function ensurePredictedPaymentNotes() {
   return predictedNotesReady;
 }
 
+// Which of these earlier predictions have already been fulfilled — i.e. the
+// money they were predicting has since been received. Deal keys only: the other
+// kinds (imported PPs, partners, other recurring) drop off the live pending list
+// of their own accord once they're paid, so the client's intersection handles
+// them. A deal doesn't, because the same deal can go outstanding again on
+// entirely new money (an extra billed during production), and without this check
+// its long-settled prediction would resurface every month, wearing a "Rolled
+// over" pill against a charge that didn't exist when it was made.
+async function fulfilledPredictions(candidates) {
+  const done = new Set();
+  const deals = candidates.filter((r) => (
+    String(r.item_key || '').startsWith('deal:')
+    && (Number(r.amount_ex_vat) || 0) > 0
+    && r.created_at
+  ));
+  if (!deals.length) return done;
+
+  // One pass over every payment banked since the oldest prediction in play.
+  const since = new Date(Math.min(...deals.map((r) => new Date(r.created_at).getTime()))).toISOString();
+  let rows = [];
+  try {
+    rows = await fetchPaidRows(since, new Date().toISOString());
+  } catch (err) {
+    // Never let this check break the predicted list — fall back to rolling
+    // everything forward, which is what it did before.
+    console.error('[stats] rollover fulfilment check failed', err?.message || err);
+    return done;
+  }
+
+  for (const r of deals) {
+    const dealId = String(r.item_key).slice('deal:'.length);
+    const from = new Date(r.created_at).getTime();
+    let paidSince = 0;
+    for (const p of rows) {
+      if (p.dealId !== dealId) continue;
+      if (!(p.paidAt instanceof Date) || p.paidAt.getTime() < from) continue;
+      paidSince += Number(p.net) || 0;
+    }
+    if (paidSince >= (Number(r.amount_ex_vat) || 0) - 0.005) done.add(r.item_key);
+  }
+  return done;
+}
+
 // GET  /stats/predicted-payments/:month   → { month, keys, items, bankedNet, notes }
 // POST /stats/predicted-payments/:month     { itemKey, predicted, label, amountExVat }
 //                                       OR  { itemKey, note }  (upsert/clear a note)
@@ -1927,10 +1970,16 @@ async function predictedPaymentsRoute(req, res, action, user) {
     const cur = serverMonthKey();
     if (month === cur) {
       const handledThisMonth = new Set(rows.map((r) => r.item_key)); // included OR excluded here
+      // The most recent earlier prediction per key — the last time someone said
+      // "this money is still expected" — with what it was for and when.
       const prior = await sql`
-        SELECT DISTINCT item_key FROM predicted_payments
-         WHERE month < ${month} AND excluded = false`;
-      rolledKeys = prior.map((r) => r.item_key).filter((k) => !handledThisMonth.has(k));
+        SELECT DISTINCT ON (item_key) item_key, amount_ex_vat, created_at
+          FROM predicted_payments
+         WHERE month < ${month} AND excluded = false
+         ORDER BY item_key, month DESC, created_at DESC`;
+      const candidates = prior.filter((r) => !handledThisMonth.has(r.item_key));
+      const fulfilled = await fulfilledPredictions(candidates);
+      rolledKeys = candidates.map((r) => r.item_key).filter((k) => !fulfilled.has(k));
     } else if (month < cur) {
       // This is an earlier month: any of its predictions that carry over into the
       // current month have MOVED there, so they no longer belong to this month's
