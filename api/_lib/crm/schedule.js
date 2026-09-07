@@ -33,12 +33,18 @@ import { isVideoSignedOff, stageOrderIndex } from '../productionStages.js';
 // so it can be checked internally first.
 const INTERNAL_REVIEW_BUFFER_DAYS = 1;
 
-// People/roles kept OFF the schedulable rota — they don't produce scheduled
-// content, so they get no calendar column, aren't assignable, and don't count
-// toward production capacity. Their annual leave + allowance are still tracked
-// (they stay on the roster for leave). Copywriters as a ROLE (they write
-// scripts — not a scheduled stage); Callum as a specific PERSON (a production
-// manager who doesn't produce), matched by name so other managers stay on.
+// DEFAULTS for who is kept OFF the schedulable rota — people who don't produce
+// scheduled content, so they get no calendar column, aren't assignable, and
+// don't count toward production capacity. Their annual leave + allowance are
+// still tracked (they stay on the roster for leave). Copywriters as a ROLE (they
+// write scripts — not a scheduled stage); Callum as a specific PERSON (a
+// production manager who doesn't produce), matched by name so other managers
+// stay on.
+//
+// These are only defaults: leave_allowances.on_rota overrides them per person
+// (TRUE = on the rota, FALSE = off it, NULL = use the default below). That's how
+// someone keeps a non-production account type while working the rota — e.g. a
+// copywriter learning production, on split duties.
 const OFF_ROTA_ROLES = new Set(['copywriter']);
 const OFF_ROTA_NAMES = new Set(['callum major']);
 
@@ -130,6 +136,9 @@ export function ensureScheduleTables() {
     // the one-time seed of the production manager's opening figures.
     await sql`ALTER TABLE leave_allowances ADD COLUMN IF NOT EXISTS taken_adjustment NUMERIC NOT NULL DEFAULT 0`;
     await sql`ALTER TABLE leave_allowances ADD COLUMN IF NOT EXISTS corrections_applied BOOLEAN NOT NULL DEFAULT FALSE`;
+    // `on_rota` = per-person override of the role/name defaults for "produces
+    // scheduled content" (calendar column + assignable). NULL = use the default.
+    await sql`ALTER TABLE leave_allowances ADD COLUMN IF NOT EXISTS on_rota BOOLEAN`;
     await seedLeaveCorrectionsOnce();
   })().catch((err) => { schemaReady = null; throw err; });
   return schemaReady;
@@ -196,7 +205,8 @@ async function scheduleUsers() {
   const rows = await sql`
     SELECT u.email, u.name, u.avatar, u.role AS role_id,
            (r.permissions @> '["*"]'::jsonb) AS is_admin,
-           la.active AS active, la.track_allowance AS track_allowance
+           la.active AS active, la.track_allowance AS track_allowance,
+           la.on_rota AS on_rota
       FROM users u
       JOIN roles r ON r.id = u.role
       LEFT JOIN leave_allowances la ON la.user_email = u.email
@@ -212,9 +222,13 @@ async function scheduleUsers() {
     // assignable. Freelancers ARE shown here (they work the projects) but are
     // excluded from the capacity meters separately (via isFreelancer, client-
     // side). Copywriters + Callum stay on the roster for leave tracking but
-    // don't produce scheduled content, so they're kept off the calendar columns.
-    const producesContent = !OFF_ROTA_ROLES.has(r.role_id)
+    // don't produce scheduled content by default, so they're kept off the
+    // calendar columns — unless `on_rota` says otherwise for that person, which
+    // is how split-duties staff (a copywriter also doing production) get a rota
+    // column without changing their account type.
+    const producesByDefault = !OFF_ROTA_ROLES.has(r.role_id)
       && !OFF_ROTA_NAMES.has((r.name || '').toLowerCase());
+    const producesContent = r.on_rota == null ? producesByDefault : r.on_rota === true;
     const onRoster = (r.active == null ? !isAdmin : r.active) === true;
     return {
       email: String(r.email).toLowerCase(),
@@ -225,6 +239,8 @@ async function scheduleUsers() {
       producesContent,
       hasRow: r.active != null || r.track_allowance != null,
       active: r.active,
+      producesByDefault,
+      onRotaOverride: r.on_rota == null ? null : r.on_rota === true,
       trackAllowance: !isFreelancer && r.track_allowance !== false, // null (no row) → true; never for freelancers
       onRoster,
     };
@@ -983,6 +999,11 @@ async function buildAllowances(candidates, onlyEmail, today) {
       isAdmin: c.isAdmin,
       onRoster: c.onRoster,
       trackAllowance: track,
+      // Rota column / assignable. `onRotaOverride` is null when the person just
+      // follows their role's default, which the editor shows as "role default".
+      producesContent: c.producesContent,
+      producesByDefault: c.producesByDefault,
+      onRotaOverride: c.onRotaOverride,
       annualAllowance: allowance,
       compulsoryDays: compulsory,
       takenAdjustment: adjustment,
@@ -1267,6 +1288,12 @@ export async function scheduleRoute(req, res, id, action, user) {
     if (b.anniversary !== undefined) await sql`UPDATE leave_allowances SET anniversary = ${asDateStr(b.anniversary)}, updated_at = NOW() WHERE LOWER(user_email) = ${target}`;
     if (b.active != null) await sql`UPDATE leave_allowances SET active = ${!!b.active}, updated_at = NOW() WHERE LOWER(user_email) = ${target}`;
     if (b.trackAllowance != null) await sql`UPDATE leave_allowances SET track_allowance = ${!!b.trackAllowance}, updated_at = NOW() WHERE LOWER(user_email) = ${target}`;
+    // `producesContent`: true/false pins the person on/off the rota regardless of
+    // their role; null clears the override and falls back to the role default.
+    if (b.producesContent !== undefined) {
+      const override = b.producesContent == null ? null : !!b.producesContent;
+      await sql`UPDATE leave_allowances SET on_rota = ${override}, updated_at = NOW() WHERE LOWER(user_email) = ${target}`;
+    }
     return res.status(200).json(await reload());
   }
 

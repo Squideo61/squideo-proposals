@@ -1077,12 +1077,22 @@ export function AllowanceModal({ row, onClose, onSave, leaveEntries, onDeleteLea
   const [anniversary, setAnniversary] = useState(row.anniversary || '');
   const [onRoster, setOnRoster] = useState(row.onRoster !== false);
   const [track, setTrack] = useState(row.trackAllowance !== false);
+  // Rota column + assignable. Defaults to the role's behaviour (copywriters and
+  // Callum are off it); ticking/unticking pins the person either way so someone
+  // can work the rota on split duties without changing their account type.
+  const roleDefaultProduces = row.producesByDefault !== false;
+  const [produces, setProduces] = useState(row.producesContent !== false);
   const [busy, setBusy] = useState(false);
   const [deleting, setDeleting] = useState(null);
   const save = () => {
     setBusy(true);
-    onSave({ annualAllowance: Number(allowance), compulsoryDays: Number(compulsory), takenAdjustment: Number(used) || 0, anniversary: anniversary || null, active: onRoster, trackAllowance: track })
-      .catch(() => setBusy(false));
+    onSave({
+      annualAllowance: Number(allowance), compulsoryDays: Number(compulsory),
+      takenAdjustment: Number(used) || 0, anniversary: anniversary || null,
+      active: onRoster, trackAllowance: track,
+      // Back to the role default → clear the override rather than pinning it.
+      producesContent: produces === roleDefaultProduces ? null : produces,
+    }).catch(() => setBusy(false));
   };
   const removeLeave = (id) => {
     setDeleting(id);
@@ -1106,6 +1116,10 @@ export function AllowanceModal({ row, onClose, onSave, leaveEntries, onDeleteLea
       <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, fontSize: 14, cursor: 'pointer' }}>
         <input type="checkbox" checked={onRoster} onChange={e => setOnRoster(e.target.checked)} />
         On the schedule <span style={{ color: BRAND.muted }}>— calendar column, assignable, can log days off</span>
+      </label>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, fontSize: 14, cursor: onRoster ? 'pointer' : 'not-allowed', opacity: onRoster ? 1 : 0.5 }}>
+        <input type="checkbox" checked={produces} disabled={!onRoster} onChange={e => setProduces(e.target.checked)} />
+        Works the production rota <span style={{ color: BRAND.muted }}>— own calendar column, assignable to storyboard/production stages{produces === roleDefaultProduces ? '' : ' · overrides their account type'}</span>
       </label>
       <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, fontSize: 14, cursor: onRoster ? 'pointer' : 'not-allowed', opacity: onRoster ? 1 : 0.5 }}>
         <input type="checkbox" checked={track} disabled={!onRoster} onChange={e => setTrack(e.target.checked)} />
