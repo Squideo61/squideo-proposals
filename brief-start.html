@@ -14,21 +14,29 @@
       #brief-start-root { padding: 4px; box-sizing: border-box; }
 
       /*
-       * ?theme=dark — the two things the component's inline styles cannot set.
+       * ?theme=dark — the three things the component's inline styles cannot set.
        *
-       * A pseudo-element and a form-control accent are not properties of an
-       * element, so no amount of style={{}} reaches them. Left alone on a
-       * translucent input, the placeholder stays the browser's default dark grey
-       * on a near-navy field (unreadable) and the checkbox stays the OS blue
-       * against a cyan button. Both look like bugs rather than like a theme.
+       * A pseudo-element, a form-control accent and a colour scheme are not
+       * properties an element can carry in a style attribute, so no amount of
+       * style={{}} reaches them. Left alone on a translucent input the
+       * placeholder stays the browser's default dark grey on a near-navy field,
+       * the checkbox stays OS blue beside a cyan button, and an autofilled name
+       * turns the field solid yellow-white. All three look like bugs.
        *
-       * `color-scheme` is the load-bearing one: it tells the browser this
-       * document is dark, which is what stops Chrome and Safari painting their
-       * own light backgrounds into autofilled inputs — the failure that turns a
-       * carefully translucent field solid yellow-white the moment somebody's
-       * browser fills their name in.
+       * ⚠ `color-scheme` IS ON THE CONTROLS, NOT ON `html`, AND THAT IS THE
+       * WHOLE POINT. It was on the root first, and it silently undid the thing
+       * this theme exists to do: the canvas takes its colour from the root
+       * element's background, and when that background is transparent the
+       * browser substitutes the colour scheme's default — which under `dark` is
+       * near-black. The frame stopped being see-through and painted a black
+       * rectangle over the navy band, so the fix for "can the grey box be
+       * transparent" shipped a black box instead. Scoped to the inputs, the
+       * autofill and control theming are identical and the canvas stays
+       * transparent.
        */
-      html[data-theme="dark"] { color-scheme: dark; }
+      html[data-theme="dark"] input,
+      html[data-theme="dark"] textarea,
+      html[data-theme="dark"] select { color-scheme: dark; }
       html[data-theme="dark"] input::placeholder { color: #8FA9BA; opacity: 1; }
       html[data-theme="dark"] input[type="checkbox"] { accent-color: #2BB8E6; }
     </style>
