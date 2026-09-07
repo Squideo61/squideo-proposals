@@ -24,6 +24,9 @@ import {
   trimOrNull,
 } from './shared.js';
 import { gmailBackfill } from './gmailBackfill.js';
+import { gmailPruneDrafts } from './gmailDraftPrune.js';
+import { getRole } from '../userRoles.js';
+import { hasPermission } from '../permissions.js';
 import { mailboxLive } from './mailbox.js';
 import { instrumentHtml, newTrackingToken, recordTrackedSend } from './tracking.js';
 
@@ -281,6 +284,16 @@ export async function gmailRoute(req, res, id, action, user) {
 
   if (id === 'schedule') {
     return gmailSchedule(req, res, user);
+  }
+
+  // Maintenance sweep: clear out Gmail drafts that older deploys filed as sent
+  // mail. It reads and deletes across everybody's mailbox rows, so it is gated
+  // on the workspace-settings permission rather than being self-service.
+  if (id === 'prune-drafts') {
+    if (!hasPermission(await getRole(user.role), 'settings.manage')) {
+      return res.status(403).json({ error: 'You do not have permission to run this' });
+    }
+    return gmailPruneDrafts(req, res, user);
   }
 
   // Live Gmail mailbox proxy for the Emails section's folders (Inbox, Sent,

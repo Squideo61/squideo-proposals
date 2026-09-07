@@ -121,6 +121,25 @@ export async function ingestMessage({ userEmail, accessToken, messageId }) {
   if (!res.ok) throw new Error(`messages.get failed (${res.status}): ${await res.text()}`);
   const msg = await res.json();
 
+  // A Gmail DRAFT is a real message sitting inside its thread, and Gmail writes
+  // a NEW one on every autosave while you type, deleting the one before it.
+  // history.list reports each of those as `messagesAdded`, indistinguishable
+  // from a genuine send, so without this the CRM files half-written drafts as
+  // sent mail: one deal thread showed four "OUT" emails above the single message
+  // the client actually received, each a slightly more finished version of the
+  // same template -- the earliest still carrying its unfilled "[name]" and
+  // "# words". Nothing had been sent to anyone, but the thread read as though
+  // four emails had.
+  //
+  // Nothing is lost by dropping them: sending a draft produces a separate,
+  // properly labelled message that arrives here through the same path.
+  if ((msg.labelIds || []).includes('DRAFT')) {
+    // Self-heal a draft filed before this guard existed. Only reachable while
+    // the draft still exists in Gmail; gmailDraftPrune.js sweeps up the rest.
+    await sql`DELETE FROM email_messages WHERE gmail_message_id = ${messageId}`;
+    return { messageId, threadId: msg.threadId, dealId: null, resolvedBy: null, skipped: 'draft' };
+  }
+
   const headers = parseHeaders(msg.payload?.headers || []);
   const fromEmail = extractEmail(headers.from);
   const toEmails = parseAddressList(headers.to);

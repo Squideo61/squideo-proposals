@@ -7,6 +7,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { FlaskConical, Trash2, PlayCircle, KeyRound, Film, ExternalLink, Copy, Check } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { api } from '../../api.js';
+import { EmailMaintenancePanel } from './EmailMaintenancePanel.jsx';
 
 // Step 1 can't be a plain link: invite tokens are stored hashed, so a link
 // issued at seed time is unreadable once the page reloads — which used to leave
@@ -158,6 +159,8 @@ export function DemoTab() {
         </>
       )}
       </div>
+
+      <EmailMaintenancePanel />
     </div>
   );
 }

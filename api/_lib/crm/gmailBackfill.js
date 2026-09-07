@@ -62,7 +62,9 @@ export async function gmailBackfill(req, res, user) {
   // handoff is a fragile boundary; fewer handoffs, fewer points of failure.
   while (true) {
     const listUrl = new URL('https://gmail.googleapis.com/gmail/v1/users/me/messages');
-    listUrl.searchParams.set('q', 'newer_than:30d');
+    // -in:drafts because ingestMessage refuses drafts anyway (they are not sent
+    // mail); excluding them here just saves fetching messages we will drop.
+    listUrl.searchParams.set('q', 'newer_than:30d -in:drafts');
     listUrl.searchParams.set('maxResults', String(BACKFILL_PAGE_SIZE));
     if (pageToken) listUrl.searchParams.set('pageToken', pageToken);
 
