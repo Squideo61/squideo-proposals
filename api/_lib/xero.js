@@ -243,6 +243,18 @@ export async function listAllContacts({ modifiedSince = null } = {}) {
   return all;
 }
 
+// Xero rejects an invoice with no DueDate ("The document DueDate field must be
+// specified") unless the org has default payment terms configured — ours has
+// none. Callers that don't carry their own terms get our standard 14 days from
+// the issue date, matching the deposit/balance invoices raised elsewhere.
+export const DEFAULT_PAYMENT_TERM_DAYS = 14;
+
+export function defaultDueDate(issueDate, days = DEFAULT_PAYMENT_TERM_DAYS) {
+  const from = issueDate ? new Date(issueDate) : new Date();
+  const base = Number.isNaN(from.getTime()) ? new Date() : from;
+  return new Date(base.getTime() + days * 86400_000).toISOString().slice(0, 10);
+}
+
 export async function createInvoice({ contactId, lineItems, reference, invoiceNumber, issueDate, dueDate, status = 'AUTHORISED' }) {
   const payload = {
     Type: 'ACCREC',
@@ -252,7 +264,7 @@ export async function createInvoice({ contactId, lineItems, reference, invoiceNu
     InvoiceNumber: invoiceNumber || undefined,
     Reference: reference || undefined,
     Date: issueDate || undefined,
-    DueDate: dueDate || undefined,
+    DueDate: dueDate || defaultDueDate(issueDate),
     LineItems: lineItems.map(li => ({
       Description: li.description,
       Quantity: li.quantity,

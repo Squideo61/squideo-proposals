@@ -17,7 +17,7 @@ import { sendNotification } from '../notifications.js';
 import { notifyProposalInvoicePaid } from './proposalInvoicePaid.js';
 import { paymentFreshness, paidSubject, catchUpNote } from './paymentFreshness.js';
 import { makeId, trimOrNull, numberOrNull } from './shared.js';
-import { getOrCreateContact, createInvoice, createPayment, voidInvoice, getInvoiceByNumber, getInvoicesByIds, updateContactAddress, getInvoicePdf } from '../xero.js';
+import { getOrCreateContact, createInvoice, createPayment, voidInvoice, getInvoiceByNumber, getInvoicesByIds, updateContactAddress, getInvoicePdf, defaultDueDate } from '../xero.js';
 import {
   lineItemsForProject,
   depositLineItems,
@@ -103,6 +103,12 @@ export async function createXeroInvoiceForDeal(body, user) {
     };
   });
 
+  // Xero requires a due date; flows that don't collect one (an extra billed
+  // "now", a PO quote turned into an invoice) fall back to standard terms. Work
+  // it out here rather than leaving it to Xero so the CRM row shows the same
+  // date the client sees on the invoice.
+  const effectiveDueAt = trimOrNull(dueAt) || defaultDueDate(issuedAt);
+
   const { invoiceId: xeroInvoiceId, invoiceNumber: xeroInvoiceNumber } = await createInvoice({
     contactId: xeroContactId,
     lineItems: xeroLineItems,
@@ -110,7 +116,7 @@ export async function createXeroInvoiceForDeal(body, user) {
     // PO-route deals pass the PO number here so it prints as the Xero Reference.
     reference: reference?.trim() || undefined,
     issueDate: issuedAt || undefined,
-    dueDate: dueAt || undefined,
+    dueDate: effectiveDueAt,
   });
   const storedInvoiceNumber = xeroInvoiceNumber || trimOrNull(invoiceNumber);
 
@@ -141,7 +147,7 @@ export async function createXeroInvoiceForDeal(body, user) {
       ${storedInvoiceNumber},
       ${Number(totalAmount.toFixed(2))},
       ${trimOrNull(issuedAt) || new Date().toISOString().slice(0, 10)},
-      ${trimOrNull(dueAt)},
+      ${effectiveDueAt},
       'issued',
       ${lineItems.map(li => li.description).filter(Boolean).join(', ') || null},
       ${user?.email || null},
