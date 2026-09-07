@@ -11,6 +11,27 @@ import {
 
 const KIND_LABEL = { storyboard: 'Storyboard / Visuals', production: 'Production' };
 
+// ── Weekdays, for repeating blocks ──
+// ISO numbering (1 = Mon … 5 = Fri) matches what the server stores. The rota is
+// a Mon-Fri grid, so weekends never come into it.
+const DOW_NAME = { 1: 'Monday', 2: 'Tuesday', 3: 'Wednesday', 4: 'Thursday', 5: 'Friday' };
+const DOW_SHORT = { 1: 'Mon', 2: 'Tue', 3: 'Wed', 4: 'Thu', 5: 'Fri' };
+function isoDowOf(dateStr) {
+  if (!dateStr) return 0;
+  const d = new Date(dateStr + 'T00:00:00Z');
+  if (Number.isNaN(d.getTime())) return 0;
+  return ((d.getUTCDay() + 6) % 7) + 1;
+}
+// "every Monday" / "every Monday and Friday" / "every weekday".
+function describeWeekdays(days) {
+  const list = (days || []).filter(n => DOW_NAME[n]);
+  if (!list.length) return 'no days';
+  if (list.length === 5) return 'every weekday';
+  const names = list.map(n => DOW_NAME[n]);
+  const last = names.pop();
+  return 'every ' + (names.length ? names.join(', ') + ' and ' + last : last);
+}
+
 // Small square icon button used in the rota column headers (↻ update, ↺ undo).
 const iconBtn = (busy) => ({
   flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
@@ -331,9 +352,14 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
 // how many are delayed (schedule/leave clash), and how full every producer's
 // diary is over the next month and next three months.
 function CapacityBar({ sched }) {
-  // Freelancers are additional, separately-sourced capacity — exclude them from
-  // the rota's utilisation figures (both the denominator and their booked days).
-  const rosterEmails = (sched.producers || []).filter(p => !p.isFreelancer).map(p => p.email);
+  // Who the utilisation figures are measured against. Freelancers are additional,
+  // separately-sourced capacity, and anyone marked "doesn't count toward rota
+  // capacity" (part-time production, test accounts) is left out the same way —
+  // out of the denominator AND their booked days out of the numerator, so a
+  // part-timer's blocks can't push the percentage around either.
+  const rosterEmails = (sched.producers || [])
+    .filter(p => !p.isFreelancer && p.countsCapacity !== false)
+    .map(p => p.email);
   const assignments = sched.assignments || [];
   const stats = useMemo(() => {
     const today = todayStr();
@@ -1012,6 +1038,8 @@ function BlockModal({ assignment, producers, canManage, me, onClose, onOpenProje
   // length) is what the auto-scheduler allotted; "extra days" is anything the
   // producer added on top, kept in sync with the end date so the two controls
   // never disagree.
+  // One occurrence of a standing weekly block (e.g. a part-timer's day off).
+  const repeatRule = assignment.repeat && (assignment.repeat.weekdays || []).length ? assignment.repeat : null;
   const base = Math.max(1, assignment.durationDays || 1);
   const totalDays = Math.max(1, countWorkingDays(start, end));
   const extra = Math.max(0, totalDays - base);
@@ -1032,8 +1060,18 @@ function BlockModal({ assignment, producers, canManage, me, onClose, onOpenProje
     <Modal onClose={onClose} dismissible={false} maxWidth={440}>
       <h3 style={{ margin: '0 0 4px', fontSize: 18, fontWeight: 700 }}>{manual ? (assignment.title || 'Manual block') : assignment.projectTitle}</h3>
       <div style={{ color: BRAND.muted, fontSize: 14, marginBottom: 14 }}>
-        {manual ? 'Manual block' : `${assignment.videoTitle}${assignment.videoLength ? ' · ' + assignment.videoLength : ''} · ${KIND_LABEL[assignment.kind] || assignment.kind}`}
+        {manual
+          ? (repeatRule
+              ? `Repeats ${describeWeekdays(repeatRule.weekdays)}${repeatRule.until ? ` until ${repeatRule.until}` : ''}`
+              : 'Manual block')
+          : `${assignment.videoTitle}${assignment.videoLength ? ' · ' + assignment.videoLength : ''} · ${KIND_LABEL[assignment.kind] || assignment.kind}`}
       </div>
+      {repeatRule && (
+        <div style={{ background: BRAND.paper, borderRadius: 8, padding: '8px 10px', fontSize: 12, color: BRAND.muted, marginBottom: 14 }}>
+          Editing or deleting here affects this day only — it drops out of the repeat and the rest carries on.
+          Use <strong>All future</strong> to end the repeat itself.
+        </div>
+      )}
       {(assignment.conflict || assignment.leaveConflict) && (
         <div style={{ background: '#FEF2F2', border: '1px solid #FCA5A5', color: '#7F1D1D', borderRadius: 8, padding: '8px 10px', fontSize: 13, marginBottom: 14 }}>
           {assignment.leaveConflict ? 'This overlaps booked annual leave.' : assignment.conflictReason}
@@ -1068,7 +1106,18 @@ function BlockModal({ assignment, producers, canManage, me, onClose, onOpenProje
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginTop: 16 }}>
         <div style={{ display: 'flex', gap: 6 }}>
           {!manual && onOpenVideo && assignment.videoId && <button className="btn-ghost" onClick={() => { onOpenVideo(assignment.videoId); onClose(); }}>Open video</button>}
-          {canEdit && <button className="btn-ghost" onClick={() => actions.deleteAssignment(assignment.id).then(onClose)} title="Remove from calendar" style={{ color: '#DC2626' }}><Trash2 size={14} /></button>}
+          {canEdit && (
+            <button className="btn-ghost" onClick={() => actions.deleteAssignment(assignment.id).then(onClose)}
+              title={repeatRule ? 'Remove just this day' : 'Remove from calendar'} style={{ color: '#DC2626' }}>
+              <Trash2 size={14} />{repeatRule ? ' This day' : ''}
+            </button>
+          )}
+          {canEdit && repeatRule && (
+            <button className="btn-ghost" onClick={() => actions.deleteAssignment(assignment.id, 'series').then(onClose)}
+              title="Remove the repeat and every day still to come" style={{ color: '#DC2626' }}>
+              All future
+            </button>
+          )}
         </div>
         {canEdit && <button className="btn" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>}
       </div>
@@ -1081,27 +1130,92 @@ function NewBlockModal({ producers, onClose, onSubmit }) {
   const [producer, setProducer] = useState(producers[0]?.email || '');
   const [start, setStart] = useState(todayStr());
   const [end, setEnd] = useState(todayStr());
+  // Repeat, in the shape of Google Calendar's "Does not repeat" menu: none, the
+  // start day every week, every weekday, or a hand-picked set of days.
+  const [repeat, setRepeat] = useState('none');
+  const [customDays, setCustomDays] = useState([]);
+  const [untilMode, setUntilMode] = useState('never');
+  const [until, setUntil] = useState('');
   const [busy, setBusy] = useState(false);
+
+  const startDow = isoDowOf(start);
+  const weekdays = repeat === 'none' ? []
+    : repeat === 'weekly' ? (startDow >= 1 && startDow <= 5 ? [startDow] : [])
+    : repeat === 'everyday' ? [1, 2, 3, 4, 5]
+    : [...customDays].sort((a, b) => a - b);
+  const repeating = weekdays.length > 0;
+  const toggleDay = (n) => setCustomDays(d => (d.includes(n) ? d.filter(x => x !== n) : [...d, n]));
+
   const submit = () => {
     if (!producer || !start) return;
+    if (repeat !== 'none' && !repeating) return; // custom chosen, no days ticked
     setBusy(true);
-    onSubmit({ userEmail: producer, title: title.trim() || 'Manual block', startDate: start, endDate: end || start })
-      .catch(() => setBusy(false));
+    onSubmit({
+      userEmail: producer,
+      title: title.trim() || (repeating ? 'Recurring block' : 'Manual block'),
+      startDate: start,
+      // A repeat books one day at a time, so the end date only applies to a
+      // one-off block — the repeat carries its own "ends" instead.
+      endDate: repeating ? start : (end || start),
+      ...(repeating ? { repeat: { weekdays, until: untilMode === 'on' && until ? until : null } } : {}),
+    }).catch(() => setBusy(false));
   };
   return (
     <Modal onClose={onClose} dismissible={false} maxWidth={420}>
       <h3 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>Add a block to the rota</h3>
-      <Field label="Card name"><input className="input" value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Ad-hoc edit, filming day" style={selStyle} /></Field>
+      <Field label="Card name"><input className="input" value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Ad-hoc edit, filming day, Chloe off" style={selStyle} /></Field>
       <Field label="Producer">
         <select className="input" value={producer} onChange={e => setProducer(e.target.value)} style={selStyle}>
           {producers.map(p => <option key={p.email} value={p.email}>{p.name || p.email}</option>)}
         </select>
       </Field>
-      <Field label="From"><input type="date" className="input" value={start} onChange={e => setStart(e.target.value)} style={selStyle} /></Field>
-      <Field label="To"><input type="date" className="input" value={end} min={start} onChange={e => setEnd(e.target.value)} style={selStyle} /></Field>
+      <Field label={repeating ? 'Starting' : 'From'}><input type="date" className="input" value={start} onChange={e => setStart(e.target.value)} style={selStyle} /></Field>
+      {!repeating && <Field label="To"><input type="date" className="input" value={end} min={start} onChange={e => setEnd(e.target.value)} style={selStyle} /></Field>}
+      <Field label="Repeat">
+        <select className="input" value={repeat} onChange={e => setRepeat(e.target.value)} style={selStyle}>
+          <option value="none">Does not repeat</option>
+          <option value="weekly">Weekly on {DOW_NAME[startDow] || 'that day'}</option>
+          <option value="everyday">Every weekday (Mon–Fri)</option>
+          <option value="custom">Custom — pick days…</option>
+        </select>
+      </Field>
+      {repeat === 'custom' && (
+        <div style={{ display: 'flex', gap: 6, margin: '-6px 0 12px', flexWrap: 'wrap' }}>
+          {[1, 2, 3, 4, 5].map(n => {
+            const on = customDays.includes(n);
+            return (
+              <button key={n} className="btn-ghost" onClick={() => toggleDay(n)}
+                style={{ fontSize: 12, padding: '5px 10px', borderRadius: 999,
+                  background: on ? BRAND.blue : 'white', color: on ? 'white' : BRAND.muted,
+                  borderColor: on ? BRAND.blue : BRAND.border }}>
+                {DOW_SHORT[n]}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {repeating && (
+        <Field label="Ends">
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <select className="input" value={untilMode} onChange={e => setUntilMode(e.target.value)} style={{ ...selStyle, flex: '0 0 auto', width: 'auto' }}>
+              <option value="never">Never</option>
+              <option value="on">On date</option>
+            </select>
+            {untilMode === 'on' && (
+              <input type="date" className="input" value={until} min={start} onChange={e => setUntil(e.target.value)} style={{ ...selStyle, flex: 1 }} />
+            )}
+          </div>
+        </Field>
+      )}
+      {repeating && (
+        <div style={{ fontSize: 12, color: BRAND.muted, margin: '-6px 0 12px' }}>
+          Books {describeWeekdays(weekdays)} from {start}{untilMode === 'on' && until ? ` until ${until}` : ', with no end date'}.
+          A repeating block takes that day off the producer's rota, so work is never scheduled on it.
+        </div>
+      )}
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
         <button className="btn-ghost" onClick={onClose}>Cancel</button>
-        <button className="btn" onClick={submit} disabled={busy}>{busy ? 'Adding…' : 'Add block'}</button>
+        <button className="btn" onClick={submit} disabled={busy || (repeat === 'custom' && !repeating)}>{busy ? 'Adding…' : 'Add block'}</button>
       </div>
     </Modal>
   );
@@ -1119,6 +1233,9 @@ export function AllowanceModal({ row, onClose, onSave, leaveEntries, onDeleteLea
   // can work the rota on split duties without changing their account type.
   const roleDefaultProduces = row.producesByDefault !== false;
   const [produces, setProduces] = useState(row.producesContent !== false);
+  // Part-timers and test accounts hold a column but shouldn't move the
+  // utilisation figures — they aren't a full head of production capacity.
+  const [counts, setCounts] = useState(row.countsCapacity !== false);
   const [busy, setBusy] = useState(false);
   const [deleting, setDeleting] = useState(null);
   const save = () => {
@@ -1129,6 +1246,7 @@ export function AllowanceModal({ row, onClose, onSave, leaveEntries, onDeleteLea
       active: onRoster, trackAllowance: track,
       // Back to the role default → clear the override rather than pinning it.
       producesContent: produces === roleDefaultProduces ? null : produces,
+      countsCapacity: counts,
     }).catch(() => setBusy(false));
   };
   const removeLeave = (id) => {
@@ -1157,6 +1275,10 @@ export function AllowanceModal({ row, onClose, onSave, leaveEntries, onDeleteLea
       <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, fontSize: 14, cursor: onRoster ? 'pointer' : 'not-allowed', opacity: onRoster ? 1 : 0.5 }}>
         <input type="checkbox" checked={produces} disabled={!onRoster} onChange={e => setProduces(e.target.checked)} />
         Works the production rota <span style={{ color: BRAND.muted }}>— own calendar column, assignable to storyboard/production stages{produces === roleDefaultProduces ? '' : ' · overrides their account type'}</span>
+      </label>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, fontSize: 14, cursor: onRoster && produces ? 'pointer' : 'not-allowed', opacity: onRoster && produces ? 1 : 0.5 }}>
+        <input type="checkbox" checked={counts} disabled={!onRoster || !produces} onChange={e => setCounts(e.target.checked)} />
+        Counts toward rota capacity <span style={{ color: BRAND.muted }}>— off for part-time production and test accounts</span>
       </label>
       <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, fontSize: 14, cursor: onRoster ? 'pointer' : 'not-allowed', opacity: onRoster ? 1 : 0.5 }}>
         <input type="checkbox" checked={track} disabled={!onRoster} onChange={e => setTrack(e.target.checked)} />

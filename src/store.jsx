@@ -2193,8 +2193,11 @@ export function StoreProvider({ children }) {
         .then((p) => actions._applySchedule(p))
         .catch((err) => { showMsg(err.message || 'Failed to move block'); throw err; });
     },
-    deleteAssignment(assignmentId) {
-      return api.delete('/api/crm/schedule/assignment/' + encodeURIComponent(assignmentId))
+    // `scope: 'series'` removes a standing repeat and every occurrence still to
+    // come; the default removes only the day that was clicked.
+    deleteAssignment(assignmentId, scope) {
+      return api.delete('/api/crm/schedule/assignment/' + encodeURIComponent(assignmentId)
+          + (scope === 'series' ? '?scope=series' : ''))
         .then((p) => actions._applySchedule(p))
         .catch((err) => { showMsg(err.message || 'Failed to remove block'); throw err; });
     },

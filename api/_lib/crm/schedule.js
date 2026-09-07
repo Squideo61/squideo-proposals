@@ -142,7 +142,33 @@ export function ensureScheduleTables() {
     // `rota_order` = manual left-to-right position of this person's column on
     // the Master rota. NULL sorts after everyone positioned, alphabetically.
     await sql`ALTER TABLE leave_allowances ADD COLUMN IF NOT EXISTS rota_order INTEGER`;
+    // `counts_capacity` = include this person in the rota utilisation meters.
+    // Off for part-time production and test accounts: they hold a column and
+    // their blocks still show, they just don't move the percentage.
+    await sql`ALTER TABLE leave_allowances ADD COLUMN IF NOT EXISTS counts_capacity BOOLEAN NOT NULL DEFAULT TRUE`;
+    await sql`ALTER TABLE leave_allowances ADD COLUMN IF NOT EXISTS rota_layout_seeded BOOLEAN NOT NULL DEFAULT FALSE`;
+    // Repeating manual blocks: the weekly rule lives here, the occurrences are
+    // ordinary schedule_assignments rows tagged with `series_id`.
+    await sql`CREATE TABLE IF NOT EXISTS schedule_block_series (
+      id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      title TEXT NOT NULL,
+      weekdays SMALLINT[] NOT NULL,
+      start_date DATE NOT NULL,
+      end_date DATE,
+      skips DATE[] NOT NULL DEFAULT '{}',
+      materialised_to DATE,
+      created_by TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`;
+    await sql`CREATE INDEX IF NOT EXISTS schedule_block_series_user_idx ON schedule_block_series (user_email)`;
+    await sql`ALTER TABLE schedule_assignments ADD COLUMN IF NOT EXISTS series_id TEXT`;
+    // NULLs are distinct in a unique index, so ad-hoc blocks are unaffected while
+    // a series can only ever own one block per day (makes top-ups idempotent).
+    await sql`CREATE UNIQUE INDEX IF NOT EXISTS schedule_assignments_series_day_uidx
+      ON schedule_assignments (series_id, start_date)`;
     await seedLeaveCorrectionsOnce();
+    await seedRotaLayoutOnce();
   })().catch((err) => { schemaReady = null; throw err; });
   return schemaReady;
 }
@@ -178,6 +204,48 @@ function seedLeaveCorrectionsOnce() {
   return correctionsSeeded;
 }
 
+// ── One-time seed of the rota layout the production manager asked for ──
+// The left-to-right column order (Adam > Ben > Hannah > Chloe > Lesley > Test)
+// and who is left out of the capacity meters. Positions 1-4 are exact names;
+// Lesley and the test accounts are matched by pattern because their full names
+// and emails aren't fixed. Anyone unmatched keeps rota_order NULL and sorts
+// alphabetically after those placed.
+//
+// Guarded per row by `rota_layout_seeded`, so reordering a column or re-ticking
+// the capacity box later is never reverted on the next cold start.
+const ROTA_LAYOUT = [
+  { order: 1, capacity: true, name: 'adam leveson' },
+  { order: 2, capacity: true, name: 'ben underwood' },
+  { order: 3, capacity: true, name: 'hannah bales' },
+  // Chloe works the rota part-time (learning production alongside copywriting),
+  // so she holds a column but isn't counted as a full head of capacity.
+  { order: 4, capacity: false, name: 'chloe wong' },
+  { order: 5, capacity: false, like: 'lesley%' },
+  { order: 6, capacity: false, test: true },
+];
+let rotaLayoutSeeded = null;
+function seedRotaLayoutOnce() {
+  if (rotaLayoutSeeded) return rotaLayoutSeeded;
+  rotaLayoutSeeded = (async () => {
+    for (const e of ROTA_LAYOUT) {
+      const rows = e.test
+        ? await sql`SELECT email FROM users WHERE LOWER(name) LIKE 'test%' OR LOWER(email) LIKE 'test%'`
+        : e.like
+          ? await sql`SELECT email FROM users WHERE LOWER(name) LIKE ${e.like}`
+          : await sql`SELECT email FROM users WHERE LOWER(name) = ${e.name}`;
+      for (const u of rows) {
+        const target = String(u.email).toLowerCase();
+        await sql`INSERT INTO leave_allowances (user_email) VALUES (${target}) ON CONFLICT (user_email) DO NOTHING`;
+        await sql`UPDATE leave_allowances
+             SET rota_order = ${e.order}, counts_capacity = ${e.capacity},
+                 rota_layout_seeded = TRUE, updated_at = NOW()
+           WHERE LOWER(user_email) = ${target} AND rota_layout_seeded = FALSE`;
+      }
+    }
+  })().catch((err) => { rotaLayoutSeeded = null; console.warn('[schedule] rota layout seed failed', err.message); });
+  return rotaLayoutSeeded;
+}
+
 function asDateStr(v) {
   if (!v) return null;
   if (v instanceof Date) return v.toISOString().slice(0, 10);
@@ -209,7 +277,8 @@ async function scheduleUsers() {
     SELECT u.email, u.name, u.avatar, u.role AS role_id,
            (r.permissions @> '["*"]'::jsonb) AS is_admin,
            la.active AS active, la.track_allowance AS track_allowance,
-           la.on_rota AS on_rota, la.rota_order AS rota_order
+           la.on_rota AS on_rota, la.rota_order AS rota_order,
+           la.counts_capacity AS counts_capacity
       FROM users u
       JOIN roles r ON r.id = u.role
       LEFT JOIN leave_allowances la ON la.user_email = u.email
@@ -245,6 +314,9 @@ async function scheduleUsers() {
       producesByDefault,
       onRotaOverride: r.on_rota == null ? null : r.on_rota === true,
       rotaOrder: r.rota_order == null ? null : Number(r.rota_order),
+      // Counted in the utilisation meters. Freelancers never are (they're
+      // separately-sourced capacity); anyone else can be opted out.
+      countsCapacity: !isFreelancer && r.counts_capacity !== false,
       trackAllowance: !isFreelancer && r.track_allowance !== false, // null (no row) → true; never for freelancers
       onRoster,
     };
@@ -255,6 +327,95 @@ async function teamMembers() {
   return (await scheduleUsers())
     .filter(u => u.onRoster && u.producesContent)
     .map(u => ({ email: u.email, name: u.name, avatar: u.avatar, isFreelancer: u.isFreelancer }));
+}
+
+// ── Repeating manual blocks ──
+// A series is a weekly rule — "every Monday and Friday, from this date, forever"
+// — used for standing commitments like a part-timer's non-working days. It
+// materialises into ordinary one-day manual blocks, so the packer's occupancy
+// map, drag/drop, conflicts and deletion all keep working with no special cases.
+// Rows are written a year ahead and topped up whenever the horizon gets close.
+const SERIES_HORIZON_DAYS = 365;
+const SERIES_TOPUP_DAYS = 30;
+
+// ISO weekday: 1 = Mon … 7 = Sun. Parsed as UTC so it can't drift a day either
+// side of midnight in a non-UTC region.
+function isoDow(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  return ((d.getUTCDay() + 6) % 7) + 1;
+}
+
+// Weekday numbers a series may use. The rota is a Mon-Fri grid, so a weekend
+// repeat would generate blocks nothing ever draws.
+export function normaliseWeekdays(input) {
+  const out = [...new Set((Array.isArray(input) ? input : []).map(n => Math.round(Number(n))))]
+    .filter(n => n >= 1 && n <= 5);
+  out.sort((a, b) => a - b);
+  return out;
+}
+
+// The dates a series falls on within [from, to], minus any occurrence that was
+// deleted or dragged elsewhere on its own (those live in `skips`).
+function seriesOccurrences(series, from, to) {
+  const wanted = new Set((series.weekdays || []).map(Number));
+  const skips = new Set((series.skips || []).map(asDateStr));
+  const out = [];
+  for (let d = from; d <= to; d = addDays(d, 1)) {
+    if (!wanted.has(isoDow(d)) || isWeekend(d)) continue;
+    if (skips.has(d)) continue;
+    out.push(d);
+  }
+  return out;
+}
+
+// Write any missing occurrence rows for one series, up to the horizon. Safe to
+// re-run: the (series_id, start_date) unique index makes each day idempotent.
+async function materialiseSeries(row, today) {
+  const horizon = addDays(today, SERIES_HORIZON_DAYS);
+  const from = laterDate(asDateStr(row.start_date), today);
+  const cap = asDateStr(row.end_date);
+  const to = cap && cap < horizon ? cap : horizon;
+  const dates = from && from <= to ? seriesOccurrences(row, from, to) : [];
+  if (dates.length) {
+    const owner = String(row.user_email).toLowerCase();
+    await batchWrite(dates.map(d => sql`
+      INSERT INTO schedule_assignments
+        (id, video_id, deal_id, user_email, kind, title, start_date, end_date,
+         duration_days, extended_days, auto_generated, conflict, series_id)
+      VALUES (${makeId('sched')}, ${null}, ${null}, ${owner}, 'manual', ${row.title},
+              ${d}, ${d}, 1, 0, FALSE, FALSE, ${row.id})
+      ON CONFLICT (series_id, start_date) DO NOTHING`));
+  }
+  await sql`UPDATE schedule_block_series SET materialised_to = ${to} WHERE id = ${row.id}`;
+  return dates.length;
+}
+
+// Top up every live series that's running out of runway. Called on each rota
+// load; normally selects nothing, so it costs one cheap query.
+async function ensureSeriesMaterialised(today) {
+  const edge = addDays(today, SERIES_HORIZON_DAYS - SERIES_TOPUP_DAYS);
+  const due = await sql`SELECT * FROM schedule_block_series
+     WHERE (end_date IS NULL OR end_date >= ${today})
+       AND (materialised_to IS NULL OR materialised_to < ${edge})`;
+  for (const row of due) await materialiseSeries(row, today);
+  return due.length;
+}
+
+// An occurrence that's deleted or moved on its own must not come back on the
+// next top-up, so its original date is remembered as a skip.
+async function skipOccurrence(seriesId, dateStr) {
+  if (!seriesId || !dateStr) return;
+  await sql`UPDATE schedule_block_series
+       SET skips = array_append(skips, ${dateStr}::date)
+     WHERE id = ${seriesId} AND NOT (${dateStr}::date = ANY(skips))`;
+}
+
+// Drop a whole series: its future blocks go, past ones are kept as history but
+// detached so they're never regenerated or re-linked.
+async function deleteSeries(seriesId, today) {
+  await sql`DELETE FROM schedule_assignments WHERE series_id = ${seriesId} AND start_date >= ${today}`;
+  await sql`UPDATE schedule_assignments SET series_id = NULL WHERE series_id = ${seriesId}`;
+  await sql`DELETE FROM schedule_block_series WHERE id = ${seriesId}`;
 }
 
 // ── Deadlines from the deal's production schedule JSON ──
@@ -866,6 +1027,9 @@ function serialiseAssignment(r, ctx) {
     videoLength: manual ? null : (ctx.videoMeta.get(r.video_id)?.videoLength || null),
     productionStage: manual ? null : (ctx.videoMeta.get(r.video_id)?.stage || null),
     title: r.title || null,
+    seriesId: r.series_id || null,
+    // The weekly rule this block came from, when it's one occurrence of a repeat.
+    repeat: (r.series_id && ctx.seriesById?.get(r.series_id)) || null,
   };
 }
 
@@ -891,8 +1055,13 @@ function serialiseLeave(r) {
 async function buildPayload(user, manage, approve = false, manageAllowance = false) {
   const email = (user.email || '').toLowerCase();
   const today = todayStr();
+  // Keep standing weekly blocks written a year ahead. Normally a no-op.
+  await ensureSeriesMaterialised(today);
   const candidates = await scheduleUsers();
-  const roster = candidates.filter(u => u.onRoster).map(u => ({ email: u.email, name: u.name, avatar: u.avatar, isFreelancer: u.isFreelancer, producesContent: u.producesContent }));
+  const roster = candidates.filter(u => u.onRoster).map(u => ({
+    email: u.email, name: u.name, avatar: u.avatar, isFreelancer: u.isFreelancer,
+    producesContent: u.producesContent, countsCapacity: u.countsCapacity,
+  }));
   // Scope covers everyone on the roster (so their leave still loads + can be
   // reviewed), but the calendar columns/assignable list below is only the
   // schedulable producers.
@@ -928,7 +1097,23 @@ async function buildPayload(user, manage, approve = false, manageAllowance = fal
     for (const d of workingDaysBetween(asDateStr(l.start_date), asDateStr(l.end_date))) leaveByUser.get(key).add(d);
   }
 
-  const ctx = { today, videoMeta, milestones, leaveByUser };
+  // The repeat rule behind any occurrence on screen, so a block can say what it
+  // repeats on and offer to remove the whole series.
+  const seriesIds = [...new Set(asg.map(a => a.series_id).filter(Boolean))];
+  const seriesById = new Map();
+  if (seriesIds.length) {
+    const rows = await sql`SELECT id, title, weekdays, start_date, end_date FROM schedule_block_series WHERE id = ANY(${seriesIds})`;
+    for (const r of rows) {
+      seriesById.set(r.id, {
+        id: r.id,
+        weekdays: (r.weekdays || []).map(Number),
+        startDate: asDateStr(r.start_date),
+        until: r.end_date ? asDateStr(r.end_date) : null,
+      });
+    }
+  }
+
+  const ctx = { today, videoMeta, milestones, leaveByUser, seriesById };
   const assignments = asg.map(a => serialiseAssignment(a, ctx));
 
   // Allowances (self-provision a row per roster member on demand)
@@ -1008,6 +1193,7 @@ async function buildAllowances(candidates, onlyEmail, today) {
       producesContent: c.producesContent,
       producesByDefault: c.producesByDefault,
       onRotaOverride: c.onRotaOverride,
+      countsCapacity: c.countsCapacity,
       annualAllowance: allowance,
       compulsoryDays: compulsory,
       takenAdjustment: adjustment,
@@ -1128,8 +1314,11 @@ export async function scheduleRoute(req, res, id, action, user) {
     return res.status(200).json({ ...result, ...(await reload()) });
   }
 
-  // POST /api/crm/schedule/block { userEmail, title, startDate, endDate }
-  // Manual ad-hoc block for a producer (Callum fills random jobs / days).
+  // POST /api/crm/schedule/block { userEmail, title, startDate, endDate,
+  //                                  repeat?: { weekdays: [1..5], until?: date } }
+  // Manual ad-hoc block for a producer (Callum fills random jobs / days). With
+  // `repeat.weekdays` it becomes a standing weekly block instead — one day per
+  // matching weekday, from startDate until `until` (or indefinitely).
   if (id === 'block') {
     if (req.method !== 'POST') return res.status(405).end();
     if (!manage) return res.status(403).json({ error: 'Only schedule managers can add blocks' });
@@ -1139,6 +1328,17 @@ export async function scheduleRoute(req, res, id, action, user) {
     const endInput = asDateStr(b.endDate);
     if (!target) return res.status(400).json({ error: 'userEmail is required' });
     if (!startStr) return res.status(400).json({ error: 'startDate is required' });
+    const weekdays = normaliseWeekdays((b.repeat || {}).weekdays);
+    if (weekdays.length) {
+      const until = asDateStr((b.repeat || {}).until);
+      if (until && until < startStr) return res.status(400).json({ error: 'The repeat ends before it starts' });
+      const sid = makeId('series');
+      await sql`INSERT INTO schedule_block_series (id, user_email, title, weekdays, start_date, end_date, created_by)
+        VALUES (${sid}, ${target}, ${trimOrNull(b.title) || 'Recurring block'}, ${weekdays}, ${startStr}, ${until || null}, ${email})`;
+      const [row] = await sql`SELECT * FROM schedule_block_series WHERE id = ${sid}`;
+      if (row) await materialiseSeries(row, todayStr());
+      return res.status(201).json(await reload());
+    }
     const endStr = endInput && endInput >= startStr ? endInput : startStr;
     const days = Math.max(1, countWorkingDays(startStr, endStr));
     const bid = makeId('sched');
@@ -1181,12 +1381,25 @@ export async function scheduleRoute(req, res, id, action, user) {
       }
       const newUser = b.userEmail && manage ? String(b.userEmail).toLowerCase() : String(row.user_email).toLowerCase();
       const title = b.title != null ? (trimOrNull(b.title) || row.title) : row.title;
+      // Moving one occurrence of a repeat takes it out of the series: the
+      // original day is remembered as a skip (so the top-up doesn't put it
+      // back) and the block becomes a plain one-off wherever it landed.
+      if (row.series_id) await skipOccurrence(row.series_id, asDateStr(row.start_date));
       await sql`UPDATE schedule_assignments SET start_date = ${startStr}, end_date = ${endStr},
           duration_days = ${newDuration}, extended_days = ${newExtended}, user_email = ${newUser}, title = ${title},
-          auto_generated = FALSE, conflict = FALSE, conflict_reason = NULL, updated_at = NOW() WHERE id = ${aid}`;
+          series_id = ${null}, auto_generated = FALSE, conflict = FALSE, conflict_reason = NULL,
+          updated_at = NOW() WHERE id = ${aid}`;
       return res.status(200).json(await reload());
     }
     if (req.method === 'DELETE') {
+      // ?scope=series removes the standing repeat and everything still to come;
+      // the default removes just the day clicked, remembered so it stays gone.
+      const scope = String(req.query?.scope || (req.body || {}).scope || '').toLowerCase();
+      if (row.series_id && scope === 'series') {
+        await deleteSeries(row.series_id, todayStr());
+        return res.status(200).json(await reload());
+      }
+      if (row.series_id) await skipOccurrence(row.series_id, asDateStr(row.start_date));
       await sql`DELETE FROM schedule_assignments WHERE id = ${aid}`;
       return res.status(200).json(await reload());
     }
@@ -1318,6 +1531,7 @@ export async function scheduleRoute(req, res, id, action, user) {
     if (b.anniversary !== undefined) await sql`UPDATE leave_allowances SET anniversary = ${asDateStr(b.anniversary)}, updated_at = NOW() WHERE LOWER(user_email) = ${target}`;
     if (b.active != null) await sql`UPDATE leave_allowances SET active = ${!!b.active}, updated_at = NOW() WHERE LOWER(user_email) = ${target}`;
     if (b.trackAllowance != null) await sql`UPDATE leave_allowances SET track_allowance = ${!!b.trackAllowance}, updated_at = NOW() WHERE LOWER(user_email) = ${target}`;
+    if (b.countsCapacity != null) await sql`UPDATE leave_allowances SET counts_capacity = ${!!b.countsCapacity}, updated_at = NOW() WHERE LOWER(user_email) = ${target}`;
     // `producesContent`: true/false pins the person on/off the rota regardless of
     // their role; null clears the override and falls back to the role default.
     if (b.producesContent !== undefined) {
