@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { MessageSquare, Send, Clapperboard, Paperclip, X, FileDown, CheckCircle2, CalendarClock, Eye, Pencil, Trash2, MapPin } from 'lucide-react';
+import { MessageSquare, Send, Clapperboard, Paperclip, X, FileDown, CheckCircle2, CalendarClock, Eye, Pencil, Trash2, MapPin, LayoutGrid } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useIsMobile } from '../../utils.js';
 import { ConflictBanner } from './ConflictBanner.jsx';
-import { pickReviewDefault, newestVersion } from '../../lib/reviewDefaults.js';
+import { pickReviewDefault, newestVersion, shouldOpenMenu, draftForItem } from '../../lib/reviewDefaults.js';
+import { ReviewPicker, VideoThumb } from './ReviewPicker.jsx';
 
 const NAME_KEY = 'squideo.revision.name';
 const EMAIL_KEY = 'squideo.revision.email';
@@ -162,6 +163,22 @@ export function VideoRevision({ token, data, api, showMsg, identity = null, embe
     setVersionId(newestVersion(v)?.id || null);
   }
 
+  // ── "Which video?" menu ─────────────────────────────────────────────────────
+  // A project with more than one video opens on a grid of them rather than
+  // dropping the client straight into one: the header dropdown that used to be
+  // the only way between videos was routinely missed, so clients reviewed the
+  // video they landed on and never realised the others were waiting. The
+  // dropdowns (video + draft) stay in the header once they're inside one.
+  const [picking, setPicking] = useState(() => shouldOpenMenu(videos));
+
+  function openVideo(id) {
+    // The link's own draft wins for the video it named (&draft=); every other
+    // card opens on its latest draft.
+    setVideoId(id);
+    setVersionId(draftForItem(videos, id, initial));
+    setPicking(false);
+  }
+
   const versionComments = useMemo(() => {
     const activeVersionId = version?.id;
     return comments
@@ -317,11 +334,13 @@ export function VideoRevision({ token, data, api, showMsg, identity = null, embe
     }
   }
 
-  // Record a view whenever the client lands on / switches to a draft.
+  // Record a view whenever the client opens / switches to a draft. Not while
+  // they're still on the menu: nothing has been looked at yet, and stamping a
+  // view there would tell the team a draft had been read when it hadn't.
   useEffect(() => {
-    if (!identified || !version) return;
+    if (!identified || !version || picking) return;
     api.recordRevisionView(token, { versionId: version.id, name, email });
-  }, [identified, version?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [identified, version?.id, picking]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Live updates + presence heartbeat: poll publicView every ~6s once the
   // viewer has identified themselves. Refreshes comments (so co-viewers'
@@ -438,6 +457,38 @@ export function VideoRevision({ token, data, api, showMsg, identity = null, embe
     );
   }
 
+  // ── The video menu (multi-video projects only) ──────────────────────────────
+  function videoStatus(v) {
+    const latest = newestVersion(v);
+    if (!latest) return { label: 'Not ready yet', tone: 'none' };
+    const draftName = draftLabel(latest);
+    if (approvals[v.id]) return { label: 'Finalised', tone: 'done', sub: draftName };
+    if (submitted[v.id]) return { label: 'Feedback sent', tone: 'sent', sub: draftName };
+    const mine = comments.filter(c => (v.versions || []).some(x => x.id === c.versionId)).length;
+    return {
+      label: 'Awaiting your review',
+      tone: 'waiting',
+      sub: mine ? `${draftName} · ${mine} comment${mine === 1 ? '' : 's'}` : draftName,
+    };
+  }
+
+  if (picking) {
+    return (
+      <ReviewPicker
+        icon={Clapperboard}
+        title={data.title}
+        clientName={data.clientName}
+        items={videos}
+        noun="video"
+        statusFor={videoStatus}
+        highlightId={initialVideoId || (initialVersionId ? initial.itemId : null)}
+        renderThumb={v => <VideoThumb url={newestVersion(v)?.videoUrl} />}
+        onOpen={openVideo}
+        embedded={embedded}
+      />
+    );
+  }
+
   return (
     <div style={embedded
       ? { display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }
@@ -452,7 +503,14 @@ export function VideoRevision({ token, data, api, showMsg, identity = null, embe
         {data.clientName && !isMobile && <span style={{ color: BRAND.muted, fontSize: 13 }}>· {data.clientName}</span>}
         <div style={{ marginLeft: isMobile ? 0 : 'auto', width: isMobile ? '100%' : undefined,
           display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          {videos.length > 1 && (
+          {videos.length > 1 && (<>
+            <button onClick={() => setPicking(true)} title="Back to all the videos on this project"
+              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                padding: isMobile ? '9px 12px' : '7px 12px', borderRadius: 8, font: 'inherit',
+                border: `1px solid ${BRAND.border}`, background: '#fff', color: BRAND.ink, fontSize: 13,
+                fontWeight: 600, cursor: 'pointer' }}>
+              <LayoutGrid size={15} color={BRAND.blue} /> All videos
+            </button>
             <div title="This project has more than one video — switch between them here"
               style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px 5px 12px',
                 borderRadius: 10, border: `2px solid ${BRAND.blue}`, background: '#EAF6FB',
@@ -467,7 +525,7 @@ export function VideoRevision({ token, data, api, showMsg, identity = null, embe
                 {videos.map(v => <option key={v.id} value={v.id}>{v.title}</option>)}
               </select>
             </div>
-          )}
+          </>)}
           {versions.length > 1 && (
             <select value={version.id} onChange={e => setVersionId(e.target.value)}
               style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${BRAND.border}`,

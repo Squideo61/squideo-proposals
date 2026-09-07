@@ -3,7 +3,7 @@
 // creation order — so an email about video 3 opened video 1, usually on a draft
 // the client had already signed off.
 import { describe, it, expect } from 'vitest';
-import { pickReviewDefault, newestVersion } from '../src/lib/reviewDefaults.js';
+import { pickReviewDefault, newestVersion, shouldOpenMenu, draftForItem } from '../src/lib/reviewDefaults.js';
 
 const V = (id, n, iso) => ({ id, versionNumber: n, createdAt: iso });
 const awaiting = (v) => !v.approvedAt && !v.feedbackSubmittedAt;
@@ -67,5 +67,40 @@ describe('newestVersion', () => {
   it('handles an item with no drafts', () => {
     expect(newestVersion({ versions: [] })).toBeNull();
     expect(newestVersion(null)).toBeNull();
+  });
+});
+
+// The client-POV change: a multi-video project opens on a grid of the videos
+// instead of dropping the client inside one, because the header dropdown that
+// used to be the only way between them was routinely missed.
+describe('shouldOpenMenu', () => {
+  it('opens the menu only when there is more than one item', () => {
+    expect(shouldOpenMenu(videos)).toBe(true);
+    expect(shouldOpenMenu([videos[0]])).toBe(false);
+    expect(shouldOpenMenu([])).toBe(false);
+    expect(shouldOpenMenu(null)).toBe(false);
+  });
+});
+
+describe('draftForItem', () => {
+  it('opens a card on its latest draft', () => {
+    expect(draftForItem(videos, 'v1')).toBe('a2');
+    expect(draftForItem(videos, 'v3')).toBe('c2');
+  });
+
+  it('honours a per-draft link, but only for the item that link named', () => {
+    const initial = { itemId: 'v1', versionId: 'a1' };
+    expect(draftForItem(videos, 'v1', initial)).toBe('a1');
+    expect(draftForItem(videos, 'v3', initial)).toBe('c2');
+  });
+
+  it('ignores a draft the client can no longer see', () => {
+    // e.g. the team pulled that draft after sending the link.
+    expect(draftForItem(videos, 'v1', { itemId: 'v1', versionId: 'gone' })).toBe('a2');
+  });
+
+  it('has nothing to open for an item with no drafts', () => {
+    expect(draftForItem([{ id: 'v0', versions: [] }], 'v0')).toBeNull();
+    expect(draftForItem(videos, 'nope')).toBeNull();
   });
 });

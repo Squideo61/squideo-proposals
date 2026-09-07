@@ -55,3 +55,24 @@ export function pickReviewDefault(items, { itemId = null, versionId = null, isAw
   const pool = awaiting.length ? awaiting : withDrafts;
   return on(pool.slice().sort((a, b) => lastDraftAt(b) - lastDraftAt(a))[0]);
 }
+
+// ── The item menu ───────────────────────────────────────────────────────────
+// A share token covers the whole project, and until now the only way between
+// its videos/storyboards was a dropdown in the top-right of the header, which
+// clients kept missing: they reviewed the one they landed on and never saw the
+// rest. Multi-item projects now open on a grid of cards instead.
+export function shouldOpenMenu(items) {
+  return (items || []).length > 1;
+}
+
+// Which draft a card opens on. The doc's rule is "the latest draft", with one
+// carve-out: a link that named a specific draft (&draft=) still honours it for
+// the item it named, so a per-draft link the team sent lands where it says.
+export function draftForItem(items, id, initial = null) {
+  const item = (items || []).find(it => it.id === id) || null;
+  if (initial && initial.itemId === id && initial.versionId
+      && (item?.versions || []).some(v => v.id === initial.versionId)) {
+    return initial.versionId;
+  }
+  return newestVersion(item)?.id || null;
+}

@@ -1,12 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { MessageSquare, Send, Images, Paperclip, X, FileDown, CheckCircle2, CalendarClock, MapPin, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Pencil, Trash2 } from 'lucide-react';
+import { MessageSquare, Send, Images, Paperclip, X, FileDown, CheckCircle2, CalendarClock, MapPin, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Pencil, Trash2, LayoutGrid } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { useIsMobile } from '../../utils.js';
 import { loadPdf } from '../../lib/pdf.js';
 import { PdfPage } from './PdfPage.jsx';
 import { PdfThumb } from './PdfThumb.jsx';
 import { ConflictBanner } from '../revision/ConflictBanner.jsx';
-import { pickReviewDefault, newestVersion } from '../../lib/reviewDefaults.js';
+import { ReviewPicker } from '../revision/ReviewPicker.jsx';
+import { pickReviewDefault, newestVersion, shouldOpenMenu, draftForItem } from '../../lib/reviewDefaults.js';
 
 const NAME_KEY = 'squideo.storyboard.name';
 const EMAIL_KEY = 'squideo.storyboard.email';
@@ -108,6 +109,15 @@ function CommentAttachment({ url, name, type }) {
       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name || 'Download file'}</span>
     </a>
   );
+}
+
+// Card picture for the storyboard menu: page 1 of the latest draft, rendered
+// by the same pdf.js thumbnailer the slide rail uses. Fixed-width because
+// PdfThumb rasterises at a set size; the card's 4:3 well is close enough to a
+// landscape storyboard page that it reads as a page, not a crop.
+function StoryboardThumb({ url }) {
+  if (!url) return null;
+  return <PdfThumb url={url} pageNumber={1} width={320} />;
 }
 
 /**
@@ -219,6 +229,24 @@ export function StoryboardRevision({ token, data, api, showMsg, identity = null,
     setPageNumber(1);
     setDraftPin(null);
   }
+
+  // ── "Which storyboard?" menu ────────────────────────────────────────────────
+  // Same change as the video viewer: a project with more than one storyboard
+  // opens on a grid of them, because the header dropdown was routinely missed
+  // and clients reviewed only the one they landed on. The dropdowns (storyboard
+  // + draft) stay in the header once they're inside one.
+  const [picking, setPicking] = useState(() => shouldOpenMenu(storyboards));
+
+  function openStoryboard(id) {
+    // The link's own draft wins for the storyboard it named (&draft=); every
+    // other card opens on its latest draft.
+    setStoryboardId(id);
+    setVersionId(draftForItem(storyboards, id, initial));
+    setPageNumber(1);
+    setDraftPin(null);
+    setPicking(false);
+  }
+
   function selectVersion(id) {
     setVersionId(id);
     setPageNumber(1);
@@ -408,11 +436,13 @@ export function StoryboardRevision({ token, data, api, showMsg, identity = null,
     }
   }
 
-  // Record a view whenever the client lands on / switches to a draft.
+  // Record a view whenever the client opens / switches to a draft. Not while
+  // they're still on the menu: nothing has been looked at yet, and stamping a
+  // view there would tell the team a draft had been read when it hadn't.
   useEffect(() => {
-    if (!identified || !version) return;
+    if (!identified || !version || picking) return;
     api.recordStoryboardView(token, { versionId: version.id, name, email });
-  }, [identified, version?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [identified, version?.id, picking]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Live updates + presence heartbeat: poll publicView every ~6s once the
   // viewer has identified themselves. Refreshes comments and the
@@ -508,6 +538,45 @@ export function StoryboardRevision({ token, data, api, showMsg, identity = null,
     );
   }
 
+  // ── The storyboard menu (multi-storyboard projects only) ────────────────────
+  function storyboardStatus(sb) {
+    const latest = newestVersion(sb);
+    if (!latest) return { label: 'Not ready yet', tone: 'none' };
+    const draftName = draftLabel(latest);
+    const slides = latest.pageCount ? `${latest.pageCount} slide${latest.pageCount === 1 ? '' : 's'}` : null;
+    const ap = approvals[sb.id];
+    // An approval only closes the draft it was given for, so a newer draft
+    // since then is a fresh round and still needs the client.
+    const signedOff = ap && (ap.version == null || (latest.versionNumber ?? 0) <= ap.version);
+    if (signedOff) return { label: 'Approved', tone: 'done', sub: draftName, corner: slides };
+    if (submitted[sb.id]) return { label: 'Feedback sent', tone: 'sent', sub: draftName, corner: slides };
+    const mine = comments.filter(c => (sb.versions || []).some(x => x.id === c.versionId)).length;
+    return {
+      label: 'Awaiting your review',
+      tone: 'waiting',
+      sub: mine ? `${draftName} · ${mine} comment${mine === 1 ? '' : 's'}` : draftName,
+      corner: slides,
+    };
+  }
+
+  if (picking) {
+    return (
+      <ReviewPicker
+        icon={Images}
+        title={data.title}
+        clientName={data.clientName}
+        items={storyboards}
+        noun="storyboard"
+        thumbAspect="4 / 3"
+        statusFor={storyboardStatus}
+        highlightId={initialStoryboardId || (initialVersionId ? initial.itemId : null)}
+        renderThumb={sb => <StoryboardThumb url={newestVersion(sb)?.pdfUrl} />}
+        onOpen={openStoryboard}
+        embedded={embedded}
+      />
+    );
+  }
+
   const pages = Array.from({ length: pageCount }, (_, i) => i + 1);
   const railProps = { pages, pageNumber, goToPage, comments, versionId: version.id, pdfUrl: version.pdfUrl };
 
@@ -525,7 +594,14 @@ export function StoryboardRevision({ token, data, api, showMsg, identity = null,
         {data.clientName && !isMobile && <span style={{ color: BRAND.muted, fontSize: 13 }}>· {data.clientName}</span>}
         <div style={{ marginLeft: isMobile ? 0 : 'auto', width: isMobile ? '100%' : undefined,
           display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          {storyboards.length > 1 && (
+          {storyboards.length > 1 && (<>
+            <button onClick={() => setPicking(true)} title="Back to all the storyboards on this project"
+              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                padding: isMobile ? '9px 12px' : '7px 12px', borderRadius: 8, font: 'inherit',
+                border: `1px solid ${BRAND.border}`, background: '#fff', color: BRAND.ink, fontSize: 13,
+                fontWeight: 600, cursor: 'pointer' }}>
+              <LayoutGrid size={15} color={BRAND.blue} /> All storyboards
+            </button>
             <div title="This project has more than one storyboard — switch between them here"
               style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px 5px 12px',
                 borderRadius: 10, border: `2px solid ${BRAND.blue}`, background: '#EAF6FB',
@@ -540,7 +616,7 @@ export function StoryboardRevision({ token, data, api, showMsg, identity = null,
                 {storyboards.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}
               </select>
             </div>
-          )}
+          </>)}
           {versions.length > 1 && (
             <select value={version.id} onChange={e => selectVersion(e.target.value)}
               style={{ padding: '6px 10px', borderRadius: 8, border: `1px solid ${BRAND.border}`,
