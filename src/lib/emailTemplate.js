@@ -78,3 +78,47 @@ export function unfillTemplate(html, subs) {
   }
   return out.trim();
 }
+
+// Clean up after a placeholder that filled to nothing. The case that matters is
+// the greeting: with no name stored in the CRM, "Hi {{first_name}}," has to read
+// "Hi" — not "Hi ," and certainly not the raw placeholder. Two passes, because
+// the name is often bold, so it leaves an empty <strong> behind as well as the
+// comma. A greeting that DID get a name has real text between it and the comma,
+// so neither pass touches it.
+const EMPTY_INLINE_TAG = /<(b|strong|i|em|u|span|font)\b[^>]*>(?:\s|&nbsp;)*<\/\1>/gi;
+const EMPTY_GREETING = /\b(Hi|Hello|Hey|Dear|Good morning|Good afternoon)(?:\s|&nbsp;)*([,!])/gi;
+
+export function tidyGreeting(html) {
+  let out = String(html || '');
+  // Loop for nesting (<strong><span></span></strong>); a handful of passes is
+  // plenty and the guard stops a pathological body spinning.
+  for (let i = 0; i < 5; i++) {
+    const next = out.replace(EMPTY_INLINE_TAG, '');
+    if (next === out) break;
+    out = next;
+  }
+  return out.replace(EMPTY_GREETING, '$1');
+}
+
+// Markers that mean "somebody was supposed to type something here": our own
+// {{placeholder}} syntax, the [square bracket] convention people type by hand
+// into a saved template, and a lone "#" standing in for a number.
+//
+// Takes PLAIN TEXT, not HTML — a hex colour in a style attribute or a bracketed
+// query string in an href is not a blank the client would ever see, and the
+// point of this is what the client sees.
+const PLACEHOLDER_PATTERNS = [
+  /\{\{\s*[a-z_]+\s*\}\}/gi,
+  /\[[^\]\n]{1,40}\]/g,
+  // A bare hash as its own word, so "#4", "#squideo" and "#2BB8E6" don't count.
+  /(?:^|\s)(#)(?=\s|$)/gm,
+];
+
+export function findUnfilledPlaceholders(text) {
+  const s = String(text || '');
+  const found = new Set();
+  for (const re of PLACEHOLDER_PATTERNS) {
+    for (const m of s.matchAll(re)) found.add((m[1] || m[0]).trim());
+  }
+  return [...found];
+}

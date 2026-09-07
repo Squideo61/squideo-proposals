@@ -13,6 +13,7 @@ import { useIsMobile, fileSizeLabel } from '../../utils.js';
 import { Modal, FormRow } from '../ui.jsx';
 import { EmojiPickerButton, insertEmojiIntoEditable } from '../EmojiPicker.jsx';
 import { sanitizeEmailHtml, htmlToPlainText, isHtmlEmpty } from '../../lib/emailHtml.js';
+import { fillTemplate, unfillTemplate, tidyGreeting, findUnfilledPlaceholders } from '../../lib/emailTemplate.js';
 import { NewDealModal } from './PipelineView.jsx';
 import { DealSearchPicker } from './DealSearchPicker.jsx';
 import { TaskFormModal } from './TaskFormModal.jsx';
@@ -165,15 +166,65 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
     actions.loadEmailTemplates();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Who the email is actually going to, for a template's placeholders: the
+  // contact the composer was opened with, else whoever in the CRM owns the
+  // first "To" address (the composer is often opened from a thread rather than
+  // from a contact).
+  const recipientContact = useMemo(() => {
+    if (contact?.email) return contact;
+    const first = (to || '').split(',')[0].trim().toLowerCase();
+    if (!first) return null;
+    return Object.values(state.contacts || {})
+      .find((c) => (c.email || '').toLowerCase() === first) || null;
+  }, [contact, to, state.contacts]);
+
+  // Values for a template's {{placeholders}}. Every key is present even when we
+  // have nothing to put in it, so fillTemplate blanks it rather than leaving the
+  // raw {{...}} to reach the client. first_name deliberately falls back to ''
+  // and not to the address's local part ("sl860@..." -> "Sl860" reads worse than
+  // no name at all); tidyGreeting then turns "Hi {{first_name}}," into "Hi".
+  const templateVars = () => {
+    const c = recipientContact;
+    const companyId = c?.companyId || deal?.companyId || null;
+    return {
+      first_name: String(c?.name || '').trim().split(/\s+/)[0] || '',
+      name: c?.name || '',
+      email: c?.email || (to || '').split(',')[0].trim(),
+      company: (companyId && state.companies?.[companyId]?.name) || '',
+      project_title: deal?.title || '',
+      video_title: deal?.title || '',
+      sender: state.session?.name || '',
+    };
+  };
+
+  // The reverse, for saving a draft back as a template: put the placeholders
+  // back where their values landed, so one client's name and project aren't
+  // baked into every future send. Order matters, most specific first, so
+  // "Laura" inside "Laura Katus" isn't matched on its own before the full name.
+  const asTemplateHtml = () => {
+    const v = templateVars();
+    return unfillTemplate(body, [
+      [v.email, 'email'],
+      [v.company, 'company'],
+      [v.project_title, 'project_title'],
+      [v.name, 'name'],
+      [v.first_name, 'first_name'],
+    ]);
+  };
+
   // Load a template into the composer. Sets the subject (if the template has
   // one) and replaces the body — pushing the HTML straight into the
   // contentEditable since the editor is uncontrolled.
   const loadTemplate = (t) => {
+    // Fill the {{placeholders}} from the deal and contact in front of the user,
+    // so a template's blanks never reach the client as raw placeholder text.
+    const filled = fillTemplate({ subject: t.subject || '', bodyHtml: t.bodyHtml || '' }, templateVars());
     // Only adopt the template's subject when the composer doesn't already have
     // one — a reply (or anything mid-typed) keeps its subject rather than being
     // overwritten, so you never have to re-type "Re: …".
-    if (t.subject && !subject.trim()) setSubject(t.subject);
-    const html = t.bodyHtml || '';
+    if (filled.subject && !subject.trim()) setSubject(filled.subject);
+    // tidyGreeting mops up a greeting whose name resolved to nothing.
+    const html = tidyGreeting(filled.bodyHtml);
     setBody(html);
     if (editorRef.current) editorRef.current.innerHTML = html;
     setShowTemplates(false);
@@ -219,9 +270,10 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
     if (!name || !name.trim()) return;
     setTemplateBusy(true);
     try {
+      const tplHtml = asTemplateHtml();
       await actions.saveEmailTemplate({
         name: name.trim(), subject: subject.trim() || null,
-        bodyHtml: body, bodyText: htmlToPlainText(body), visibility,
+        bodyHtml: tplHtml, bodyText: htmlToPlainText(tplHtml), visibility,
       });
       showMsg(visibility === 'private' ? 'Private template saved' : 'Team template saved');
     } catch (err) {
@@ -237,9 +289,10 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
     if (!window.confirm(`Overwrite “${t.name}” with the current email?`)) return;
     setTemplateBusy(true);
     try {
+      const tplHtml = asTemplateHtml();
       await actions.updateEmailTemplate(t.id, {
         subject: subject.trim() || null,
-        bodyHtml: body, bodyText: htmlToPlainText(body),
+        bodyHtml: tplHtml, bodyText: htmlToPlainText(tplHtml),
       });
       showMsg(`Updated template “${t.name}”`);
     } catch (err) {
@@ -376,10 +429,26 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
     if (sendIntervalRef.current) { clearInterval(sendIntervalRef.current); sendIntervalRef.current = null; }
   };
 
+  // Last line of defence against a template's blanks reaching the client. The
+  // fields a human was meant to fill ("[name]", "# words") aren't placeholders
+  // the CRM can fill for them, so all we can do is not let them go out
+  // unnoticed. A warning rather than a block: a legitimate email can contain a
+  // "#", and refusing to send it would be worse than asking.
+  const confirmPlaceholders = () => {
+    const found = findUnfilledPlaceholders(htmlToPlainText(body));
+    if (!found.length) return true;
+    return window.confirm(
+      'This email still has ' + (found.length === 1 ? 'a blank' : 'blanks')
+      + ' nobody has filled in:\n\n' + found.join('    ')
+      + '\n\nSend it anyway?',
+    );
+  };
+
   // Start the undo window: count down from 8s, then actually send. doSend's
   // success path closes/refreshes; on failure the composer stays open.
   const beginSend = () => {
     if (!canSend || countdown != null) return;
+    if (!confirmPlaceholders()) return;
     setError('');
     setCountdown(SEND_DELAY_SECONDS);
     sendIntervalRef.current = setInterval(() => {
@@ -436,6 +505,7 @@ export function EmailComposerModal({ deal, contact, initialDraft = null, onClose
       setError('Pick a send time in the future.');
       return;
     }
+    if (!confirmPlaceholders()) return;
     setError('');
     setScheduling(true);
     try {
