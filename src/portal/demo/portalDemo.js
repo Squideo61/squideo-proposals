@@ -110,7 +110,7 @@ export const isDemoMode = () => !!getDemoState();
 // with .example addresses (a reserved TLD that can never be registered) and a
 // product named after the invented company, so it cannot drift onto a real
 // one later.
-const COMPANY = { id: 'demo-co', name: 'Northwind Care Group', prospect: false, creditVisible: true, logoUrl: null };
+const COMPANY = { id: 'demo-co', name: 'Northwind Care Group', prospect: false, creditVisible: true, hasSignedProject: true, logoUrl: null };
 
 // The org as the SELECTED state sees it. A prospect — someone who signed
 // themselves up off a landing page and has no project yet — gets a portal that
@@ -118,8 +118,13 @@ const COMPANY = { id: 'demo-co', name: 'Northwind Care Group', prospect: false, 
 // starts", the header offers the brief rather than "New video", and the rate
 // card is gone. The demo has to reproduce that, or the one state that shows the
 // newest visitor's experience is the one state that shows it wrong.
+//
+// `hasSignedProject` follows the state's own deal stage rather than being
+// hard-coded, so the one thing it controls — whether the sample project is
+// still in the rail — is demoable: it's there for the prospect, and gone from
+// every state after they've signed.
 const companyFor = (state) => (state === 'prospect'
-  ? { ...COMPANY, prospect: true, creditVisible: false }
+  ? { ...COMPANY, prospect: true, creditVisible: false, hasSignedProject: false }
   : COMPANY);
 // hasPassword:false on purpose — the demo cast are self-serve signups, which
 // is what makes the 'set a password' offer on the finished brief visible here.
@@ -332,6 +337,11 @@ function project(s) {
     createdAt: ago(60 * 24 * 26),
     deliveryDeadline: soon(60 * 24 * 21),
     nextStep: s.nextStep,
+    // Northwind is a fixed-price job, so there's no pot of minutes to draw
+    // down and the credit card stays off the page. Stated rather than omitted:
+    // the field is part of the real payload's shape now, and a fixture that
+    // quietly lacks it can't tell a deliberate null from a forgotten one.
+    credit: null,
     tasks: s.tasks,
     openTasks: s.tasks.filter((t) => t.status !== 'done').length,
     extrasAvailable: s.extras,

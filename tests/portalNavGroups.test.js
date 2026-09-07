@@ -83,6 +83,37 @@ describe('navGroups', () => {
   });
 });
 
+// The sample project is an argument, and once it's been won it's clutter. A
+// made-up job sitting in the rail next to the real one they've just paid for
+// reads as confusing rather than reassuring — so signing retires it.
+describe('the sample project retires at signing', () => {
+  it('keeps it for anyone who has not signed yet', () => {
+    // Both halves of "not signed": the lead-magnet prospect, and the company
+    // sitting on a proposal we've sent. The second is exactly the person
+    // wondering what reviewing a draft will be like.
+    expect(keys(navGroups(PROSPECT, true))).toContain('demo');
+    expect(keys(navGroups({ ...CLIENT, hasSignedProject: false }, true))).toContain('demo');
+  });
+
+  it('drops it once they have signed', () => {
+    expect(keys(navGroups({ ...CLIENT, hasSignedProject: true }, true))).not.toContain('demo');
+  });
+
+  it('takes nothing else with it', () => {
+    const signed = keys(navGroups({ ...CLIENT, hasSignedProject: true }, true));
+    const unsigned = keys(navGroups({ ...CLIENT, hasSignedProject: false }, true));
+    expect(unsigned.filter((v) => v !== 'demo')).toEqual(signed);
+  });
+
+  it('treats an unknown flag as not signed, and keeps the sample', () => {
+    // Same defensive direction as creditVisible, pointed the other way: an
+    // older session payload should show one section too many rather than hide
+    // one. CLIENT itself carries no flag.
+    expect(keys(navGroups(CLIENT, true))).toContain('demo');
+    expect(keys(navGroups(null, true))).toContain('demo');
+  });
+});
+
 // The demo is how anyone at Squideo actually looks at this. Its "prospect"
 // state used to hand back a company flagged prospect:false, so the one state
 // meant to show a brand-new visitor's portal was the one state showing it
@@ -96,6 +127,8 @@ describe('the demo prospect state', () => {
     // And no rate card, the same as a real prospect — see CLIENT_ONLY.
     expect(company.creditVisible).toBe(false);
     expect(navGroups(company, true)).toHaveLength(2);
+    // The shop window is the whole point of this state.
+    expect(keys(navGroups(company, true))).toContain('demo');
   });
 
   it('leaves the client states alone', async () => {
@@ -104,5 +137,7 @@ describe('the demo prospect state', () => {
     const { company } = await demoRequest('GET', 'overview');
     expect(company.prospect).toBe(false);
     expect(navGroups(company, true)).toHaveLength(1);
+    // …and has signed, so the sample project has done its job and gone.
+    expect(keys(navGroups(company, true))).not.toContain('demo');
   });
 });

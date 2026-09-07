@@ -9,7 +9,7 @@ import sql from '../db.js';
 import { ensurePortalTables } from './db.js';
 import { verifyPortalToken, readPortalCookie, readPreviewHeader } from './auth.js';
 import { portalLogoPath } from './logo.js';
-import { creditVisibleFor, hasProjectFor } from '../crm/companyCredit.js';
+import { creditVisibleFor, clientOrgFlags } from '../crm/companyCredit.js';
 
 // Cache key for the logo URL: null when the org has never had one uploaded (a
 // proposal-derived fallback logo doesn't change, so it needs no version).
@@ -57,7 +57,7 @@ export async function requirePortalAuth(req, res) {
          ))
        LIMIT 1
     `;
-    const previewHasProject = (await hasProjectFor([co.id])).has(co.id);
+    const previewFlags = (await clientOrgFlags([co.id])).get(co.id) || {};
     return {
       puid: null,
       isPreview: true,
@@ -71,8 +71,9 @@ export async function requirePortalAuth(req, res) {
       companies: [{
         id: co.id, name: co.name, prospect: co.prospect === true,
         creditVisible: creditVisibleFor({
-          creditEnabled: co.credit_enabled, prospect: co.prospect, hasProject: previewHasProject,
+          creditEnabled: co.credit_enabled, prospect: co.prospect, hasProject: previewFlags.hasProject === true,
         }),
+        hasSignedProject: previewFlags.signed === true,
         logoUrl: logo ? portalLogoPath(co.id, logoVersion(logo.logo_updated_at)) : null,
       }],
     };
@@ -128,12 +129,12 @@ export async function requirePortalAuth(req, res) {
     res.status(403).json({ error: 'No active organisation membership' });
     return null;
   }
-  // Which of their orgs are clients rather than prospects — a deal in
-  // production, or credit already bought. Its own round trip rather than a
-  // subquery on the join above, so that a schema surprise degrades to "no
-  // project" (recoverable with the staff override) instead of 500ing every
-  // portal request. Only the rate card reads it.
-  const clientOrgs = await hasProjectFor(memberships.map((m) => m.company_id));
+  // Where each of their orgs sits with us — a deal in production or credit
+  // already bought (the rate card), and whether they've signed anything (the
+  // sample project). Its own round trip rather than a subquery on the join
+  // above, so that a schema surprise degrades to "no project" (recoverable with
+  // the staff override) instead of 500ing every portal request.
+  const orgFlags = await clientOrgFlags(memberships.map((m) => m.company_id));
   return {
     puid: u.id,
     email: u.email,
@@ -156,8 +157,11 @@ export async function requirePortalAuth(req, res) {
       creditVisible: creditVisibleFor({
         creditEnabled: m.credit_enabled,
         prospect: m.prospect,
-        hasProject: clientOrgs.has(m.company_id),
+        hasProject: orgFlags.get(m.company_id)?.hasProject === true,
       }),
+      // Have they signed anything with us? The rail stops offering the sample
+      // project once they have — see visibleNav.
+      hasSignedProject: orgFlags.get(m.company_id)?.signed === true,
     })),
   };
 }

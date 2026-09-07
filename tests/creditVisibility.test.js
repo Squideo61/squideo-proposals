@@ -13,7 +13,7 @@ vi.mock('../api/_lib/db.js', async () => {
 });
 
 import { setSqlHandler, resetSqlMock, getSqlCalls } from './helpers/mockDb.js';
-import { creditVisibleFor, creditAccessLabel, hasProjectFor } from '../api/_lib/crm/companyCredit.js';
+import { creditVisibleFor, creditAccessLabel, hasProjectFor, clientOrgFlags } from '../api/_lib/crm/companyCredit.js';
 
 beforeEach(() => resetSqlMock());
 
@@ -77,21 +77,50 @@ describe('creditAccessLabel', () => {
   });
 });
 
+// One row per company, with every flag off unless the test names it.
+const flagRow = (id, on = {}) => ({
+  id,
+  in_production: false,
+  holds_partner_credit: false,
+  holds_deal_credit: false,
+  signed: false,
+  ...on,
+});
+
 describe('hasProjectFor', () => {
-  it('counts a deal in production and a credit balance as the same thing', async () => {
-    setSqlHandler(() => [{ id: 'co-in-production' }, { id: 'co-holds-credit' }]);
-    const out = await hasProjectFor(['co-in-production', 'co-holds-credit', 'co-proposal-only']);
+  it('counts production and EITHER credit ledger as the same thing', async () => {
+    setSqlHandler(() => [
+      flagRow('co-in-production', { in_production: true }),
+      flagRow('co-holds-credit', { holds_partner_credit: true }),
+      // The gap this was widened for: a Content Credit sale books the minutes
+      // onto the DEAL, not a partner subscription. Fifteen minutes bought and
+      // sitting there used to read as "no project", which hid the client's own
+      // balance from them until their first video reached production.
+      flagRow('co-content-credit', { holds_deal_credit: true }),
+      flagRow('co-proposal-only'),
+    ]);
+    const out = await hasProjectFor(['co-in-production', 'co-holds-credit', 'co-content-credit', 'co-proposal-only']);
     expect(out.has('co-in-production')).toBe(true);
     expect(out.has('co-holds-credit')).toBe(true);
+    expect(out.has('co-content-credit')).toBe(true);
     expect(out.has('co-proposal-only')).toBe(false);
 
     const [{ text }] = getSqlCalls();
     // A deal that entered production before production_entered_at existed still
     // counts, hence both columns.
     expect(text).toMatch(/production_entered_at IS NOT NULL OR d\.production_phase IS NOT NULL/);
-    // …and so does credit already paid for, via either deterministic link.
+    // …and so does credit already paid for, through either ledger.
     expect(text).toMatch(/partner_subscriptions/);
     expect(text).toMatch(/manual_portalcredit_/);
+    expect(text).toMatch(/project_retainers/);
+  });
+
+  it('does not treat merely signing as having a project', async () => {
+    // Signing is what retires the sample project, not what opens the rate card:
+    // a signed deal with nothing bought and nothing in production is still
+    // being scoped, and £/min would undercut the invoice we're about to send.
+    setSqlHandler(() => [flagRow('co-signed', { signed: true })]);
+    expect((await hasProjectFor(['co-signed'])).size).toBe(0);
   });
 
   it('asks nothing when there are no companies to ask about', async () => {
@@ -107,5 +136,34 @@ describe('hasProjectFor', () => {
     setSqlHandler(() => Promise.reject(new Error('column "company_id" does not exist')));
     const out = await hasProjectFor(['co-1']);
     expect(out.size).toBe(0);
+  });
+});
+
+// The second half of the same round trip: where a company sits with us, for the
+// two questions the portal asks on every request.
+describe('clientOrgFlags — signed', () => {
+  it('counts a signed or paid deal', async () => {
+    setSqlHandler(() => [flagRow('co-1', { signed: true })]);
+    expect((await clientOrgFlags(['co-1'])).get('co-1')).toMatchObject({ signed: true, hasProject: false });
+    const [{ text }] = getSqlCalls();
+    expect(text).toMatch(/stage IN \('signed', 'paid'\)/);
+  });
+
+  it('counts a deal in production whose stage moved on afterwards', async () => {
+    setSqlHandler(() => [flagRow('co-1', { in_production: true })]);
+    expect((await clientOrgFlags(['co-1'])).get('co-1').signed).toBe(true);
+  });
+
+  it('leaves a prospect and a proposal-only company unsigned', async () => {
+    setSqlHandler(() => [flagRow('co-1')]);
+    expect((await clientOrgFlags(['co-1'])).get('co-1').signed).toBe(false);
+  });
+
+  it('returns no entry at all when the query fails', async () => {
+    // The caller reads a missing entry as "not signed", which shows the sample
+    // project to someone past needing it — one section too many, rather than a
+    // client losing a section they use.
+    setSqlHandler(() => Promise.reject(new Error('boom')));
+    expect((await clientOrgFlags(['co-1'])).size).toBe(0);
   });
 });

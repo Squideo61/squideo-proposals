@@ -61,48 +61,90 @@ export function creditAccessLabel({ creditEnabled = null, prospect = false, hasP
     : { on: false, why: 'Hidden by default — nothing is in production yet, and a proposal isn’t a project' };
 }
 
-// Which of these companies count as clients for the rule above.
+// Where a company sits with us, as the portal needs to know it. One query for
+// two questions the portal asks on every request, because they read the same
+// three tables and a second round trip would buy nothing.
 //
-// Two ways in, because the rate card follows the money rather than the
-// paperwork:
+// `hasProject` — do they count as a client for the rate-card rule above? Three
+// ways in, because the rate card follows the money rather than the paperwork:
 //   1. a deal that has entered production — the "Good to go" gate, i.e. signed,
 //      paid or on a PO. `production_entered_at` is NULL on deals that went into
 //      production before that column existed, hence the phase check too.
-//   2. they already hold credit — buying is itself proof they're a client, and
-//      nobody may ever be locked out of a balance they've paid for. Matched on
-//      the two deterministic links (an explicitly bound subscription, and the
-//      `manual_portalcredit_<companyId>` anchor a portal purchase creates); the
-//      fuzzy name/Xero matching in clientKeysForCompany is deliberately left
-//      out — it costs a join per request, and every client it would find has a
-//      project anyway.
+//   2. they already hold PARTNER credit — buying is itself proof they're a
+//      client, and nobody may ever be locked out of a balance they've paid for.
+//      Matched on the two deterministic links (an explicitly bound
+//      subscription, and the `manual_portalcredit_<companyId>` anchor a portal
+//      purchase creates); the fuzzy name/Xero matching in clientKeysForCompany
+//      is deliberately left out — it costs a join per request, and every client
+//      it would find has a project anyway.
+//   3. a deal of theirs has an active credit-based project — the minutes a
+//      Content Credit sale books onto the deal. This is the same promise as
+//      (2) through the other ledger: the credit is bought and sitting there, so
+//      hiding the page that shows the balance means selling someone fifteen
+//      minutes of video and then not telling them they have it. It was the gap
+//      that made a signed content-credit client's own balance invisible to them
+//      until their first video reached production.
 //
-// Returns a Set of the ids that qualify. Guarded: if either table is missing a
-// column this must not take the whole portal down with it, and the caller
-// treats an empty result as "no project" — which the staff override can undo.
-export async function hasProjectFor(companyIds = []) {
+// `signed` — have they actually bought something? Used by the portal rail to
+// stop offering the sample project to someone who is past needing it. Stage
+// signed/paid is the paperwork; in-production covers a deal whose stage was
+// moved on afterwards.
+//
+// Returns a Map of id → { hasProject, signed }. Guarded: if any of these tables
+// is missing a column this must not take the whole portal down with it, and
+// callers treat a missing entry as the cautious answer — no project (which the
+// staff override can undo) and not signed (which shows one section too many
+// rather than hiding one).
+export async function clientOrgFlags(companyIds = []) {
   const ids = (companyIds || []).filter(Boolean);
-  if (!ids.length) return new Set();
+  const out = new Map();
+  if (!ids.length) return out;
   const rows = await sql`
-    SELECT c.id
+    SELECT c.id,
+           EXISTS (
+             SELECT 1 FROM deals d
+              WHERE d.company_id = c.id
+                AND (d.production_entered_at IS NOT NULL OR d.production_phase IS NOT NULL)
+           ) AS in_production,
+           EXISTS (
+             SELECT 1 FROM partner_subscriptions ps
+              WHERE ps.company_id = c.id
+                 OR ps.stripe_subscription_id = 'manual_portalcredit_' || c.id
+           ) AS holds_partner_credit,
+           EXISTS (
+             SELECT 1 FROM project_retainers r
+               JOIN deals rd ON rd.id = r.deal_id
+              WHERE rd.company_id = c.id
+                AND r.allocation_type = 'credits'
+                AND COALESCE(r.status, 'active') = 'active'
+           ) AS holds_deal_credit,
+           EXISTS (
+             SELECT 1 FROM deals sd
+              WHERE sd.company_id = c.id
+                AND sd.stage IN ('signed', 'paid')
+           ) AS signed
       FROM companies c
      WHERE c.id = ANY(${ids})
-       AND (
-         EXISTS (
-           SELECT 1 FROM deals d
-            WHERE d.company_id = c.id
-              AND (d.production_entered_at IS NOT NULL OR d.production_phase IS NOT NULL)
-         )
-         OR EXISTS (
-           SELECT 1 FROM partner_subscriptions ps
-            WHERE ps.company_id = c.id
-               OR ps.stripe_subscription_id = 'manual_portalcredit_' || c.id
-         )
-       )
   `.catch((err) => {
-    console.warn('[companyCredit] hasProjectFor failed', err.message);
+    console.warn('[companyCredit] clientOrgFlags failed', err.message);
     return [];
   });
-  return new Set(rows.map((r) => r.id));
+  for (const r of rows) {
+    out.set(r.id, {
+      hasProject: r.in_production === true || r.holds_partner_credit === true || r.holds_deal_credit === true,
+      signed: r.signed === true || r.in_production === true,
+    });
+  }
+  return out;
+}
+
+// Which of these companies count as clients for the rate-card rule. Thin
+// wrapper over clientOrgFlags so the two can never answer differently.
+export async function hasProjectFor(companyIds = []) {
+  const flags = await clientOrgFlags(companyIds);
+  const out = new Set();
+  for (const [id, f] of flags) if (f.hasProject) out.add(id);
+  return out;
 }
 
 // The rate to quote this company, most specific first:

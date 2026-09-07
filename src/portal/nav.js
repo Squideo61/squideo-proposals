@@ -57,13 +57,16 @@ const NAV = [
   // squideo.com can't drift apart. "Free" is dropped in here: they've already
   // got it, and still selling it to someone who owns it reads badly.
   { view: 'course', label: LEAD_MAGNET.navLabel, shortLabel: LEAD_MAGNET.navShort, hash: '#/course', Icon: GraduationCap, mobilePrimary: true, prospectPrimary: true },
-  // Shown to everyone, badged until they've opened it once. It was prospect-only
-  // and buried in an empty state, which meant the best thing in the portal was
-  // invisible to most of the people in it — including every client waiting on a
-  // first draft, who is exactly the person wondering what reviewing one is like.
-  // For a prospect it is the whole shop window, which is why it stays in the
-  // first group and gets a phone tab of its own.
-  { view: 'demo', label: 'Sample project', shortLabel: 'Sample', hash: '#/demo', Icon: Sparkles, needsSample: true, prospectPrimary: true },
+  // Shown to everyone who hasn't signed yet, badged until they've opened it
+  // once. It was prospect-only and buried in an empty state, which meant the
+  // best thing in the portal was invisible to most of the people in it —
+  // including someone sitting on a proposal, who is exactly the person
+  // wondering what reviewing a draft is like. For a prospect it is the whole
+  // shop window, which is why it stays in the first group and gets a phone tab
+  // of its own. It stops once they've signed: a made-up job sitting in the rail
+  // beside their real one reads as clutter, and the argument it exists to make
+  // has already been won. See `needsUnsigned`.
+  { view: 'demo', label: 'Sample project', shortLabel: 'Sample', hash: '#/demo', Icon: Sparkles, needsSample: true, needsUnsigned: true, prospectPrimary: true },
   { view: 'home', label: 'Current projects', shortLabel: 'Projects', hash: '#/', Icon: Home, mobilePrimary: true, group: 'later' },
   { view: 'library', label: 'Your Video Library', shortLabel: 'Library', hash: '#/library', Icon: Film, mobilePrimary: true, group: 'later' },
   { view: 'video-credit', label: 'Video credit', hash: '#/video-credit', Icon: Wallet, group: 'later' },
@@ -94,10 +97,16 @@ export function visibleNav(company, sampleAvailable = false) {
   // (an older session payload) falls through to visible rather than hiding a
   // paying client's own balance.
   const hideCredit = company?.creditVisible === false;
-  // The sample project appears for everyone, but only once there's something in
-  // it — see the `sampleProject` flag on /api/portal/me.
+  // Resolved server-side too (see clientOrgFlags). Compared against TRUE on
+  // purpose: an older session payload without the flag keeps the sample rather
+  // than hiding a section from someone who might still want it — the cautious
+  // direction here is one room too many, not one too few.
+  const signed = company?.hasSignedProject === true;
+  // The sample project appears for everyone who hasn't signed, but only once
+  // there's something in it — see the `sampleProject` flag on /api/portal/me.
   return NAV.filter((n) => !(hideCredit && n.view === 'video-credit'))
-    .filter((n) => !(n.needsSample && !sampleAvailable));
+    .filter((n) => !(n.needsSample && !sampleAvailable))
+    .filter((n) => !(n.needsUnsigned && signed));
 }
 
 // Is this org still a prospect — signed themselves up off a landing page and

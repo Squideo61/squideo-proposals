@@ -14,6 +14,46 @@ import {
   ArrowLeft, Video, PlayCircle, LayoutPanelTop, Sparkles, Upload, FileSignature, Mic, Download, Lock, Wallet,
 } from 'lucide-react';
 
+// What's left of the block of minutes this project was bought as.
+//
+// A content-credit client buys a pot up front — "15 minutes of animated
+// training content" — and every video comes out of it. Until now the only place
+// that number existed was the deal page in our CRM, so the person who'd just
+// paid for fifteen minutes had no way to see how many were left without asking
+// us. The pot IS the thing they bought; it belongs on the project.
+//
+// Absent entirely on a fixed-price project (`credit` is null), rather than
+// rendered as a nought.
+function CreditCard({ credit }) {
+  if (!credit || !(credit.allocated > 0)) return null;
+  const pct = Math.max(0, Math.min(100, (credit.used / credit.allocated) * 100));
+  const spent = credit.used > 0;
+  const mins = (n) => `${n} ${n === 1 ? 'minute' : 'minutes'}`;
+  return (
+    <Card>
+      <SectionHeading
+        right={(
+          <span style={{ fontSize: 15, fontWeight: 800, color: BRAND.ink, whiteSpace: 'nowrap' }}>
+            {mins(credit.remaining)} left
+          </span>
+        )}
+      >
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          <Wallet size={17} style={{ color: BRAND.blue, flexShrink: 0 }} /> Your video credit
+        </span>
+      </SectionHeading>
+      <div style={{ height: 7, background: '#E4EEF4', borderRadius: 999, overflow: 'hidden', margin: '0 0 8px' }}>
+        <div style={{ width: `${pct}%`, height: '100%', background: BRAND.blue }} />
+      </div>
+      <div style={{ fontSize: 12.5, color: BRAND.muted, lineHeight: 1.5 }}>
+        {spent
+          ? <>{mins(credit.used)} used of {mins(credit.allocated)}. Each video comes out of this balance as it's made.</>
+          : <>{mins(credit.allocated)} of finished video to spend on this project. Each video comes out of this balance as it's made.</>}
+      </div>
+    </Card>
+  );
+}
+
 function TasksCard({ tasks, dealId }) {
   const open = tasks.filter((t) => t.status !== 'done');
   if (!tasks.length) return null;
@@ -101,6 +141,11 @@ export default function ProjectDetail({ dealId }) {
       {project.inProduction && (
         <Card><PhaseTimeline production={project.production} /></Card>
       )}
+
+      {/* Above the next-step banner on purpose: on a credit project this is the
+          fact they came to look up, and burying it under the task list makes
+          them scroll past everything to find the one number they own. */}
+      <CreditCard credit={project.credit} />
 
       {/* Suppress the banner when it's just echoing the task list below it. */}
       {!(project.nextStep?.fromTasks && project.tasks?.length > 0) && (

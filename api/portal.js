@@ -54,6 +54,7 @@ import { getRoleForUser } from './_lib/userRoles.js';
 import { hasPermission } from './_lib/permissions.js';
 import { makeId, trimOrNull, lowerOrNull, ensureContactCompanies } from './_lib/crm/shared.js';
 import { ensureDealExtrasTable } from './_lib/crm/extras.js';
+import { dealCreditProjects } from './_lib/crm/retainers.js';
 import { buildNotificationEmail } from './quote-requests.js';
 import { ensurePortalTables } from './_lib/portal/db.js';
 import { logPortalActivity } from './_lib/portal/activity.js';
@@ -1480,6 +1481,24 @@ async function meRoutes(req, res, user) {
   return res.status(405).json({ error: 'Method not allowed' });
 }
 
+// A deal's credit-based project, as the client reads it: minutes bought up
+// front, minutes drawn down, minutes left. Rounded to 2dp because a retainer
+// entry can be logged in fractions of a minute and 14.999999999 in a client's
+// portal reads as a bug in our arithmetic.
+//
+// null when this project wasn't sold on credit, which is most of them — the
+// portal renders nothing at all rather than a "0 credits" line that would
+// invent a balance nobody bought.
+function portalCreditPool(pool) {
+  if (!pool) return null;
+  const round = (n) => Math.round((Number(n) || 0) * 100) / 100;
+  return {
+    allocated: round(pool.allocationAmount),
+    used: round(pool.used),
+    remaining: round(pool.remaining),
+  };
+}
+
 // Tag a serialised video with the client's own credit set aside for it, so the
 // portal can say "6 min of your credit" beside the video rather than leaving
 // the deduction on the credit page unexplained. `reserved` means the minutes
@@ -1515,6 +1534,9 @@ async function overviewRoute(req, res, user) {
   const creditByVideo = await allocationsByVideo(
     deals.flatMap((d) => (states.videos.get(d.id) || []).map((v) => v.id)),
   ).catch(() => new Map());
+  // The credit POOL each project was sold with, where it was sold that way —
+  // one query for all of them rather than two per deal.
+  const creditPools = await dealCreditProjects(deals.map((d) => d.id)).catch(() => new Map());
 
   const projects = [];
   for (const deal of deals) {
@@ -1526,6 +1548,7 @@ async function overviewRoute(req, res, user) {
     projects.push(serialisePortalDeal(deal, {
       nextStep,
       videos,
+      credit: portalCreditPool(creditPools.get(deal.id)),
       tasks,
       openTasks: countOpenTasks(tasks),
       extrasAvailable: offers.length,
@@ -1612,6 +1635,10 @@ async function projectRoute(req, res, user) {
   const rawVideos = states.videos.get(deal.id) || [];
   // Credit set aside against these videos (see withCreditMinutes).
   const projectCredit = await allocationsByVideo(rawVideos.map((v) => v.id)).catch(() => new Map());
+  // …and the pool those deductions come OUT of, when this project was sold as
+  // credit. Bought up front, drawn down per video — so the client can see what
+  // they have left without adding the videos up themselves.
+  const creditPool = (await dealCreditProjects([deal.id]).catch(() => new Map())).get(deal.id) || null;
   // Whether the signed-off video may be downloaded (deal paid in full or a staff
   // override) — gates the approved review-cut download below. Best-effort.
   let finalReleaseUnlocked = false;
@@ -1649,6 +1676,7 @@ async function projectRoute(req, res, user) {
       videos: rawVideos.map((v) => withCreditMinutes(
         serialisePortalVideo(v), projectCredit,
       )),
+      credit: portalCreditPool(creditPool),
       proposal: prop ? { id: prop.id, signed: !!prop.signature } : null,
       reviews: states.revLinks.get(deal.id) || [],
       storyboards: states.sbLinks.get(deal.id) || [],

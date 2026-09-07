@@ -199,6 +199,18 @@ function ProjectCard({ project }) {
         </div>
       </div>
 
+      {/* The pot this project was bought as, on the card rather than one click
+          in — a client who bought minutes wants the number on the way past,
+          not after opening the project to look for it. The full breakdown is
+          inside. */}
+      {project.credit?.allocated > 0 && (
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12.5, color: BRAND.ink }}>
+          <Wallet size={14} style={{ color: BRAND.blue, flexShrink: 0 }} />
+          <strong>{project.credit.remaining} min</strong>
+          <span style={{ color: BRAND.muted }}>of your {project.credit.allocated} min credit left</span>
+        </div>
+      )}
+
       {project.inProduction && (
         <div style={{ padding: '4px 2px' }}>
           <PhaseTimeline production={project.production} />

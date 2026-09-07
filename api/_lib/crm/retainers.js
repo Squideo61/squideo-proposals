@@ -24,6 +24,41 @@ export async function getDealCreditProject(dealId) {
   return { id: r.id, allocationAmount, used: usedNum, remaining: allocationAmount - usedNum };
 }
 
+// The same pool as getDealCreditProject, for a whole list of deals in one round
+// trip. The portal overview draws every one of a client's projects at once, and
+// two queries per deal through the single-deal helper would be a dozen round
+// trips to render one screen.
+//
+// Returns a Map of dealId → { id, allocationAmount, used, remaining }, with no
+// entry for a deal that has no credit project (most of them). Guarded: a
+// missing pool must cost the credit line on a card, never the card.
+export async function dealCreditProjects(dealIds = []) {
+  const ids = (dealIds || []).filter(Boolean);
+  const out = new Map();
+  if (!ids.length) return out;
+  const rows = await sql`
+    SELECT DISTINCT ON (r.deal_id)
+           r.id, r.deal_id, r.allocation_amount,
+           COALESCE((
+             SELECT SUM(e.value) FROM project_retainer_entries e WHERE e.retainer_id = r.id
+           ), 0) AS used
+      FROM project_retainers r
+     WHERE r.deal_id = ANY(${ids})
+       AND r.allocation_type = 'credits'
+       AND COALESCE(r.status, 'active') = 'active'
+     ORDER BY r.deal_id, r.created_at ASC
+  `.catch((err) => {
+    console.warn('[retainers] dealCreditProjects failed', err.message);
+    return [];
+  });
+  for (const r of rows) {
+    const allocationAmount = Number(r.allocation_amount) || 0;
+    const used = Number(r.used) || 0;
+    out.set(r.deal_id, { id: r.id, allocationAmount, used, remaining: allocationAmount - used });
+  }
+  return out;
+}
+
 export async function retainersRoute(req, res, id, action, user) {
   // --- GET /api/crm/retainers?dealId=
   if (!id && req.method === 'GET') {

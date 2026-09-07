@@ -210,7 +210,7 @@ function NavBadge({ count, style }) {
   );
 }
 
-function SideNav({ view, company, sampleAvailable, sampleBadge }) {
+function SideNav({ view, company, sampleAvailable, sampleBadge, homeBadge }) {
   return (
     // The COLUMN is flush to the screen edge; the items sit 16px in, so an
     // active pill's white background never touches the viewport edge — which
@@ -237,7 +237,7 @@ function SideNav({ view, company, sampleAvailable, sampleBadge }) {
             )}
             {items.map(({ view: v, label, hash, Icon }) => {
               const active = view === v || (v === 'home' && view === 'project');
-              const badge = v === 'demo' ? sampleBadge : 0;
+              const badge = v === 'demo' ? sampleBadge : v === 'home' ? homeBadge : 0;
               return (
                 <a
                   key={v}
@@ -283,7 +283,7 @@ const tabStyle = (active, highlight) => ({
   color: highlight ? BRAND.blue : active ? BRAND.ink : BRAND.muted,
 });
 
-function MobileTabBar({ view, company, sampleAvailable, sampleBadge }) {
+function MobileTabBar({ view, company, sampleAvailable, sampleBadge, homeBadge }) {
   const [moreOpen, setMoreOpen] = useState(false);
   const items = visibleNav(company, sampleAvailable);
   // A prospect's primaries are their own: three of the client ones (Projects,
@@ -367,7 +367,7 @@ function MobileTabBar({ view, company, sampleAvailable, sampleBadge }) {
                     }}>
                       <Icon size={19} strokeWidth={active ? 2.4 : 2} />
                       <span style={{ flex: 1, minWidth: 0 }}>{label}</span>
-                      <NavBadge count={v === 'demo' ? sampleBadge : 0} />
+                      <NavBadge count={v === 'demo' ? sampleBadge : v === 'home' ? homeBadge : 0} />
                     </a>
                   );
                 })}
@@ -385,9 +385,14 @@ function MobileTabBar({ view, company, sampleAvailable, sampleBadge }) {
       }}>
         {primary.map(({ view: v, label, shortLabel, hash, Icon, highlight }) => {
           const active = view === v || (v === 'home' && view === 'project');
+          const badge = v === 'demo' ? sampleBadge : v === 'home' ? homeBadge : 0;
           return (
-            <a key={v} href={hash} style={tabStyle(active, highlight)}>
+            <a key={v} href={hash} style={{ ...tabStyle(active, highlight), position: 'relative' }}>
               <Icon size={20} strokeWidth={active || highlight ? 2.4 : 2} />
+              {/* Pinned to the icon rather than laid out beside it: the bar
+                  divides its width evenly, so a badge in the flow would shove
+                  this tab's label off-centre from every other one. */}
+              {badge > 0 && <NavBadge count={badge} style={{ position: 'absolute', top: 4, right: 6 }} />}
               <span style={{ fontSize: 10, fontWeight: active ? 700 : 500 }}>{shortLabel || label}</span>
             </a>
           );
@@ -421,6 +426,7 @@ function MobileTabBar({ view, company, sampleAvailable, sampleBadge }) {
 function AuthedApp() {
   const {
     toast, companyId, preview, user, company: activeCompany, sampleAvailable, refreshNotifications,
+    overview,
   } = usePortal();
   const isMobile = useIsMobile();
   const [route, setRoute] = useState(parseHash);
@@ -428,6 +434,13 @@ function AuthedApp() {
   // clears the moment they land on the section — not when they finish the tour.
   // Its job is to get them to look once, and it has done that job by then.
   const [sampleBadge, setSampleBadge] = useState(() => (sampleSeen() ? 0 : 1));
+  // Projects whose ball is in the client's court. Unlike the sample badge this
+  // one is a live count, not a one-time nudge: it clears when they've actually
+  // done the thing, not when they've looked at the page — which is why it stays
+  // put while they're standing on Current projects. Same number the dashboard
+  // greeting says out loud, read from the same field, so the rail and the page
+  // can't disagree about how much is waiting on them.
+  const homeBadge = overview?.actionNeeded || 0;
 
   useEffect(() => {
     if (route.view !== 'demo') return;
@@ -533,6 +546,7 @@ function AuthedApp() {
               company={activeCompany}
               sampleAvailable={sampleAvailable}
               sampleBadge={sampleBadge}
+              homeBadge={homeBadge}
             />
           )}
           {/* minWidth:0 matters — without it a wide table or a long unbroken
@@ -554,6 +568,7 @@ function AuthedApp() {
           company={activeCompany}
           sampleAvailable={sampleAvailable}
           sampleBadge={sampleBadge}
+          homeBadge={homeBadge}
         />
       )}
       {toast && <Toast msg={toast} />}
