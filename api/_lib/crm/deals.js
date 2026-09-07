@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { waitUntil } from '@vercel/functions';
 import { put, del } from '@vercel/blob';
 import sql from '../db.js';
 import { streamPrivateBlob, wantsBytes, bytesUrl } from '../blobPrivate.js';
@@ -9,7 +10,7 @@ import { serialiseComment, notifyCommentMentions } from './comments.js';
 import { serialiseContact } from './contacts.js';
 import { getFreshAccessToken } from './gmail.js';
 import { trackingForDealThreads, trackingForMessages, backfillDealTrackingIds } from './tracking.js';
-import { ensureDealFolder, findDealFolders, uploadToFolder, getDriveFileLink, deleteDriveFile, folderUsable, listFolderFiles, createResumableUploadSession, applyFolderTemplate, listSubfolderTree, isFolderWithin, listFolderContents, getDriveFile } from '../googleDrive.js';
+import { ensureDealFolder, findDealFolders, uploadToFolder, getDriveFileLink, deleteDriveFile, folderUsable, listFolderFiles, createResumableUploadSession, applyFolderTemplate, listSubfolderTree, isFolderWithin, listFolderContents, getDriveFile, folderTemplateIsSafeToApply } from '../googleDrive.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
 import { enterProduction } from '../production.js';
@@ -249,6 +250,25 @@ export async function dealDriveFolder(accessToken, dealId) {
     await sql`UPDATE deals SET drive_folder_claimed_at = NULL WHERE id = ${dealId}`.catch(() => {});
     throw err;
   }
+}
+
+// Lay down the standard production folder structure for a deal that's just
+// started — same tree, and the same idempotent scaffold, as the Files card's
+// "Set up folders" button, so a project's Drive is ready before anyone opens it.
+//
+// Skipped when the folder already holds subfolders that aren't ours: those were
+// made by hand, and a team's own layout is theirs to keep. An empty folder, or
+// one holding only (part of) our template, is scaffolded/topped up.
+export async function setUpDealFoldersOnStart(dealId, actorEmail) {
+  if (!driveFilesEnabled() || !actorEmail) return { setUp: false, reason: 'unavailable' };
+  const accessToken = await getFreshAccessToken(actorEmail);
+  const folderId = await dealDriveFolder(accessToken, dealId);
+  const { folders } = await listFolderContents(accessToken, folderId);
+  if (!folderTemplateIsSafeToApply(folders.map((f) => f.name))) {
+    return { setUp: false, reason: 'existing-folders', folderId };
+  }
+  await applyFolderTemplate(accessToken, folderId);
+  return { setUp: true, folderId };
 }
 
 // Make the deal's stored file list mirror its Drive folder: drop rows for files
@@ -792,6 +812,13 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       // Seed the producer calendar for the new project (best-effort).
       try { await syncDealSchedule(id); }
       catch (err) { console.error('[deals] schedule sync failed', err); }
+      // Give the new project its Drive folder structure, so nobody has to press
+      // "Set up folders" by hand. Detached (it's a dozen-plus sequential Drive
+      // calls) and best-effort — the button is still there if this can't run,
+      // e.g. the person clicking hasn't connected Google.
+      waitUntil(setUpDealFoldersOnStart(id, user.email).catch((err) => {
+        console.error('[deals] good-to-go folder setup failed', err?.status, err?.message);
+      }));
     }
     const rows = await sql`SELECT * FROM deals WHERE id = ${id}`;
     const [deal] = await annotateDeals(rows);

@@ -60,6 +60,20 @@ const FOLDER_TEMPLATE = [
   { name: '4. Signed Off' },
 ];
 
+// The names the template lays down at the top level of a deal folder. Lets
+// callers tell "our structure, possibly partial" apart from folders a person
+// created themselves, so we never scaffold over a custom layout.
+export const FOLDER_TEMPLATE_TOP_LEVEL = FOLDER_TEMPLATE.map((n) => n.name);
+
+// True when a deal folder holding these top-level subfolder names is safe to
+// scaffold automatically: it's empty, or holds nothing but (part of) our own
+// template. Anything else is a layout someone laid out by hand — leave it be
+// and let them press "Set up folders" if they actually want the template.
+export function folderTemplateIsSafeToApply(names = []) {
+  const ours = new Set(FOLDER_TEMPLATE_TOP_LEVEL);
+  return names.every((n) => ours.has(n));
+}
+
 // Create a single subfolder under parentId, returning its id.
 async function createSubfolder(accessToken, name, parentId) {
   const meta = {
