@@ -708,7 +708,7 @@ async function financeReport(year) {
     b.net += r.net; b.vat += r.vat; b.gross += r.gross;
   }
   const months = Object.entries(monthsMap).map(([month, v]) => ({
-    month, net: round2(v.net), vat: round2(v.vat), gross: round2(v.gross), corpTax: 0,
+    month, net: round2(v.net), vat: round2(v.vat), gross: round2(v.gross), corpTax: 0, directorTax: 0,
   }));
 
   // Corporation Tax to set aside per month — on TAXABLE profit (cash banked net −
@@ -734,17 +734,20 @@ async function financeReport(year) {
     for (const m of months) {
       const tp = round2(m.net - deductibleCostTotalForMonth(costRows, m.month) - (crmByMonth[m.month] || 0) - (commByMonth[m.month] || 0));
       m.corpTax = monthlyCorpTax(tp);
+      // The directors' combined personal tax for the same month — the third of
+      // the three set-asides paid at month end, shown beside VAT and Corp Tax.
+      m.directorTax = directorTaxForMonth(costRows, m.month);
     }
-  } catch { /* leave corpTax at 0 — the cost base is admin-only and may be empty */ }
+  } catch { /* leave corpTax/directorTax at 0 — the cost base is admin-only and may be empty */ }
 
   // YTD: whole year for a past year, else up to (and including) the current month.
   const now = new Date();
   const curYear = now.getUTCFullYear();
-  const ytd = { net: 0, vat: 0, gross: 0, corpTax: 0 };
+  const ytd = { net: 0, vat: 0, gross: 0, corpTax: 0, directorTax: 0 };
   for (const m of months) {
     const mi = Number(m.month.slice(5)) - 1;
     if (year < curYear || (year === curYear && mi <= now.getUTCMonth())) {
-      ytd.net += m.net; ytd.vat += m.vat; ytd.gross += m.gross; ytd.corpTax += m.corpTax;
+      ytd.net += m.net; ytd.vat += m.vat; ytd.gross += m.gross; ytd.corpTax += m.corpTax; ytd.directorTax += m.directorTax;
     }
   }
 
@@ -758,6 +761,7 @@ async function financeReport(year) {
       vat: round2(qm.reduce((s, x) => s + x.vat, 0)),
       gross: round2(qm.reduce((s, x) => s + x.gross, 0)),
       corpTax: round2(qm.reduce((s, x) => s + x.corpTax, 0)),
+      directorTax: round2(qm.reduce((s, x) => s + x.directorTax, 0)),
     };
   });
 
@@ -774,7 +778,7 @@ async function financeReport(year) {
   return {
     year,
     months,
-    ytd: { net: round2(ytd.net), vat: round2(ytd.vat), gross: round2(ytd.gross), corpTax: round2(ytd.corpTax) },
+    ytd: { net: round2(ytd.net), vat: round2(ytd.vat), gross: round2(ytd.gross), corpTax: round2(ytd.corpTax), directorTax: round2(ytd.directorTax) },
     quarters,
     outstanding: round2(outstanding),
   };
@@ -2493,6 +2497,26 @@ async function loadCashflowCostRows() {
   return sql`SELECT * FROM cashflow_costs ORDER BY sort_order ASC NULLS LAST, created_at ASC`;
 }
 
+// The directors' combined personal tax set-aside for one month: income tax +
+// employee NI on each tax_basis director's drawings (annualised), summed back to
+// a monthly figure. A current run-rate, recomputed from the live salary rows —
+// the amount stored on the auto row is ignored. Shared by the Cash Flow tab and
+// the Finance "VAT & Corp tax" report so the two can never drift apart.
+function directorTaxMonthly(costRows) {
+  return round2(
+    costRows.filter((r) => r.tax_basis === true)
+      .reduce((s, r) => s + directorPersonalTax(monthlyAmountOf(r) * 12) / 12, 0),
+  );
+}
+
+// Same figure, but £0 in months the auto row isn't active (or if it has been
+// deleted) — mirrors how the Cash Flow tab drops it from those months' costs.
+function directorTaxForMonth(costRows, mk) {
+  const row = costRows.find((r) => r.auto_type === 'director_tax');
+  if (!row || !costAppliesToMonth(row, mk)) return 0;
+  return directorTaxMonthly(costRows);
+}
+
 // CORPORATION TAX deductible cost base for a month. Dividends and personal tax
 // are NOT deductible against profit: each tax_basis director (Adam/Ben) takes a
 // £12,570/yr salary (deductible) plus dividends (not deductible, paid from
@@ -2602,13 +2626,9 @@ async function cashflowReport(action) {
   const DIR_ALLOWANCE_BASE = DIRECTOR_ALLOWANCE * DIRECTOR_EMAILS.size;
   const dirAllowanceForMonth = (mk) => round2(Math.max(DIR_ALLOWANCE_BASE, dirSpend(mk)));
 
-  // Auto director personal-tax saving: income tax + employee NI on each tax_basis
-  // director's drawings (annualised), summed back to a monthly figure. Recomputes
-  // whenever the underlying figures change. The amount stored on the row is ignored.
-  const autoDirectorTaxMonthly = round2(
-    costRows.filter((r) => r.tax_basis === true)
-      .reduce((s, r) => s + directorPersonalTax(monthlyAmountOf(r) * 12) / 12, 0),
-  );
+  // Auto director personal-tax saving — recomputed from the live salary rows
+  // whenever the underlying figures change (see directorTaxMonthly).
+  const autoDirectorTaxMonthly = directorTaxMonthly(costRows);
   const resolvedAmount = (r) => (r.auto_type === 'director_tax' ? autoDirectorTaxMonthly : monthlyAmountOf(r));
 
   // Auto Staff Commission per month — calculated from paid sales for on-plan

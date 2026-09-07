@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, PoundSterling, PiggyBank, Wallet, Landmark, ChevronDown, MoreVertical, FileText, ExternalLink, Check, X, Trash2, Link2, RotateCcw, CreditCard, Banknote, CalendarCheck, TrendingUp, Plus, Pencil, StickyNote, Archive, ArchiveRestore } from 'lucide-react';
+import { ArrowLeft, PoundSterling, PiggyBank, Wallet, Landmark, Crown, ChevronDown, MoreVertical, FileText, ExternalLink, Check, X, Trash2, Link2, RotateCcw, CreditCard, Banknote, CalendarCheck, TrendingUp, Plus, Pencil, StickyNote, Archive, ArchiveRestore } from 'lucide-react';
 import {
   ResponsiveContainer,
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -17,6 +17,8 @@ import { SearchBox } from './ProductionView.jsx';
 
 const VAT_COLOR = '#F59E0B';
 const CT_COLOR = '#0E7490';
+// The directors' combined personal tax — the third month-end set-aside.
+const DIR_TAX_COLOR = '#7C3AED';
 const PREDICT_COLOR = '#7C3AED';
 
 // Headline for a pending-payments deal row: real customer, else the deal title.
@@ -223,9 +225,9 @@ const financeViewMemory = {
 function buildFinanceView(fin, { mode, qIdx, monthKey, isCurrentYear, monthIdx, effectiveYear }) {
   const months = fin?.months || [];
   const quarters = fin?.quarters || [];
-  const yearTotals = months.reduce((a, m) => ({ net: a.net + m.net, vat: a.vat + m.vat, gross: a.gross + m.gross, corpTax: a.corpTax + (m.corpTax || 0) }), { net: 0, vat: 0, gross: 0, corpTax: 0 });
+  const yearTotals = months.reduce((a, m) => ({ net: a.net + m.net, vat: a.vat + m.vat, gross: a.gross + m.gross, corpTax: a.corpTax + (m.corpTax || 0), directorTax: a.directorTax + (m.directorTax || 0) }), { net: 0, vat: 0, gross: 0, corpTax: 0, directorTax: 0 });
 
-  const zero = { net: 0, vat: 0, gross: 0, corpTax: 0 };
+  const zero = { net: 0, vat: 0, gross: 0, corpTax: 0, directorTax: 0 };
   const displayMonths = mode === 'quarter' ? months.slice(qIdx * 3, qIdx * 3 + 3)
     : mode === 'month' ? months.filter((m) => m.month === monthKey)
     : months;
@@ -672,9 +674,13 @@ export function FinanceView({ initialTab = null, onBack, onOpenDeal, onOpenCompa
       {effectiveSection === 'vat' && (
         <div id="finance-vat-section" style={{ scrollMarginTop: 80 }}>
           {/* VAT and Corporation Tax to set aside, both for the selected period. */}
-          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)', gap: 12, marginBottom: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 12, marginBottom: 16 }}>
             <StatCard icon={PiggyBank} accent={VAT_COLOR} label={`VAT to set aside — ${view.periodLabel}`} value={formatGBP(view.totals.vat)} sub={`From cash banked in ${view.periodLabel}`} />
             <StatCard icon={Landmark} accent={CT_COLOR} label={`Corp Tax to set aside — ${view.periodLabel}`} value={formatGBP(view.totals.corpTax || 0)} sub={`Estimated on ${view.periodLabel} profit (HMRC marginal relief)`} />
+            <StatCard icon={Crown} accent={DIR_TAX_COLOR} label={`Personal tax to set aside — ${view.periodLabel}`} value={formatGBP(view.totals.directorTax || 0)} sub={`Adam + Ben combined · income tax + NI on ${view.periodLabel} drawings`} />
+          </div>
+          <div style={{ fontSize: 12, color: BRAND.muted, lineHeight: 1.4, marginBottom: 16, marginTop: -4 }}>
+            The three transfers to make at month end. Personal tax is the directors’ combined set-aside from the Cash Flow tab, recalculated from their current pay — change a director’s pay there and it updates here. Estimates only.
           </div>
 
           {mode === 'year' && (
