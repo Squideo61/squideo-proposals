@@ -461,6 +461,9 @@ function SalesVsPpView({ trend, isMobile, actions, history, partnerOutstanding =
 // activity feed. Admin + Director only — rides on the Finance page's finance.manage gate.
 const PROFIT_POS = '#10B981';
 const PROFIT_NEG = '#EF4444';
+// Display-only money maths — round to the penny so float noise can't tip a
+// comparison (e.g. "savings fully covered").
+const round2p = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
 function CashFlowView({ isMobile, month: monthProp, setMonth: setMonthProp }) {
   const { state, actions } = useStore();
@@ -489,7 +492,18 @@ function CashFlowView({ isMobile, month: monthProp, setMonth: setMonthProp }) {
 
   const sel = cf.selected;
   const ct = cf.corpTax;
-  const profitColor = sel.profit >= 0 ? PROFIT_POS : PROFIT_NEG;
+  // The compulsory savings set-aside is money kept, not money spent, so the
+  // headline Profit/Costs read before it — same basis as the 12-month table.
+  // The minimum target below deliberately keeps it in: savings still has to be
+  // funded before anything is drawable.
+  const savingsTarget = Number(sel.savings) || 0;
+  const profitExSavings = round2p(sel.profit + savingsTarget);
+  const costsExSavings = round2p(sel.costs - savingsTarget);
+  // What you can actually put away this month — nothing until the business is
+  // covered, then up to the full committed amount.
+  const saved = round2p(Math.max(0, Math.min(savingsTarget, profitExSavings)));
+  const profitColor = profitExSavings >= 0 ? PROFIT_POS : PROFIT_NEG;
+  const cardCount = savingsTarget > 0 ? 5 : 4;
 
   return (
     <>
@@ -506,21 +520,36 @@ function CashFlowView({ isMobile, month: monthProp, setMonth: setMonthProp }) {
       </div>
 
       {/* Headline figures for the selected month. */}
-      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : `repeat(${cardCount}, 1fr)`, gap: 12, marginBottom: 12 }}>
         <StatCard icon={TrendingUp} accent={profitColor} label={`Profit — ${monthLabel}`}
-          value={<span style={{ color: profitColor }}>{formatGBP(sel.profit)}</span>}
-          sub="Cash received − costs" />
+          value={<span style={{ color: profitColor }}>{formatGBP(profitExSavings)}</span>}
+          sub="Cash received − costs, before savings" />
         <StatCard icon={Wallet} accent={BRAND.blue} label="Cash received"
           value={formatGBP(sel.cashIn)} sub="Net banked (ex-VAT)" />
         <StatCard icon={Receipt} accent="#0E7490" label="Costs"
-          value={formatGBP(sel.costs)} sub="All monthly costs (ex-VAT)" />
-        <StatCard icon={PiggyBank} accent={VAT_COLOR_CF}
+          value={formatGBP(costsExSavings)} sub="All monthly costs (ex-VAT), ex savings" />
+        {savingsTarget > 0 && (
+          <StatCard icon={PiggyBank} accent={EX_SAVINGS_COLOR} label="Savings"
+            value={<span style={{ color: saved > 0 ? EX_SAVINGS_COLOR : BRAND.ink }}>{formatGBP(saved)}</span>}
+            sub={saved >= savingsTarget
+              ? `Full ${formatGBP(savingsTarget)} set-aside covered`
+              : saved > 0
+                ? `${formatGBP(savingsTarget - saved)} short of the ${formatGBP(savingsTarget)} set-aside`
+                : `Nothing to put away yet · ${formatGBP(savingsTarget)} committed`} />
+        )}
+        <StatCard icon={Landmark} accent={VAT_COLOR_CF}
           label={ct.inProfit ? 'Corp Tax to set aside' : 'Corp Tax saving'}
           value={formatGBP(Math.abs(ct.monthReserve))}
           sub={ct.inProfit
             ? `≈${Math.round((ct.effectiveRate || 0) * 100)}% effective · this month`
             : 'This month’s loss reduces your CT'} />
       </div>
+
+      {savingsTarget > 0 && (
+        <div style={{ fontSize: 12, color: BRAND.muted, lineHeight: 1.4, marginBottom: 16 }}>
+          Profit and Costs are shown <strong>before the {formatGBP(savingsTarget)} compulsory savings set-aside</strong> — that money is still profit, you’re just holding it back. <strong>Savings</strong> is what this month can actually put away, so it only fills up once the business is covered. The minimum target below keeps savings in, so it stays funded ahead of any drawdown.
+        </div>
+      )}
 
       {/* Minimum target + the surplus/available-drawdown for the month. */}
       {cf.targets && <CfTargets targets={cf.targets} cashIn={sel.cashIn} isMobile={isMobile} />}
