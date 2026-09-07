@@ -530,7 +530,10 @@ function CashFlowView({ isMobile, month: monthProp, setMonth: setMonthProp }) {
 
       {/* 12-month history — click a month to jump to it. */}
       <div style={{ background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 12, padding: isMobile ? 12 : 20, marginBottom: 16 }}>
-        <h3 style={{ margin: '0 0 12px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>Last 12 months</h3>
+        <h3 style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.6 }}>Last 12 months</h3>
+        <div style={{ margin: '0 0 12px', fontSize: 12, color: BRAND.muted, lineHeight: 1.35 }}>
+          Shown <strong>before the compulsory savings set-aside</strong> — that money is still profit, you’re just holding it back. The headline cards and the break-even target above keep savings in.
+        </div>
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
             <thead>
@@ -544,14 +547,22 @@ function CashFlowView({ isMobile, month: monthProp, setMonth: setMonthProp }) {
             <tbody>
               {cf.history.slice().reverse().map((h) => {
                 const isThis = h.month === month;
+                // Savings is a set-aside, not a cost — strip it back out so this
+                // table reads as true profit. Everything else (headline cards,
+                // break-even target, Corp Tax) keeps the server's figures.
+                const saved = Number(h.savings) || 0;
+                const costs = h.costs - saved;
+                const profit = h.profit + saved;
                 return (
                   <tr key={h.month}
                     onClick={() => setMonth(h.month)}
                     style={{ borderTop: '1px solid ' + BRAND.border, background: isThis ? '#F4FBFE' : 'transparent', cursor: 'pointer' }}>
                     <td style={{ textAlign: 'left', padding: '8px 8px', fontWeight: isThis ? 700 : 500 }}>{monthShortYear(h.month)}</td>
                     <td style={{ textAlign: 'right', padding: '8px 8px' }}>{formatGBP(h.cashIn)}</td>
-                    <td style={{ textAlign: 'right', padding: '8px 8px', color: BRAND.muted }}>{formatGBP(h.costs)}</td>
-                    <td style={{ textAlign: 'right', padding: '8px 8px', fontWeight: 700, color: h.profit >= 0 ? PROFIT_POS : PROFIT_NEG }}>{formatGBP(h.profit)}</td>
+                    <td style={{ textAlign: 'right', padding: '8px 8px', color: BRAND.muted }}
+                      title={saved ? `Excludes ${formatGBP(saved)} compulsory savings` : undefined}>{formatGBP(costs)}</td>
+                    <td style={{ textAlign: 'right', padding: '8px 8px', fontWeight: 700, color: profit >= 0 ? PROFIT_POS : PROFIT_NEG }}
+                      title={saved ? `Before the ${formatGBP(saved)} savings set-aside` : undefined}>{formatGBP(profit)}</td>
                   </tr>
                 );
               })}
