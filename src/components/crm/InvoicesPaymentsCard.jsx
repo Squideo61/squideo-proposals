@@ -395,7 +395,10 @@ export function InvoicesPaymentsCard({ dealId, companyId, proposals, contactName
           variant={saleMode ? 'sale' : 'extra'}
           defaultAmount={dealValue}
           onClose={() => setAddingExtra(false)}
-          onCreated={() => { setAddingExtra(false); reloadExtras(); onChanged?.(); }}
+          // An extra can raise its own invoice, park a PO quote, or add a line
+          // to an existing invoice — all of which change the invoice list, not
+          // just the extras — so reload the whole card, not only the extras.
+          onCreated={() => { setAddingExtra(false); reload(); onChanged?.(); }}
         />
       )}
       {uploadingPo && (
