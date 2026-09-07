@@ -6,3 +6,7 @@
 -- the schedule without changing their account type. NULL keeps the role default;
 -- TRUE / FALSE overrides it for that person.
 ALTER TABLE leave_allowances ADD COLUMN IF NOT EXISTS on_rota BOOLEAN;
+
+-- Manual left-to-right position of each person's column on the Master rota.
+-- NULL = unpositioned, sorting alphabetically after everyone who has a place.
+ALTER TABLE leave_allowances ADD COLUMN IF NOT EXISTS rota_order INTEGER;

@@ -17,7 +17,7 @@
 // A block that can't fit before the deadline is flagged `conflict` and the
 // managers (Admins + Directors) are notified for manual review.
 
-import sql from '../db.js';
+import sql, { batchWrite } from '../db.js';
 import { makeId, trimOrNull } from './shared.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
@@ -139,6 +139,9 @@ export function ensureScheduleTables() {
     // `on_rota` = per-person override of the role/name defaults for "produces
     // scheduled content" (calendar column + assignable). NULL = use the default.
     await sql`ALTER TABLE leave_allowances ADD COLUMN IF NOT EXISTS on_rota BOOLEAN`;
+    // `rota_order` = manual left-to-right position of this person's column on
+    // the Master rota. NULL sorts after everyone positioned, alphabetically.
+    await sql`ALTER TABLE leave_allowances ADD COLUMN IF NOT EXISTS rota_order INTEGER`;
     await seedLeaveCorrectionsOnce();
   })().catch((err) => { schemaReady = null; throw err; });
   return schemaReady;
@@ -206,12 +209,12 @@ async function scheduleUsers() {
     SELECT u.email, u.name, u.avatar, u.role AS role_id,
            (r.permissions @> '["*"]'::jsonb) AS is_admin,
            la.active AS active, la.track_allowance AS track_allowance,
-           la.on_rota AS on_rota
+           la.on_rota AS on_rota, la.rota_order AS rota_order
       FROM users u
       JOIN roles r ON r.id = u.role
       LEFT JOIN leave_allowances la ON la.user_email = u.email
      WHERE r.permissions @> '["schedule.access"]'::jsonb OR r.permissions @> '["*"]'::jsonb
-     ORDER BY u.name NULLS LAST, u.email`;
+     ORDER BY la.rota_order NULLS LAST, u.name NULLS LAST, u.email`;
   return rows.map(r => {
     const isAdmin = !!r.is_admin;
     // Freelancers are external contractors — extra capacity brought in per
@@ -241,6 +244,7 @@ async function scheduleUsers() {
       active: r.active,
       producesByDefault,
       onRotaOverride: r.on_rota == null ? null : r.on_rota === true,
+      rotaOrder: r.rota_order == null ? null : Number(r.rota_order),
       trackAllowance: !isFreelancer && r.track_allowance !== false, // null (no row) → true; never for freelancers
       onRoster,
     };
@@ -1268,6 +1272,32 @@ export async function scheduleRoute(req, res, id, action, user) {
   }
 
   // /api/crm/schedule/allowance/:email  (allowance editors — Admins & Directors)
+  // POST /api/crm/schedule/order { emails: [...] } — set the left-to-right order
+  // of the rota columns. `emails` is the full ordered list as the manager wants
+  // to see it; anyone missing from it keeps sorting alphabetically after those
+  // that are positioned.
+  if (id === 'order') {
+    if (req.method !== 'POST') return res.status(405).end();
+    if (!manage) return res.status(403).json({ error: 'Only schedule managers can reorder the rota' });
+    const known = new Set((await scheduleUsers()).map(u => u.email));
+    const seen = new Set();
+    const ordered = [];
+    for (const raw of (req.body || {}).emails || []) {
+      const e = String(raw || '').trim().toLowerCase();
+      if (!e || seen.has(e) || !known.has(e)) continue;
+      seen.add(e);
+      ordered.push(e);
+    }
+    if (!ordered.length) return res.status(400).json({ error: 'No known team members in the order' });
+    await batchWrite([
+      // Provision rows first — someone who has never had an allowance row
+      // (an admin opted onto the rota, say) still needs somewhere to store it.
+      ...ordered.map(e => sql`INSERT INTO leave_allowances (user_email) VALUES (${e}) ON CONFLICT (user_email) DO NOTHING`),
+      ...ordered.map((e, i) => sql`UPDATE leave_allowances SET rota_order = ${i + 1}, updated_at = NOW() WHERE LOWER(user_email) = ${e}`),
+    ]);
+    return res.status(200).json(await reload());
+  }
+
   if (id === 'allowance') {
     if (!manageAllowance) return res.status(403).json({ error: 'Only admins and directors can edit allowances' });
     if (req.method !== 'PATCH') return res.status(405).end();

@@ -122,6 +122,18 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
   if (!visibleProducers.length) visibleProducers = allProducers;
   const single = visibleProducers.length === 1;
 
+  // Move a column one place left/right on the Master rota. The server takes the
+  // whole ordered list rather than one position, so a reorder can never leave
+  // two people fighting over the same slot.
+  const moveProducer = (email, delta) => {
+    const emails = allProducers.map(p => p.email);
+    const from = emails.indexOf(email);
+    const to = from + delta;
+    if (from < 0 || to < 0 || to >= emails.length) return;
+    emails.splice(to, 0, emails.splice(from, 1)[0]);
+    actions.reorderProducers(emails);
+  };
+
   const weekMonday = weekStart(cursor);
   const weekDays = [0, 1, 2, 3, 4].map(i => addWorkingDays(weekMonday, i));
   const cells = viewMode === 'month' ? monthCells(cursor) : [];
@@ -290,7 +302,8 @@ export function ScheduleView({ onOpenProject, onOpenVideo }) {
             ? <AgendaList days={weekDays} producers={visibleProducers} asgByCell={asgByCell} leaveByCell={leaveByCell} today={today} onBlock={setBlockModal} />
             : <CalendarGrid weekDays={weekDays} producers={visibleProducers} asgByCell={asgByCell} leaveByCell={leaveByCell}
                 today={today} canManage={canManage} me={me} onBlock={setBlockModal} onDropCell={onDropCell}
-                onReflow={runReflow} onUndo={runUndo} undoPoint={undoPoint} reflowing={reflowing} />)}
+                onReflow={runReflow} onUndo={runUndo} undoPoint={undoPoint} reflowing={reflowing}
+                onMove={canManage && effectiveSelected === 'master' && allProducers.length > 1 ? moveProducer : undefined} />)}
 
       {/* Leave requests + allowances + amends. Annual leave / allowance don't
           apply to freelancers, so they only see their Amends to do. */}
@@ -444,35 +457,59 @@ function MiniChip({ label, asg, leave, onClick, draggable }) {
 }
 
 // ── Desktop grid: rows = weekdays, columns = producers ──
-function CalendarGrid({ weekDays, producers, asgByCell, leaveByCell, today, canManage, me, onBlock, onDropCell, onReflow, onUndo, undoPoint, reflowing }) {
+function CalendarGrid({ weekDays, producers, asgByCell, leaveByCell, today, canManage, me, onBlock, onDropCell, onReflow, onUndo, undoPoint, reflowing, onMove }) {
   const colW = `minmax(150px, 1fr)`;
+  // Which column header the cursor is over. The reorder arrows only appear
+  // there — a header is 150px wide and already carries the update/undo buttons,
+  // so showing four at once would squeeze the name out.
+  const [hoverCol, setHoverCol] = useState(null);
   return (
     <div style={{ overflowX: 'auto', border: '1px solid ' + BRAND.border, borderRadius: 12, background: 'white' }}>
       <div style={{ display: 'grid', gridTemplateColumns: `110px repeat(${producers.length}, ${colW})`, minWidth: 110 + producers.length * 150 }}>
         {/* header */}
         <div style={{ borderBottom: '1px solid ' + BRAND.border, background: BRAND.paper }} />
-        {producers.map(p => (
-          <div key={p.email} style={{ padding: '10px 12px', borderBottom: '1px solid ' + BRAND.border, borderLeft: '1px solid ' + BRAND.paper, background: BRAND.paper, display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, fontSize: 13 }}>
+        {producers.map((p, i) => (
+          <div key={p.email}
+            onMouseEnter={() => setHoverCol(p.email)}
+            onMouseLeave={() => setHoverCol(h => (h === p.email ? null : h))}
+            style={{ padding: '10px 12px', borderBottom: '1px solid ' + BRAND.border, borderLeft: '1px solid ' + BRAND.paper, background: BRAND.paper, display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, fontSize: 13 }}>
             <ProducerAvatar producer={p} />
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name || p.email}</span>
-            {canManage && onReflow && (
-              <span style={{ marginLeft: 'auto', flexShrink: 0, display: 'inline-flex', gap: 4 }}>
-                {/* Undo only appears on the producer whose rota was last updated —
-                    you can only ever revert the most recent press. */}
-                {undoPoint && undoPoint.scope === p.email && (
-                  <button onClick={onUndo} disabled={!!reflowing}
-                    title={`Undo the last update to ${p.name || p.email}'s rota (${undoPoint.blocks} block${undoPoint.blocks === 1 ? '' : 's'})`}
-                    style={iconBtn(reflowing)}>
-                    <Undo2 size={13} />
+            <span style={{ marginLeft: 'auto', flexShrink: 0, display: 'inline-flex', gap: 4 }}>
+              {/* Reorder — hover-revealed so the header reads cleanly at rest. */}
+              {onMove && hoverCol === p.email && (
+                <>
+                  <button onClick={() => onMove(p.email, -1)} disabled={i === 0}
+                    title={`Move ${p.name || p.email} one column left`}
+                    style={{ ...iconBtn(i === 0), width: 20, opacity: i === 0 ? 0.35 : 1 }}>
+                    <ChevronLeft size={13} />
                   </button>
-                )}
-                <button onClick={() => onReflow(p.email)} disabled={!!reflowing}
-                  title={`Update ${p.name || p.email}'s rota — push client-delayed work back, pull ready work forward`}
-                  style={iconBtn(reflowing)}>
-                  <RefreshCw size={13} style={reflowing === p.email ? { animation: 'spin 0.8s linear infinite' } : undefined} />
-                </button>
-              </span>
-            )}
+                  <button onClick={() => onMove(p.email, 1)} disabled={i === producers.length - 1}
+                    title={`Move ${p.name || p.email} one column right`}
+                    style={{ ...iconBtn(i === producers.length - 1), width: 20, opacity: i === producers.length - 1 ? 0.35 : 1 }}>
+                    <ChevronRight size={13} />
+                  </button>
+                </>
+              )}
+              {canManage && onReflow && (
+                <>
+                  {/* Undo only appears on the producer whose rota was last updated —
+                      you can only ever revert the most recent press. */}
+                  {undoPoint && undoPoint.scope === p.email && (
+                    <button onClick={onUndo} disabled={!!reflowing}
+                      title={`Undo the last update to ${p.name || p.email}'s rota (${undoPoint.blocks} block${undoPoint.blocks === 1 ? '' : 's'})`}
+                      style={iconBtn(reflowing)}>
+                      <Undo2 size={13} />
+                    </button>
+                  )}
+                  <button onClick={() => onReflow(p.email)} disabled={!!reflowing}
+                    title={`Update ${p.name || p.email}'s rota — push client-delayed work back, pull ready work forward`}
+                    style={iconBtn(reflowing)}>
+                    <RefreshCw size={13} style={reflowing === p.email ? { animation: 'spin 0.8s linear infinite' } : undefined} />
+                  </button>
+                </>
+              )}
+            </span>
           </div>
         ))}
         {/* rows */}

@@ -2216,6 +2216,13 @@ export function StoreProvider({ children }) {
         .then((p) => actions._applySchedule(p))
         .catch((err) => { showMsg(err.message || 'Failed to cancel leave'); throw err; });
     },
+    // Set the left-to-right order of the rota columns. Takes the full ordered
+    // list of emails; the server stores a position per person.
+    reorderProducers(emails) {
+      return api.post('/api/crm/schedule/order', { emails })
+        .then((p) => actions._applySchedule(p))
+        .catch((err) => { showMsg(err.message || 'Failed to reorder the rota'); throw err; });
+    },
     updateAllowance(email, fields) {
       // Send the target email in the body as well as the path. The path segment
       // is flattened through Vercel's rewrite (:action → _action) where an
