@@ -98,6 +98,35 @@ describe('payment option on a signed copy', () => {
   });
 });
 
+describe('the acceptance block on the blank copy', () => {
+  // The four fields the client fills in, each "label + a rule to write on".
+  const fieldRules = (html) => {
+    const start = html.indexOf('Acceptance & Signature');
+    const end = html.indexOf('Please return the signed copy');
+    expect(start).toBeGreaterThan(-1);          // the slice must actually find the block…
+    expect(end).toBeGreaterThan(start);
+    const block = html.slice(start, end);
+    const found = [...block.matchAll(/>([^<>]+)<\/div>\s*(?:<!--[\s\S]*?-->\s*)?<div style="border-bottom:1px solid #0F2A3D;height:(\d+)px;"/g)]
+      .map(([, label, height]) => ({ label: label.trim(), height: Number(height) }));
+    expect(found.length).toBeGreaterThan(0);    // …or an empty match passes everything
+    return found;
+  };
+
+  it('rules the signature and date lines to the same depth', () => {
+    openPrintWindow(proposal(), { signable: true });
+    const rules = Object.fromEntries(fieldRules(written).map((f) => [f.label, f.height]));
+    // Date used to be the shallower box, so its rule sat above the signature's
+    // and the pair read as a mistake.
+    expect(rules.Signature).toBe(rules.Date);
+  });
+
+  it('does not ask for a company name', () => {
+    openPrintWindow(proposal(), { signable: true });
+    const labels = fieldRules(written).map((f) => f.label);
+    expect(labels).toEqual(['Full name', 'Job title / position', 'Signature', 'Date']);
+  });
+});
+
 describe('where a signed copy is returned to', () => {
   it('names the person who raised the proposal, not the shared inbox', () => {
     // preparedByEmail is already the proposal's owner everywhere else — deal

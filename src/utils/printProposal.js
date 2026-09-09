@@ -357,16 +357,14 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
         </div>
         <div>
           <div style="font-size:12px;color:#6B7785;margin-bottom:6px;">Signature</div>
+          <!-- Signature needs the deeper box to write in; Date matches its
+               height below so the two rules meet rather than stepping. -->
           <div style="border-bottom:1px solid #0F2A3D;height:40px;"></div>
         </div>
         <div>
           <div style="font-size:12px;color:#6B7785;margin-bottom:6px;">Date</div>
-          <div style="border-bottom:1px solid #0F2A3D;height:28px;"></div>
+          <div style="border-bottom:1px solid #0F2A3D;height:40px;"></div>
         </div>
-      </div>
-      <div>
-        <div style="font-size:12px;color:#6B7785;margin-bottom:6px;">Company name</div>
-        <div style="border-bottom:1px solid #0F2A3D;height:28px;"></div>
       </div>
       <p style="font-size:11px;color:#6B7785;margin:20px 0 0;line-height:1.5;">
         Please return the signed copy to <strong>${esc(data.preparedByEmail || 'hello@squideo.com')}</strong> or post to Squideo Ltd, Hull, HU1.
