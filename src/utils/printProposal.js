@@ -223,7 +223,7 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
       ? `<div style="font-size:12px;color:#2BB8E6;margin-top:3px;">▶ Hear ${esc(sampleVoice.name || 'a sample')} in your online proposal.</div>`
       : '';
     return `
-    <div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid #E5E9EE;font-size:13px;">
+    <div class="keep" style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid #E5E9EE;font-size:13px;">
       <span style="color:#2BB8E6;flex-shrink:0;font-size:16px;line-height:1;">✓</span>
       <div>
         <div style="font-weight:500;">${esc(applyInclusionTokens(inc.title, printMinutes))}</div>
@@ -267,7 +267,7 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
          </div>`
       : `<div style="font-weight:600;white-space:nowrap;">${struck(listUnit)}${net(unit)}</div>`;
     return `
-      <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid #E5E9EE;font-size:13px;">
+      <div class="keep" style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid #E5E9EE;font-size:13px;">
         ${box}
         <div style="flex:1;">
           <div style="font-weight:500;">${esc(e.label)}${labelExtra}</div>
@@ -435,6 +435,25 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
     @media print {
       body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       .no-print { display: none !important; }
+
+      /* Where the page falls was left entirely to the browser, and it broke
+         the document in the two ways it always does without help.
+
+         First, a heading stranded at the foot of a page with its content
+         overleaf — "Your Delivery Team" sat alone above a hand-sized gap.
+         Headings now travel with whatever follows them. The gap above a
+         section that won't fit doesn't disappear, but it becomes a section
+         break the reader understands rather than a mistake. */
+      h1, h2, h3, h4, .page-title { break-after: avoid; page-break-after: avoid; break-inside: avoid; }
+
+      /* Second, one line of a paragraph marooned on its own. */
+      p, li { orphans: 3; widows: 3; }
+
+      /* Anything that reads as a single item stays whole: an inclusion line, a
+         recommendation, a price row. The bordered blocks (team cards, payment
+         options, the signature panel) carry this on themselves where they're
+         built, since they need it on screen too. */
+      .keep { break-inside: avoid; }
     }
     @media screen {
       body { max-width: 820px; margin: 0 auto; padding: 32px 24px; }
@@ -518,7 +537,7 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
   </div>
 
   <!-- Base pricing -->
-  <div style="border:1px solid #E5E9EE;border-radius:8px;overflow:hidden;margin-bottom:20px;">
+  <div class="keep" style="border:1px solid #E5E9EE;border-radius:8px;overflow:hidden;margin-bottom:20px;">
     ${manualDiscount > 0 ? `
     <div style="display:flex;justify-content:space-between;padding:10px 16px;font-size:13px;border-bottom:1px solid #E5E9EE;">
       <span class="muted">Project base price</span><span>${formatGBP(data.basePrice)}</span>
@@ -553,7 +572,7 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
 
   <!-- Total summary (when extras selected or partner discount applies) -->
   ${(extrasTotal > 0 || partnerSelected) ? `
-  <div style="background:#0F2A3D;color:white;padding:16px 20px;border-radius:10px;margin-bottom:28px;">
+  <div class="keep" style="background:#0F2A3D;color:white;padding:16px 20px;border-radius:10px;margin-bottom:28px;">
     <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;opacity:0.8;"><span>Subtotal${extrasTotal > 0 ? ' (with selected extras)' : ''}</span><span>${formatGBP(partnerSelected ? discountedSubtotal : subtotal)}</span></div>
     ${showVat ? `<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:${partnerSelected ? '4px' : '10px'};opacity:0.8;"><span>VAT</span><span>${formatGBP(partnerSelected ? discountedVat : vat)}</span></div>` : ''}
     ${showPartnerDiscount ? `<div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:10px;color:#FFD54F;"><span>${Math.round(discountRate * 100)}% partner discount</span><span>−${formatGBP(partnerDiscount)}</span></div>` : ''}

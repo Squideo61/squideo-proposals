@@ -98,6 +98,46 @@ describe('payment option on a signed copy', () => {
   });
 });
 
+describe('where the pages fall', () => {
+  it('keeps a heading with the section it introduces', () => {
+    openPrintWindow(proposal(), { signable: true });
+    const print = written.slice(written.indexOf('@media print'), written.indexOf('@media screen'));
+    // "Your Delivery Team" was printing at the foot of a page with its cards
+    // overleaf. The gap before a section that won't fit stays — it just reads
+    // as a section break now instead of a mistake.
+    expect(print).toMatch(/h1, h2, h3, h4, \.page-title \{[^}]*break-after: avoid/);
+    expect(print).toMatch(/h1, h2, h3, h4, \.page-title \{[^}]*page-break-after: avoid/);
+  });
+
+  it('does not strand a single line of a paragraph', () => {
+    openPrintWindow(proposal(), { signable: true });
+    const print = written.slice(written.indexOf('@media print'), written.indexOf('@media screen'));
+    expect(print).toMatch(/p, li \{[^}]*orphans: 3/);
+    expect(print).toMatch(/p, li \{[^}]*widows: 3/);
+  });
+
+  it('holds each inclusion and recommendation together', () => {
+    openPrintWindow(proposal({
+      baseInclusions: [{ title: 'Full script & storyboard', description: 'Written by our team.' }],
+      optionalExtras: [{ id: 'e1', title: 'Subtitles', description: 'Over 100 languages.', price: 200 }],
+    }), { signable: true });
+    expect(written).toMatch(/\.keep \{ break-inside: avoid; \}/);
+    // The rows themselves carry the class; their containers deliberately don't,
+    // since a long list has to be allowed to run over a page.
+    const rows = written.match(/class="keep"/g) || [];
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('leaves the bordered blocks their own break-inside', () => {
+    // Team cards, payment options and the signature panel need it on screen
+    // too, so it stays inline on them rather than moving to the print block.
+    openPrintWindow(proposal(), { signable: true });
+    const team = teamSection(written);
+    expect(team).toContain('break-inside:avoid');
+    expect(paymentSection(written)).toContain('break-inside:avoid');
+  });
+});
+
 describe('the acceptance block on the blank copy', () => {
   // The four fields the client fills in, each "label + a rule to write on".
   const fieldRules = (html) => {
