@@ -165,7 +165,7 @@ function buildSectionMeta(data, isTemplate, issues, isDefault) {
     },
     {
       id: 'extras',
-      label: 'Extras',
+      label: 'Recommendations',
       hint: `${(data.optionalExtras || []).length} extra${(data.optionalExtras || []).length === 1 ? '' : 's'}`,
       hasIssues: false,
     },
@@ -250,7 +250,7 @@ function DiscountEditor({ basePrice, discount, onChange, isMobile }) {
       {value > 0 && basePrice > 0 && (
         <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 4 }}>
           Base {formatGBP(basePrice)} → <strong style={{ color: '#15803d' }}>{formatGBP(basePrice - amount)}</strong>
-          {' '}({isPct ? `${value}% off` : `${formatGBP(amount)} off`}). Optional extras have their own discount (in the Optional Extras section).
+          {' '}({isPct ? `${value}% off` : `${formatGBP(amount)} off`}). Optional extras have their own discount (in the Recommendations section).
           {' '}It stands if the client opts into the Partner Programme — the programme then discounts the minutes they add rather than this project a second time.
         </div>
       )}
@@ -1753,7 +1753,7 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
 
       {/* ── Optional Extras ── */}
       <Section
-        title="Optional Extras"
+        title="Recommendations"
         color="#be185d"
         icon={Package}
         collapsedHint={sectionMeta.find(s => s.id === 'extras')?.hint}
@@ -1765,7 +1765,7 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
             checked={!!data.hideOptionalExtras}
             onChange={(e) => update({ hideOptionalExtras: e.target.checked })}
           />
-          <span style={{ fontWeight: 600 }}>Hide the Optional Extras section from the client</span>
+          <span style={{ fontWeight: 600 }}>Hide the Recommendations section from the client</span>
           {data.hideOptionalExtras && <span style={{ color: '#9A3412', fontSize: 12 }}>— hidden on the proposal &amp; PDF</span>}
         </label>
         {data.hideOptionalExtras && (

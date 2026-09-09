@@ -1374,11 +1374,11 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
         if (!paidExtras.length && !hasSignedExtras) return null;
         return (
         <>
-        <PageTitle>Optional Extras</PageTitle>
+        <PageTitle>Recommendations</PageTitle>
         {extrasRate > 0 && (
           <p style={{ fontSize: 13.5, lineHeight: 1.6, color: '#9D174D', background: '#FDF2F8', border: '1px solid #FBCFE8', borderRadius: 8, padding: '10px 14px', margin: '0 0 12px', fontWeight: 600 }}>
             {extrasDiscountLabel ? extrasDiscountLabel + ' — ' : ''}
-            {formatPct(extrasRate)}% off every optional extra below.
+            {formatPct(extrasRate)}% off every recommendation below.
           </p>
         )}
         {isCreditOnly && (
@@ -1697,7 +1697,7 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
                   <span>{formatGBP(netBasePrice + (partnerSelected ? partnerSubtotal : 0))}{showVat && ' + VAT'}</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 12, opacity: 0.85 }}>
-                  <span>Optional extras</span>
+                  <span>Recommendations</span>
                   <span>{formatGBP(extrasTotal)}{showVat && ' + VAT'}</span>
                 </div>
               </>

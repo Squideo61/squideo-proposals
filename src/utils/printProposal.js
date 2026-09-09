@@ -520,8 +520,8 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
 
   <!-- Optional extras (hidden when the proposal opts out, unless extras were already selected) -->
   ${(((signable && !data.hideOptionalExtras) || extrasToShow.length > 0)) ? `
-  <h2 class="page-title">${signable ? 'Optional Extras' : 'Selected Optional Extras'}</h2>
-  ${printExtrasRate > 0 ? `<p style="font-size:13px;font-weight:600;color:#9D174D;background:#FDF2F8;border:1px solid #FBCFE8;border-radius:8px;padding:9px 13px;margin:0 0 10px;">${printExtrasLabel ? esc(printExtrasLabel) + ' — ' : ''}${Math.round(printExtrasRate * 1000) / 10}% off every optional extra.</p>` : ''}
+  <h2 class="page-title">${signable ? 'Recommendations' : 'Selected Recommendations'}</h2>
+  ${printExtrasRate > 0 ? `<p style="font-size:13px;font-weight:600;color:#9D174D;background:#FDF2F8;border:1px solid #FBCFE8;border-radius:8px;padding:9px 13px;margin:0 0 10px;">${printExtrasLabel ? esc(printExtrasLabel) + ' — ' : ''}${Math.round(printExtrasRate * 1000) / 10}% off every recommendation.</p>` : ''}
   <div style="border:1px solid #E5E9EE;border-radius:10px;padding:4px 16px;margin-bottom:16px;">
     ${extrasRows}
   </div>` : ''}
