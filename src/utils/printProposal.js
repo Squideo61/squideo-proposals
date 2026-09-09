@@ -184,13 +184,26 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
   // Only render the partner project-discount line when there's an actual saving.
   const showPartnerDiscount = partnerSelected && partnerDiscount > 0;
 
-  const teamCards = data.team.map(m => {
+  const team = Array.isArray(data.team) ? data.team : [];
+  // A fixed three-column track left the fourth person marooned on a row of
+  // their own beside half a page of white — the usual case, since the team is
+  // four. Pick the column count that fills its last row instead: four reads as
+  // 2x2, six as 3x2. Where the remainder is still one (seven, say), the last
+  // card spans the row rather than sitting in a hole. The printed page has a
+  // known width, so this can be decided here rather than left to auto-fit.
+  const teamCols = team.length <= 3
+    ? Math.max(1, team.length)
+    : team.length % 3 === 0 ? 3
+    : team.length % 2 === 0 ? 2
+    : 3;
+  const teamCards = team.map((m, i) => {
     const photoSrc = abs(m.photo || DEFAULT_PHOTOS[m.name] || '');
     const photoEl = photoSrc
       ? `<img src="${esc(photoSrc)}" style="width:56px;height:56px;border-radius:50%;object-fit:cover;border:2px solid #2BB8E6;flex-shrink:0;" />`
-      : `<div style="width:56px;height:56px;border-radius:50%;background:#2BB8E6;color:white;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:20px;flex-shrink:0;">${esc(m.name[0])}</div>`;
+      : `<div style="width:56px;height:56px;border-radius:50%;background:#2BB8E6;color:white;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:20px;flex-shrink:0;">${esc((m.name || '?')[0])}</div>`;
+    const orphan = team.length % teamCols === 1 && i === team.length - 1;
     return `
-      <div style="border:1px solid #E5E9EE;border-radius:10px;padding:16px;break-inside:avoid;">
+      <div style="border:1px solid #E5E9EE;border-radius:10px;padding:16px;break-inside:avoid;${orphan ? 'grid-column:1/-1;' : ''}">
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
           ${photoEl}
           <div>
@@ -473,7 +486,7 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
   <!-- Team -->
   ${data.showDeliveryTeam === false ? '' : `
   <h2 class="page-title">Your Delivery Team</h2>
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin-bottom:14px;">
+  <div style="display:grid;grid-template-columns:repeat(${teamCols},1fr);gap:14px;margin-bottom:14px;">
     ${teamCards}
   </div>
   <div style="border:1px solid #E5E9EE;border-radius:10px;padding:20px;margin-bottom:28px;display:flex;gap:24px;align-items:center;flex-wrap:wrap;break-inside:avoid;">
@@ -561,22 +574,26 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
       const incentiveOn = data.payInFullIncentive !== false;
       const fullIncentive = (data.paymentOptionDescs?.full || '').trim() || `get a free subtitled version (worth £${subtitlesPrice})`;
       const fullTitle = (partnerSelected || !incentiveOn) ? 'Pay in full' : `Pay in full - ${fullIncentive}`;
+      // On the blank copy every option is a real tickbox the client marks by
+      // hand — the same treatment the recommendations above get. Highlighting
+      // one of them as already chosen (which is what the default 50/50 did)
+      // reads as us having picked for them. A signed copy prints only the
+      // option they actually took, so there it stays the ticked record.
+      const option = (key, title, desc) => {
+        const chosen = !signable && paymentOption === key;
+        return `
+          <div style="display:flex;align-items:flex-start;gap:10px;border:2px solid ${chosen ? '#2BB8E6' : '#E5E9EE'};border-radius:10px;padding:14px 16px;background:${chosen ? '#F0F9FF' : 'white'};break-inside:avoid;">
+            ${signable ? '<input type="checkbox" style="margin:2px 0 0;flex-shrink:0;width:15px;height:15px;" />' : ''}
+            <div>
+              <div style="font-weight:600;font-size:14px;margin-bottom:4px;">${chosen ? '✓ ' : ''}${title}</div>
+              <div style="font-size:13px;color:#6B7785;">${desc}</div>
+            </div>
+          </div>`;
+      };
       const blocks = {
-        '5050': `
-          <div style="border:2px solid ${paymentOption === '5050' ? '#2BB8E6' : '#E5E9EE'};border-radius:10px;padding:14px 16px;background:${paymentOption === '5050' ? '#F0F9FF' : 'white'};">
-            <div style="font-weight:600;font-size:14px;margin-bottom:4px;">${paymentOption === '5050' ? '✓ ' : ''}50/50 split</div>
-            <div style="font-size:13px;color:#6B7785;">50% deposit to start, balance invoiced when you approve the final video.</div>
-          </div>`,
-        'full': `
-          <div style="border:2px solid ${paymentOption === 'full' ? '#2BB8E6' : '#E5E9EE'};border-radius:10px;padding:14px 16px;background:${paymentOption === 'full' ? '#F0F9FF' : 'white'};">
-            <div style="font-weight:600;font-size:14px;margin-bottom:4px;">${paymentOption === 'full' ? '✓ ' : ''}${fullTitle}</div>
-            <div style="font-size:13px;color:#6B7785;">Pay upfront via card or BACS.</div>
-          </div>`,
-        'po': `
-          <div style="border:2px solid ${paymentOption === 'po' ? '#2BB8E6' : '#E5E9EE'};border-radius:10px;padding:14px 16px;background:${paymentOption === 'po' ? '#F0F9FF' : 'white'};">
-            <div style="font-weight:600;font-size:14px;margin-bottom:4px;">${paymentOption === 'po' ? '✓ ' : ''}Purchase Order</div>
-            <div style="font-size:13px;color:#6B7785;">Raise a Purchase Order - our team will be in touch to set up supplier details and confirm payment.</div>
-          </div>`,
+        '5050': option('5050', '50/50 split', '50% deposit to start, balance invoiced when you approve the final video.'),
+        'full': option('full', fullTitle, 'Pay upfront via card or BACS.'),
+        'po': option('po', 'Purchase Order', 'Raise a Purchase Order - our team will be in touch to set up supplier details and confirm payment.'),
       };
       const keys = signable ? ['5050', 'full'] : [paymentOption];
       return keys.map(k => blocks[k] || '').join('');
