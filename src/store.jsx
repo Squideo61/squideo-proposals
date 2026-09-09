@@ -1733,6 +1733,24 @@ export function StoreProvider({ children }) {
       setState(s => ({ ...s, signatures: { ...s.signatures, [id]: sig } }));
       api.post('/api/signatures/' + id, sig).catch(() => {});
     },
+    // Log an acceptance that happened away from the link — a signed copy the
+    // client returned by email or post. Same endpoint the client's own signing
+    // uses, so the deal advances, the value syncs and the team is alerted
+    // exactly as usual; the `recordedOffline` stamp is what tells the server
+    // (and everything downstream) that no one clicked Sign.
+    //
+    // Unlike saveSignature this AWAITS the write and lets failures through
+    // rather than optimistically painting the signature in: the person pressing
+    // the button is recording a fact about a contract, and needs to know if it
+    // didn't land. Only on success do we update local state and refetch, so a
+    // rejected record leaves the proposal visibly unsigned.
+    recordSignature(id, sig) {
+      return api.post('/api/signatures/' + id, sig).then((resp) => {
+        setState(s => ({ ...s, signatures: { ...s.signatures, [id]: sig } }));
+        fetchAllRef.current?.();
+        return resp;
+      });
+    },
     removeSignature(id) {
       // Tombstone so a focus/interval poll doesn't resurrect the signature
       // from a stale /api/proposals read while the DELETE is in flight.

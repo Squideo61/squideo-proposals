@@ -6,6 +6,7 @@ import { formatDuration, formatGBP, formatProposalNumber, formatRelativeTime, pr
 import { openPrintWindow, printOptionsForSigned } from '../utils/printProposal.js';
 import { Badge } from './ui.jsx';
 import { ViewAnalyticsModal } from './ViewAnalyticsModal.jsx';
+import { RecordSignedModal } from './crm/RecordSignedModal.jsx';
 
 const TEAM_FILTER_STORAGE_KEY = 'squideo.dashboard.teamMemberFilter';
 
@@ -26,6 +27,9 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
     try { localStorage.setItem(TEAM_FILTER_STORAGE_KEY, memberFilter); } catch {}
   }, [memberFilter]);
   const [analyticsId, setAnalyticsId] = useState(null);
+  // Proposal being recorded as signed from a copy the client returned outside
+  // the link (null = closed).
+  const [recordingId, setRecordingId] = useState(null);
   const isMobile = useIsMobile();
 
   const proposals = Object.entries(state.proposals)
@@ -90,6 +94,7 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
   const filtersActive = Boolean(search.trim() || memberFilter || statusFilter);
 
   const analyticsProposal = analyticsId ? proposals.find((p) => p.id === analyticsId) : null;
+  const recordingProposal = recordingId ? proposals.find((p) => p.id === recordingId) : null;
 
   return (
     // overflowX:hidden + box-sizing stop any stray wide child from giving the
@@ -206,6 +211,7 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
               onDelete={onDelete}
               onDuplicate={onDuplicate}
               onAnalytics={() => setAnalyticsId(p.id)}
+              onRecordSigned={() => setRecordingId(p.id)}
               onOpenDeal={onOpenDeal}
               showMsg={showMsg}
             />
@@ -215,6 +221,16 @@ export function ListView({ onCreate, onOpen, onPreview, onDelete, onDuplicate, o
 
       {analyticsProposal && (
         <ViewAnalyticsModal proposal={analyticsProposal} onClose={() => setAnalyticsId(null)} />
+      )}
+      {recordingProposal && (
+        <RecordSignedModal
+          proposalId={recordingProposal.id}
+          label={[
+            recordingProposal._number ? formatProposalNumber(recordingProposal._number) : null,
+            recordingProposal.clientName || recordingProposal.contactBusinessName || null,
+          ].filter(Boolean).join(' · ')}
+          onClose={() => setRecordingId(null)}
+        />
       )}
     </div>
   );
@@ -365,7 +381,7 @@ function CreatorAvatar({ proposal, size = 24, showName = true }) {
   );
 }
 
-function ProposalCard({ proposal, onOpen, onPreview, onDelete, onDuplicate, onAnalytics, onOpenDeal, showMsg }) {
+function ProposalCard({ proposal, onOpen, onPreview, onDelete, onDuplicate, onAnalytics, onRecordSigned, onOpenDeal, showMsg }) {
   const { state, actions } = useStore();
   const signed = state.signatures[proposal.id];
   const payment = state.payments[proposal.id];
@@ -451,8 +467,17 @@ function ProposalCard({ proposal, onOpen, onPreview, onDelete, onDuplicate, onAn
     {
       label: signed ? 'Download signed proposal' : 'Download PDF',
       icon: Download,
-      onClick: () => openPrintWindow(proposal, signed ? printOptionsForSigned(signed, payment) : {}),
+      onClick: () => {
+        // A blocked popup is otherwise silent — the menu item just closes and
+        // nothing happens, which reads as the feature being broken.
+        const opened = openPrintWindow(proposal, signed ? printOptionsForSigned(signed, payment) : { signable: true });
+        if (!opened) showMsg('Your browser blocked the PDF window — allow pop-ups for this site');
+      },
     },
+    // Only offered while unsigned: this is how a deal the client closed on
+    // paper gets into the CRM at all. Once signed, "Unmark as accepted" below
+    // is the way back.
+    ...(!signed && onRecordSigned ? [{ label: 'Record signed proposal', icon: Check, onClick: onRecordSigned }] : []),
     ...(onDuplicate ? [{ label: 'Duplicate proposal', icon: Copy, onClick: () => onDuplicate(proposal.id) }] : []),
     ...(signed && proposal._xeroInvoiceId
       ? [{ label: 'View invoice', icon: Receipt, onClick: () => window.open('/api/xero/invoice-pdf?invoiceId=' + encodeURIComponent(proposal._xeroInvoiceId), '_blank', 'noopener') }]

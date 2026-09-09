@@ -215,7 +215,13 @@ function validityLabel(dateStr, days, expiryDateISO) {
   return expiry.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStripe = false, onSigned }) {
+// `recordMode` is the staff "Record signed proposal" flow: the same client view,
+// driven by a team member on behalf of a client who accepted away from the link
+// (a signed PDF returned by email or post). It stays a preview in every respect
+// that touches the client's money — no Stripe, no PO issuance — but the
+// signature it produces is real and persists, because otherwise a deal closed on
+// paper can never enter production.
+export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStripe = false, onSigned, recordMode = false }) {
   const { state, actions, showMsg } = useStore();
   const data = state.proposals[id];
   const isPreview = !useRealStripe;
@@ -427,6 +433,14 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
   // Drawn or uploaded signature image (PNG data URL) — required alongside the
   // typed name, DocuSign-style.
   const [sigImage, setSigImage] = useState(null);
+  // Record mode only: when the client actually signed (they may have posted a
+  // copy back last week), how it reached us, and a free-text note for anything
+  // the fields don't cover. The date defaults to today in the yyyy-mm-dd shape
+  // a native date input wants.
+  const [recordSignedOn, setRecordSignedOn] = useState(() => new Date().toISOString().slice(0, 10));
+  const [recordMethod, setRecordMethod] = useState('pdf');
+  const [recordNote, setRecordNote] = useState('');
+  const [recording, setRecording] = useState(false);
   const [paymentChoice, setPaymentChoice] = useState(null);
   const isMobile = useIsMobile();
   const signRef = useRef(null);
@@ -655,18 +669,34 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
 
   const handleSign = async () => {
     if (!sigName.trim() || !sigEmail.trim() || !sigAccepted) {
-      showMsg('Please complete name, email and tick the acceptance box.');
+      showMsg(recordMode
+        ? 'Please give the client\'s name and email, and confirm they accepted.'
+        : 'Please complete name, email and tick the acceptance box.');
       return;
     }
-    if (!sigImage) {
+    // A drawn signature is the client's own mark, so record mode can't require
+    // one — a team member drawing it would be forging it. They can attach the
+    // signature off the returned copy if they have it, and the signed block and
+    // PDF both already render without one.
+    if (!sigImage && !recordMode) {
       showMsg('Please draw or upload your signature.');
       return;
     }
+    // The date the client signed, which in record mode is typed in and can be
+    // days back. Keep the time-of-day off it — we only know the day — but land
+    // it at midday so a timezone shift can't slide it onto the wrong date.
+    const signedAtDate = recordMode ? new Date(recordSignedOn + 'T12:00:00') : new Date();
+    if (!Number.isFinite(signedAtDate.getTime())) {
+      showMsg('Please give a valid date for when the proposal was signed.');
+      return;
+    }
+    const signedAtISO = signedAtDate.toISOString();
     const sig = {
       name: sigName,
       email: sigEmail,
       signatureImage: sigImage,
-      signedAt: new Date().toISOString(),
+      signedAt: signedAtISO,
+      ...(recordMode ? { recordedOffline: { method: recordMethod, note: recordNote.trim() || null } } : {}),
       // `price` is stored as the AGREED unit price (already scaled for the
       // proposal's minutes), because Xero and the invoice builders bill straight
       // off these lines. listPrice keeps the unscaled figure for reference.
@@ -764,6 +794,25 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
         },
       } : {}),
     };
+
+    // Record mode persists for real — it's checked before the preview branch
+    // precisely because it is a preview in every other respect. The write is
+    // awaited so a refusal (already signed, not your deal) surfaces here instead
+    // of silently leaving the proposal unsigned.
+    if (recordMode) {
+      setRecording(true);
+      try {
+        await actions.recordSignature(id, sig);
+      } catch (err) {
+        showMsg(err?.message || 'Could not record the acceptance — nothing was saved.');
+        return;
+      } finally {
+        setRecording(false);
+      }
+      showMsg('Recorded as signed. The deal has moved to Signed and the team has been notified.');
+      if (onSigned) onSigned(sig);
+      return;
+    }
 
     if (isPreview) {
       setPreviewSigned(sig);
@@ -870,8 +919,8 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
               raised off one) — on mobile it stays the bare chevron for room. */}
           {onBack ? <button onClick={onBack} className="btn-ghost" style={{ flexShrink: 0 }}><ChevronLeft size={16} /> {isMobile ? 'Back' : backLabel}</button> : <div />}
           {!isMobile && (
-            <div style={{ fontSize: 12, color: '#92400E', fontWeight: 700, letterSpacing: 0.5 }}>
-              PREVIEW MODE
+            <div style={{ fontSize: 12, color: recordMode ? '#15803D' : '#92400E', fontWeight: 700, letterSpacing: 0.5 }}>
+              {recordMode ? 'RECORDING ACCEPTANCE' : 'PREVIEW MODE'}
             </div>
           )}
           <div style={{ display: 'flex', gap: isMobile ? 4 : 8, flexShrink: 0 }}>
@@ -916,7 +965,13 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
         </div>
       )}
 
-      {isPreview && (
+      {recordMode && (
+        <div style={{ background: '#DCFCE7', borderBottom: '1px solid #BBF7D0', color: '#14532D', padding: '10px 24px', fontSize: 13, lineHeight: 1.5 }}>
+          <strong>Recording a signed proposal.</strong> Tick the recommendations and payment route exactly as the client agreed them, then fill in the acceptance box at the bottom. This <strong>will</strong> be saved: the deal moves to Signed and the team is notified. No payment is taken and the client is not emailed.
+        </div>
+      )}
+
+      {isPreview && !recordMode && (
         <div style={{ background: '#FEF3C7', borderBottom: '1px solid #FDE68A', color: '#78350F', padding: '10px 24px', fontSize: 13, lineHeight: 1.5, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
           <div>
             <strong>Preview mode</strong> - changes are not saved. You can simulate the client experience (selections, signature, payment), but nothing here will affect the live proposal or notify the team.
@@ -1923,26 +1978,63 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
           />
         ) : (
           <div ref={signRef} style={{ background: BRAND.paper, border: '2px solid ' + BRAND.blue, borderRadius: 12, padding: 24, scrollMarginTop: 80 }}>
-            <h3 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>Accept this proposal</h3>
-            <Field label="Your full name">
-              <input className="input" value={sigName} onChange={(e) => setSigName(e.target.value)} placeholder="Type your name to sign" />
+            <h3 style={{ margin: '0 0 16px', fontSize: 18, fontWeight: 700 }}>
+              {recordMode ? 'Record this acceptance' : 'Accept this proposal'}
+            </h3>
+            <Field label={recordMode ? "Client's full name (as they signed it)" : 'Your full name'}>
+              <input className="input" value={sigName} onChange={(e) => setSigName(e.target.value)} placeholder={recordMode ? 'Name on the signed copy' : 'Type your name to sign'} />
             </Field>
-            <Field label="Email address">
-              <input className="input" type="email" value={sigEmail} onChange={(e) => setSigEmail(e.target.value)} placeholder="you@company.com" />
+            <Field label={recordMode ? "Client's email address" : 'Email address'}>
+              <input className="input" type="email" value={sigEmail} onChange={(e) => setSigEmail(e.target.value)} placeholder={recordMode ? 'client@company.com' : 'you@company.com'} />
             </Field>
-            <Field label="Your signature">
+            {recordMode && (
+              <>
+                <Field label="Date they signed">
+                  <input
+                    className="input"
+                    type="date"
+                    value={recordSignedOn}
+                    max={new Date().toISOString().slice(0, 10)}
+                    onChange={(e) => setRecordSignedOn(e.target.value)}
+                  />
+                </Field>
+                <Field label="How it reached us">
+                  <select className="input" value={recordMethod} onChange={(e) => setRecordMethod(e.target.value)}>
+                    <option value="pdf">Signed PDF returned</option>
+                    <option value="email">Confirmed by email</option>
+                    <option value="post">Signed copy received by post</option>
+                    <option value="verbal">Agreed verbally</option>
+                  </select>
+                </Field>
+                <Field label="Note (optional)">
+                  <input
+                    className="input"
+                    value={recordNote}
+                    onChange={(e) => setRecordNote(e.target.value)}
+                    placeholder="e.g. signed copy saved in the deal's Drive folder"
+                  />
+                </Field>
+              </>
+            )}
+            <Field label={recordMode ? "Client's signature from the returned copy (optional)" : 'Your signature'}>
               <SignaturePad value={sigImage} onChange={setSigImage} />
             </Field>
             <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '12px 0', cursor: 'pointer', fontSize: 14 }}>
               <input type="checkbox" checked={sigAccepted} onChange={(e) => setSigAccepted(e.target.checked)} style={{ marginTop: 3 }} />
               <span>
-                I accept this proposal and authorise Squideo to begin work. By typing my name and signing above, I am providing my electronic signature
-                {CONFIG.company.termsUrl ? <>, and agree to our <a href={CONFIG.company.termsUrl} target="_blank" rel="noreferrer" style={{ color: BRAND.blue }}>Terms & Conditions</a></> : null}.
+                {recordMode ? (
+                  <>I confirm this client accepted this proposal on the terms selected above, and that the acceptance is evidenced by the method given. This is recorded against my name in the deal's history.</>
+                ) : (
+                  <>
+                    I accept this proposal and authorise Squideo to begin work. By typing my name and signing above, I am providing my electronic signature
+                    {CONFIG.company.termsUrl ? <>, and agree to our <a href={CONFIG.company.termsUrl} target="_blank" rel="noreferrer" style={{ color: BRAND.blue }}>Terms & Conditions</a></> : null}.
+                  </>
+                )}
               </span>
             </label>
-            <button onClick={handleSign} className="btn" style={{ width: '100%', justifyContent: 'center', padding: '14px 20px', fontSize: 15, marginTop: 12, background: '#16A34A', flexDirection: 'column', gap: 4 }}>
+            <button onClick={handleSign} disabled={recording} className="btn" style={{ width: '100%', justifyContent: 'center', padding: '14px 20px', fontSize: 15, marginTop: 12, background: '#16A34A', flexDirection: 'column', gap: 4, opacity: recording ? 0.7 : 1 }}>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 16 }}>
-                <Check size={18} /> Accept &amp; Sign
+                <Check size={18} /> {recordMode ? (recording ? 'Recording…' : 'Record as signed') : 'Accept & Sign'}
               </span>
               <span style={{ fontSize: 13, fontWeight: 500, opacity: 0.95 }}>
                 {partnerSelected ? (

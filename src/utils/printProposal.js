@@ -60,6 +60,15 @@ function renderDescriptionHTML(text) {
   return parts.join('');
 }
 
+// Mirrors OFFLINE_METHODS in api/signatures/[id].js — how an acceptance the
+// team recorded by hand actually reached us, spelled out on the printed copy.
+const OFFLINE_METHOD_LABEL = {
+  pdf: 'as a signed PDF returned by the client',
+  email: 'as a confirmation by email',
+  post: 'as a signed copy received by post',
+  verbal: 'verbally',
+};
+
 const PAYMENT_OPTION_LABEL = {
   '5050': '50/50 split (50% deposit, balance on approval)',
   'full': 'Pay in full upfront',
@@ -389,7 +398,12 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
       </div>
       ${paidLine}
       <p style="margin:20px 0 0;font-size:11px;color:#166534;line-height:1.5;font-style:italic;">
-        This document confirms electronic acceptance of the proposal via the Squideo CRM portal. By typing their name${signed.signatureImage ? ' and signing' : ''} on the acceptance form, the signatory provided their electronic signature.
+        ${signed.recordedOffline
+          // An acceptance taken away from the link must not claim to be an
+          // electronic signature given on our form — it wasn't, and this copy
+          // may end up attached to an invoice.
+          ? `This acceptance was received ${esc(OFFLINE_METHOD_LABEL[signed.recordedOffline.method] || 'outside the online proposal')} and recorded against this proposal by ${esc(signed.recordedOffline.byName || signed.recordedOffline.by || 'the Squideo team')}${signed.recordedOffline.at ? ' on ' + esc(new Date(signed.recordedOffline.at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })) : ''}. The signed copy the client returned is the record of their signature.`
+          : `This document confirms electronic acceptance of the proposal via the Squideo CRM portal. By typing their name${signed.signatureImage ? ' and signing' : ''} on the acceptance form, the signatory provided their electronic signature.`}
       </p>
     </div>`;
   })() : '';

@@ -1,5 +1,5 @@
 import sql from '../_lib/db.js';
-import { cors, requireAuth } from '../_lib/middleware.js';
+import { cors, optionalAuth, requireAuth } from '../_lib/middleware.js';
 import { getRole } from '../_lib/userRoles.js';
 import { hasPermission } from '../_lib/permissions.js';
 import { sendMail, signedHtml, clientSignedThanksHtml, APP_URL } from '../_lib/email.js';
@@ -45,6 +45,32 @@ function formatSignedWhen(iso) {
   } catch {
     return iso;
   }
+}
+
+// How an offline acceptance reached us, for the team alert and the audit
+// trail. The client never sees these — `recordedOffline` is deliberately absent
+// from PUBLIC_SIGNATURE_FIELDS below, so their own copy of the signed proposal
+// reads exactly as it would had they signed the link themselves.
+const OFFLINE_METHODS = {
+  pdf: 'signed PDF returned',
+  email: 'confirmed by email',
+  post: 'signed copy received by post',
+  verbal: 'agreed verbally',
+};
+
+// Build the audit stamp for a "Record signed proposal". Everything identifying
+// comes from the session, never the request body, so the public POST clients
+// use to sign can't forge a staff-recorded acceptance.
+function offlineStamp(requested, user) {
+  const method = Object.hasOwn(OFFLINE_METHODS, requested?.method) ? requested.method : 'pdf';
+  const rawNote = typeof requested?.note === 'string' ? requested.note.trim() : '';
+  return {
+    by: user.email || null,
+    byName: user.name || null,
+    at: new Date().toISOString(),
+    method,
+    note: rawNote ? rawNote.slice(0, 500) : null,
+  };
 }
 
 // Allowlist of fields from `signatures.data` that the public client view
@@ -272,10 +298,45 @@ export default async function handler(req, res) {
       return res.status(409).json({ error: 'This proposal has already been signed.' });
     }
 
-    const { name, email, signedAt, ...rest } = req.body;
+    const { name, email, signedAt, recordedOffline: offlineRequest, ...rest } = req.body;
+
+    // "Record signed proposal" — a team member logging an acceptance that
+    // happened away from the link (a signed PDF returned by email or post).
+    // Staff-only, and gated the same way a payment-plan change is: the deal's
+    // owner, or anyone with signatures.manage_all. A proposal with no deal yet
+    // has no owner to check, so any signed-in team member may record it.
+    let recordedOffline = null;
+    if (offlineRequest) {
+      const user = await optionalAuth(req);
+      if (!user) {
+        return res.status(401).json({ error: 'Only a signed-in team member can record an offline acceptance.' });
+      }
+      const ownerRows = await sql`
+        SELECT d.owner_email
+          FROM deals d
+          JOIN proposals p ON p.deal_id = d.id
+         WHERE p.id = ${id}
+      `;
+      const ownerEmail = ownerRows[0]?.owner_email || null;
+      const isOwner = !!ownerEmail && ownerEmail.toLowerCase() === (user.email || '').toLowerCase();
+      if (ownerEmail && !isOwner && !hasPermission(await getRole(user.role), 'signatures.manage_all')) {
+        return res.status(403).json({ error: 'Only the deal owner or an admin can record a signed proposal.' });
+      }
+      recordedOffline = offlineStamp(offlineRequest, user);
+      rest.recordedOffline = recordedOffline;
+    }
+
+    // A recorded acceptance carries the date the client actually signed, which
+    // the recorder types in and may be days back. Anything unparseable would
+    // land as a null signed_at and read as "never signed" everywhere downstream,
+    // so fall back to now rather than storing a hole.
+    const signedAtISO = Number.isFinite(new Date(signedAt).getTime())
+      ? new Date(signedAt).toISOString()
+      : new Date().toISOString();
+
     await sql`
       INSERT INTO signatures (proposal_id, name, email, signed_at, data)
-      VALUES (${id}, ${name}, ${email}, ${signedAt}, ${JSON.stringify(rest)})
+      VALUES (${id}, ${name}, ${email}, ${signedAtISO}, ${JSON.stringify(rest)})
     `;
 
     // CRM: advance the linked deal to 'signed' AND sync deals.value to the
@@ -289,7 +350,13 @@ export default async function handler(req, res) {
       // auto-create never ran, this creates the deal card now.
       dealId = await ensureDealForProposal(id);
       if (dealId) {
-        await advanceStage(dealId, 'signed', { payload: { proposalId: id, signerName: name, signerEmail: email } });
+        await advanceStage(dealId, 'signed', {
+          actorEmail: recordedOffline?.by || null,
+          payload: {
+            proposalId: id, signerName: name, signerEmail: email,
+            ...(recordedOffline ? { recordedOffline } : {}),
+          },
+        });
         const proposalRows = await sql`SELECT data FROM proposals WHERE id = ${id}`;
         const proposalData = proposalRows[0]?.data || {};
         const signedValue = computeProposalTotalExVat(proposalData, rest);
@@ -319,22 +386,39 @@ export default async function handler(req, res) {
         Number(proposal.vatRate) || 0,
       );
       const headline = priceLabel ? `${title} — ${priceLabel}` : title;
+      // An acceptance the team recorded by hand says so, and says who recorded
+      // it. Reading "🎉 Signed" off a colleague's data entry — and going looking
+      // for a Stripe deposit that was never taken — is how a paper deal gets
+      // treated as an online one.
+      const recordedBy = recordedOffline?.byName || recordedOffline?.by || 'a team member';
+      const subject = recordedOffline
+        ? `📝 Recorded as signed: ${headline}`
+        : `🎉 Signed: ${headline}`;
+      const howLabel = recordedOffline ? OFFLINE_METHODS[recordedOffline.method] : null;
       await sendNotification('proposal.signed', {
-        subject: `🎉 Signed: ${headline}`,
-        html: signedHtml({ proposal, signature: rest, signerName: name, signerEmail: email, signedAt, link }),
-        text: `${name || 'Someone'} (${email || ''}) signed "${title}"${priceLabel ? ` for ${priceLabel}` : ''} on ${formatSignedWhen(signedAt)}. ${link}`,
+        subject,
+        html: signedHtml({ proposal, signature: rest, signerName: name, signerEmail: email, signedAt: signedAtISO, link }),
+        text: recordedOffline
+          ? `${recordedBy} recorded "${title}" as signed by ${name || 'the client'} (${email || 'no email'})${priceLabel ? ` for ${priceLabel}` : ''} on ${formatSignedWhen(signedAtISO)} — ${howLabel}. No online payment has been taken. ${link}`
+          : `${name || 'Someone'} (${email || ''}) signed "${title}"${priceLabel ? ` for ${priceLabel}` : ''} on ${formatSignedWhen(signedAtISO)}. ${link}`,
         // Spelled out rather than left to fall back to subject/text: this is the
         // line a phone shows on the lock screen, and the fallback put a raw ISO
         // timestamp in it. Bell click deep-links to the deal/project page
         // (in-app hash route, distinct from the absolute APP_URL email link).
         inApp: dealId ? {
-          title: `🎉 Signed: ${headline}`,
-          body: `${name || 'Someone'}${email ? ` · ${email}` : ''}`,
+          title: subject,
+          body: recordedOffline
+            ? `${name || 'Client'} · ${howLabel} · recorded by ${recordedBy}`
+            : `${name || 'Someone'}${email ? ` · ${email}` : ''}`,
           link: `#/deal/${dealId}`,
         } : null,
       });
 
-      if (email) {
+      // The client's "thanks for signing" email points at the proposal link and
+      // a Pay now button. Someone who signed on paper either never got to that
+      // link or couldn't open it, so sending it would be the one message
+      // guaranteed to confuse them. The team chases payment its own way.
+      if (email && !recordedOffline) {
         const signedProposalLink = `${APP_URL}/?proposal=${id}&thanks=1&download=signed`;
         const payNowLink = rest.paymentOption !== 'po' ? `${APP_URL}/?proposal=${id}&thanks=1` : null;
         await sendMail({

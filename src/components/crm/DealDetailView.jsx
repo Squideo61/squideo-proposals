@@ -6,6 +6,8 @@ import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { formatGBP, formatRelativeTime, formatTaskDue, formatDuration, useIsMobile, formatProposalNumber, decodeHtmlEntities, fileSizeLabel, proposalSignedTotalExVat, proposalQuotedExVat, EMBED_FILL_STYLE } from '../../utils.js';
 import { sanitizeEmailBody } from '../../utils/emailImages.js';
+import { openPrintWindow, printOptionsForSigned } from '../../utils/printProposal.js';
+import { RecordSignedModal } from './RecordSignedModal.jsx';
 import { ActionMenu, Badge, CallLink, Modal, RefBadge, FormRow } from '../ui.jsx';
 import { EmailComposerModal } from './EmailComposer.jsx';
 import { referenceMonth } from '../../lib/reference.js';
@@ -233,6 +235,9 @@ export function DealDetailView({ dealId, onBack, backLabel, onOpenProposal, onCr
   const [choosingProposal, setChoosingProposal] = useState(false);
   // Proposal whose viewing analytics modal is open (null = closed).
   const [analyticsProposal, setAnalyticsProposal] = useState(null);
+  // Proposal being recorded as signed off the back of a copy the client
+  // returned outside the link (null = closed).
+  const [recordingProposal, setRecordingProposal] = useState(null);
 
   useEffect(() => {
     if (dealId) {
@@ -257,6 +262,23 @@ export function DealDetailView({ dealId, onBack, backLabel, onOpenProposal, onCr
   }
 
   const proposals = detail?.proposals || [];
+
+  // Open the printable copy of a proposal — the same document the proposals
+  // list and the client's own view produce, so there is one PDF in circulation
+  // rather than a deal-page variant of it. The deal card carries only a summary
+  // of each proposal, so the full data (and any signature/payment) comes from
+  // the store, which the CRM load populates for every proposal in scope.
+  const downloadProposalPdf = (p) => {
+    const full = state.proposals[p.id];
+    if (!full) { showMsg('Proposal is still loading — try again in a moment'); return; }
+    const signed = state.signatures[p.id] || null;
+    const payment = state.payments[p.id] || null;
+    // openPrintWindow returns false when the browser blocks the popup, which is
+    // otherwise silent — the button just appears to do nothing.
+    const opened = openPrintWindow(full, signed ? printOptionsForSigned(signed, payment) : { signable: true });
+    if (!opened) showMsg('Your browser blocked the PDF window — allow pop-ups for this site');
+  };
+
   // Post-signature status for the proposal card. Falls back to the pipeline's
   // copy of the deal while the detail is still loading, so the pill doesn't
   // flash in late on a page the list already knows the answer for.
@@ -836,7 +858,7 @@ export function DealDetailView({ dealId, onBack, backLabel, onOpenProposal, onCr
                     </button>
                   )}
                 </div>
-                <div style={{ display: 'flex', gap: 6, flexShrink: 0, marginLeft: 'auto' }}>
+                <div style={{ display: 'flex', gap: 6, flexShrink: 0, marginLeft: 'auto', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                   {/* Copy the public proposal share link (same URL as the deals
                       list "Copy share link" and the client view). */}
                   <button
@@ -850,6 +872,27 @@ export function DealDetailView({ dealId, onBack, backLabel, onOpenProposal, onCr
                     title="Copy the client proposal link"
                     style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 10px', background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 6, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 600, color: BRAND.ink }}
                   ><Link2 size={13} /> Copy link</button>
+                  {/* A copy to send when the client can't open the link at all —
+                      a blocked redirect, a locked-down mail gateway, an old
+                      browser. Unsigned proposals print with a signature block
+                      they can fill in and return. */}
+                  <button
+                    type="button"
+                    onClick={() => downloadProposalPdf(p)}
+                    title={p.signed ? 'Download the signed copy' : 'Download a PDF to send or print'}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 10px', background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 6, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 600, color: BRAND.ink }}
+                  ><Download size={13} /> PDF</button>
+                  {/* The way back in for a deal closed on paper: without this a
+                      returned signed copy can never move the deal past Unsigned,
+                      because only the client's own click creates a signature. */}
+                  {!p.signed && (
+                    <button
+                      type="button"
+                      onClick={() => setRecordingProposal(p)}
+                      title="Record an acceptance the client gave outside the link"
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '6px 10px', background: 'white', border: '1px solid ' + BRAND.border, borderRadius: 6, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12, fontWeight: 600, color: BRAND.ink }}
+                    ><CheckSquare size={13} /> Record signed</button>
+                  )}
                   {/* Signed proposals are locked — the client has agreed to these
                       terms, so only Preview is offered. */}
                   {!p.signed && (
@@ -1214,6 +1257,17 @@ export function DealDetailView({ dealId, onBack, backLabel, onOpenProposal, onCr
         <ViewAnalyticsModal
           proposal={analyticsProposal}
           onClose={() => setAnalyticsProposal(null)}
+        />
+      )}
+      {recordingProposal && (
+        <RecordSignedModal
+          proposalId={recordingProposal.id}
+          label={[
+            recordingProposal.number ? formatProposalNumber(recordingProposal.number) : null,
+            recordingProposal.clientName || recordingProposal.contactBusinessName || null,
+          ].filter(Boolean).join(' · ')}
+          onClose={() => setRecordingProposal(null)}
+          onRecorded={() => actions.loadDealDetail(dealId)}
         />
       )}
     </div>
