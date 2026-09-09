@@ -3,6 +3,34 @@ const escapeHtml = (s = '') =>
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   }[c]));
 
+/**
+ * Where "finish your quote" goes back to.
+ *
+ * BOTH HALVES ARE SENDER-SUPPLIED, and this is a link in an email we send to an
+ * address the same anonymous caller chose — so an unchecked origin here is a way
+ * to make Squideo email a stranger a link to any domain at all. The form knows
+ * where it is living (the CRM's own /quote in an iframe, or /get-quote on the
+ * marketing site, which runs it natively) and we don't, hence sender-supplied;
+ * the allowlist is what makes that safe.
+ *
+ * Exact origins, never a suffix match: "https://squideo.com.evil.test" must not
+ * pass, and `endsWith('squideo.com')` would let it through. The path is checked
+ * as a path — one leading slash, no scheme, and no protocol-relative "//host",
+ * which a browser reads as a different origin entirely.
+ */
+export function buildResumeUrl({ origin, path, formSessionId, allowedOrigins, fallbackOrigin }) {
+  const clean = (v) => (typeof v === 'string' ? v.trim() : '');
+  const claimed = clean(origin).replace(/\/$/, '');
+  const safeOrigin = allowedOrigins.includes(claimed) ? claimed : fallbackOrigin.replace(/\/$/, '');
+
+  const claimedPath = clean(path);
+  const safePath = /^\/[A-Za-z0-9\-._~/]{0,100}$/.test(claimedPath) && !claimedPath.startsWith('//')
+    ? claimedPath.replace(/\/$/, '')
+    : '/quote';
+
+  return `${safeOrigin}${safePath}?resume=${encodeURIComponent(formSessionId)}`;
+}
+
 export function buildResumeEmail({ kind, name, resumeUrl, unsubscribeUrl }) {
   const firstName = (name || '').trim().split(/\s+/)[0] || '';
   const intro = {

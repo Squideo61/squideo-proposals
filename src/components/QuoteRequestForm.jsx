@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { resolveRedirect } from '../lib/embedRedirect.js';
 import { uploadEnquiryFile } from '../lib/quoteUpload.js';
 import { fireConfetti, burstFrom, warmConfetti } from './confetti.js';
@@ -134,6 +135,9 @@ const DEFAULTS = {
   budgetRequired: true,
   apiBase: '/api/quote-requests',
   successRedirectUrl: 'https://www.squideo.com/qr-thank-you',
+  // Path the 'save my progress' email links back to, on whichever site is
+  // hosting this form. Null keeps the CRM's own default (/quote).
+  resumePath: null,
 };
 
 export function formatPhoneNumber(value, format) {
@@ -1141,77 +1145,100 @@ export function QuoteRequestForm(props = {}) {
         </div>
       </div>
 
-      {exitOpen && cfg.enableExitIntent && (
-        <div className="exit-intent-overlay visible" onClick={(e) => { if (e.target === e.currentTarget) { setExitOpen(false); exitShownRef.current = false; } }}>
-          <div className="exit-intent-modal">
-            <button type="button" className="exit-modal-close" onClick={() => setExitOpen(false)}>
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
-            <div className="exit-modal-icon">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                <line x1="12" y1="9" x2="12" y2="13" />
-                <line x1="12" y1="17" x2="12.01" y2="17" />
-              </svg>
-            </div>
-            <h3 className="exit-modal-title">
-              {userName ? `Wait ${userName}! Don't leave yet` : cfg.exitIntentTitle}
-            </h3>
-            <p className="exit-modal-description">{cfg.exitIntentDescription}</p>
-            <div className="exit-progress-info">
-              <div className="exit-progress-bar">
-                <div className="exit-progress-fill" style={{ width: `${Math.round((numericStep / TOTAL_STEPS) * 100)}%` }} />
+      {/*
+        * PORTALLED TO <body>, because the overlay is position: fixed and a
+        * fixed element is only fixed to the viewport while no ancestor carries
+        * a transform. The marketing site reveals each band with a short
+        * transform animation, and that alone was enough to make this dim its
+        * own section instead of the page — a grey rectangle in the middle of
+        * the screen, which is exactly how it looked in the iframe it had just
+        * come out of. The form is dropped into pages we do not control, so it
+        * takes itself out of whatever it lands in rather than asking the host
+        * not to animate.
+        */}
+      {exitOpen && cfg.enableExitIntent && typeof document !== 'undefined' && createPortal(
+        // The class comes with it: every rule in the stylesheet is namespaced
+        // under .quote-request-widget, and outside it the overlay is an unstyled
+        // div. The root selector sets custom properties and nothing else, so a
+        // second one wrapping the modal costs nothing.
+        <div className="quote-request-widget">
+          <div className="exit-intent-overlay visible" onClick={(e) => { if (e.target === e.currentTarget) { setExitOpen(false); exitShownRef.current = false; } }}>
+            <div className="exit-intent-modal">
+              <button type="button" className="exit-modal-close" onClick={() => setExitOpen(false)}>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+              <div className="exit-modal-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                  <line x1="12" y1="9" x2="12" y2="13" />
+                  <line x1="12" y1="17" x2="12.01" y2="17" />
+                </svg>
               </div>
-              <p className="exit-progress-text">
-                You're {Math.round((numericStep / TOTAL_STEPS) * 100)}% done! Only {TOTAL_STEPS - numericStep} step{TOTAL_STEPS - numericStep !== 1 ? 's' : ''} remaining.
-              </p>
-            </div>
-            <div className="exit-modal-actions">
-              <button type="button" className="btn btn-primary" onClick={() => { setExitOpen(false); exitShownRef.current = false; }}>
-                {cfg.exitIntentContinueButton}
-              </button>
-              <button
-                type="button" className="btn btn-secondary"
-                onClick={async () => {
-                  const email = form.email.trim();
-                  if (!email || !isValidEmail(email)) {
-                    alert("Please go back to step 1 and enter a valid email address — we need it to send you the resume link.");
-                    setExitOpen(false);
-                    setStep(1);
-                    return;
-                  }
-                  if (!sessionIdRef.current) {
-                    sessionIdRef.current = 'form_' + Date.now() + '_' + Math.random().toString(36).slice(2, 11);
-                  }
-                  saveProgress();
-                  try {
-                    const r = await fetch(`${cfg.apiBase}?action=save-and-email`, {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({
-                        formSessionId: sessionIdRef.current,
-                        email,
-                        name: form.name.trim() || null,
-                        origin: window.location.origin,
-                      }),
-                    });
-                    if (!r.ok) throw new Error('send failed');
-                    setExitOpen(false);
-                    alert(`✅ We've emailed a resume link to ${email}. Check your inbox (and spam folder just in case).`);
-                  } catch {
-                    setExitOpen(false);
-                    alert("Sorry — we couldn't send the email just now. Your progress is saved locally, so you can come back to this page any time.");
-                  }
-                }}
-              >
-                {cfg.exitIntentSaveButton}
-              </button>
+              <h3 className="exit-modal-title">
+                {userName ? `Wait ${userName}! Don't leave yet` : cfg.exitIntentTitle}
+              </h3>
+              <p className="exit-modal-description">{cfg.exitIntentDescription}</p>
+              <div className="exit-progress-info">
+                <div className="exit-progress-bar">
+                  <div className="exit-progress-fill" style={{ width: `${Math.round((numericStep / TOTAL_STEPS) * 100)}%` }} />
+                </div>
+                <p className="exit-progress-text">
+                  You're {Math.round((numericStep / TOTAL_STEPS) * 100)}% done! Only {TOTAL_STEPS - numericStep} step{TOTAL_STEPS - numericStep !== 1 ? 's' : ''} remaining.
+                </p>
+              </div>
+              <div className="exit-modal-actions">
+                <button type="button" className="btn btn-primary" onClick={() => { setExitOpen(false); exitShownRef.current = false; }}>
+                  {cfg.exitIntentContinueButton}
+                </button>
+                <button
+                  type="button" className="btn btn-secondary"
+                  onClick={async () => {
+                    const email = form.email.trim();
+                    if (!email || !isValidEmail(email)) {
+                      alert("Please go back to step 1 and enter a valid email address — we need it to send you the resume link.");
+                      setExitOpen(false);
+                      setStep(1);
+                      return;
+                    }
+                    if (!sessionIdRef.current) {
+                      sessionIdRef.current = 'form_' + Date.now() + '_' + Math.random().toString(36).slice(2, 11);
+                    }
+                    saveProgress();
+                    try {
+                      const r = await fetch(`${cfg.apiBase}?action=save-and-email`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          formSessionId: sessionIdRef.current,
+                          email,
+                          name: form.name.trim() || null,
+                          origin: window.location.origin,
+                        // Where that link should land. The CRM defaults to its own
+                        // /quote; on the marketing site the form lives at
+                        // /get-quote, and a resume link into the CRM's copy would
+                        // strand someone in a different page's saved progress.
+                        resumePath: cfg.resumePath || null,
+                        }),
+                      });
+                      if (!r.ok) throw new Error('send failed');
+                      setExitOpen(false);
+                      alert(`✅ We've emailed a resume link to ${email}. Check your inbox (and spam folder just in case).`);
+                    } catch {
+                      setExitOpen(false);
+                      alert("Sorry — we couldn't send the email just now. Your progress is saved locally, so you can come back to this page any time.");
+                    }
+                  }}
+                >
+                  {cfg.exitIntentSaveButton}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

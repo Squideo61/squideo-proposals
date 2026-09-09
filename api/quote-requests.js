@@ -4,7 +4,7 @@ import { handleUpload } from '@vercel/blob/client';
 import sql from './_lib/db.js';
 import { sendMail, APP_URL } from './_lib/email.js';
 import { resolveRecipients, persistInApp } from './_lib/notifications.js';
-import { buildResumeEmail } from './_lib/quoteResumeEmail.js';
+import { buildResumeEmail, buildResumeUrl } from './_lib/quoteResumeEmail.js';
 import { signQuoteRequestActionToken, verifyQuoteRequestActionToken } from './_lib/auth.js';
 import { qualifyQuoteRequest, disqualifyQuoteRequest } from './_lib/quoteRequestActions.js';
 import { getRoleForUser } from './_lib/userRoles.js';
@@ -31,6 +31,19 @@ const NOTIFY_TO = process.env.QUOTE_REQUEST_NOTIFY_TO || 'adam@squideo.co.uk';
 // Same env fallback chain as api/revisions/[action].js.
 const QUOTE_BLOB_TOKEN =
   process.env.REVISION_BLOB_READ_WRITE_TOKEN || process.env.REVIEW_BLOB_READ_WRITE_TOKEN;
+
+// Sites allowed to host the form and so to name themselves in a "finish your
+// quote" link. Exact origins, never a suffix match — "https://squideo.com.evil.test"
+// must not pass. Mirrors src/lib/embedRedirect.js, which makes the same
+// judgement about the thank-you redirect.
+const RESUME_ORIGINS = [
+  APP_URL.replace(/\/$/, ''),
+  'https://www.squideo.com',
+  'https://squideo.com',
+  'https://www.squideo.co.uk',
+  'https://squideo.co.uk',
+  'https://squideo-web.vercel.app',
+];
 
 
 export const config = {
@@ -357,8 +370,17 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: 'Invalid email' });
       }
 
-      const resumeOrigin = trimOrNull(body.origin) || APP_URL;
-      const resumeUrl = `${resumeOrigin.replace(/\/$/, '')}/quote?resume=${encodeURIComponent(formSessionId)}`;
+      // Which page on which site the link goes back to. Both halves come from
+      // the caller — the form knows whether it is the CRM's iframed /quote or
+      // the marketing site's native /get-quote, and we don't — and both are
+      // checked in buildResumeUrl, where the reasoning and the tests live.
+      const resumeUrl = buildResumeUrl({
+        origin: body.origin,
+        path: body.resumePath,
+        formSessionId,
+        allowedOrigins: RESUME_ORIGINS,
+        fallbackOrigin: APP_URL,
+      });
       const unsubscribeToken = crypto.randomBytes(24).toString('hex');
       const unsubscribeUrl = `${APP_URL.replace(/\/$/, '')}/api/quote-requests?action=unsubscribe&token=${unsubscribeToken}`;
 

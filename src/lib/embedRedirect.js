@@ -36,6 +36,9 @@ const ALLOWED_ORIGINS = [
 
 export function resolveRedirect(configuredUrl) {
   if (!configuredUrl) return configuredUrl;
+  // A path, not a URL: the form is on the site it would redirect to (the native
+  // /get-quote), so there is no embedding origin to resolve against.
+  if (configuredUrl.startsWith('/')) return configuredUrl;
 
   try {
     // document.referrer is the embedding page when we are in an iframe. Empty
