@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { resolveRedirect } from '../lib/embedRedirect.js';
+import { uploadEnquiryFile } from '../lib/quoteUpload.js';
 import { fireConfetti, burstFrom, warmConfetti } from './confetti.js';
 import './QuoteRequestForm.css';
 import Mascot from './Mascot.jsx';
@@ -109,6 +110,7 @@ const DEFAULTS = {
   budgetLabel: 'What budget is going to work for you?',
   budgetPlaceholder: "This ensures we provide useful options and keeps things efficient on both sides. If you're unsure, a rough guess is still really helpful.",
   fileUploadLabel: 'Upload a brief, or script if you have one',
+  fileUploadHint: "Don't worry if you don't have anything to upload here — we can assist with as much creative support as you need.",
   fileUploadButtonText: 'Click to upload or drag files here',
   optInText: 'Send me occasional tips and case studies from Squideo.',
   showOptIn: true,
@@ -217,6 +219,10 @@ export function QuoteRequestForm(props = {}) {
   const [emailSuggestion, setEmailSuggestion] = useState(null);
   const [errors, setErrors] = useState({});
   const [files, setFiles] = useState([]); // { id, file, uploaded?, blobUrl?, blobPathname? }
+  // Attachments the client picked that we couldn't receive. Kept so the success
+  // screen can say so — sending someone to a thank-you page that implies their
+  // brief arrived is how we end up asking for it three emails later.
+  const [failedUploads, setFailedUploads] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const [pulseNext, setPulseNext] = useState(false);
   const [welcomeBanner, setWelcomeBanner] = useState(null); // { visible, sessionId, title, description }
@@ -576,31 +582,25 @@ export function QuoteRequestForm(props = {}) {
     try {
       // Upload files first
       const uploaded = [];
+      const uploadErrors = [];
       for (const item of files) {
         if (!item.file) continue;
         try {
-          const res = await fetch(`${cfg.apiBase}?action=upload`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': item.file.type || 'application/octet-stream',
-              'X-Filename': encodeURIComponent(item.file.name),
-            },
-            body: item.file,
-          });
-          if (!res.ok) throw new Error(`Upload failed (${res.status})`);
-          const json = await res.json();
-          uploaded.push({
-            filename: json.filename || item.file.name,
-            mimeType: json.mimeType || item.file.type,
-            sizeBytes: json.sizeBytes || item.file.size,
-            blobUrl: json.blobUrl,
-            blobPathname: json.blobPathname,
-          });
+          uploaded.push(await uploadEnquiryFile(item.file, cfg.apiBase));
         } catch (uploadErr) {
           console.error('[QuoteRequestForm] file upload failed', uploadErr);
-          // Continue — partial uploads are still useful, lead is more important than attachment
+          // The lead still goes — an attachment is never worth losing an
+          // enquiry over — but it no longer goes quietly. The team alert names
+          // what didn't arrive, and the client is told below, so whoever picks
+          // this up knows to ask for it.
+          uploadErrors.push({
+            filename: item.file.name,
+            sizeBytes: item.file.size,
+            reason: String(uploadErr?.message || 'Upload failed').slice(0, 200),
+          });
         }
       }
+      setFailedUploads(uploadErrors);
 
       const payload = {
         formSessionId: sessionIdRef.current,
@@ -617,6 +617,7 @@ export function QuoteRequestForm(props = {}) {
         sourceUrl: window.location.href,
         attribution: cfg.getAttribution?.() || null,
         files: uploaded,
+        uploadErrors: uploadErrors.length ? uploadErrors : null,
       };
 
       const res = await fetch(cfg.apiBase, {
@@ -640,7 +641,10 @@ export function QuoteRequestForm(props = {}) {
       if (typeof cfg.onSubmitted === 'function') {
         try { cfg.onSubmitted(payload); } catch { /* */ }
       }
-      if (cfg.successRedirectUrl) {
+      // Hold the handover when an attachment didn't make it: the thank-you page
+      // has no way to say so, and a client who watched a file "upload" deserves
+      // to be told it didn't, while they still have it open.
+      if (cfg.successRedirectUrl && !uploadErrors.length) {
         // Small delay so the confetti is visible. Use window.top so we break
         // out of the iframe when embedded on squideo.com; falls through to the
         // current window if top isn't reachable.
@@ -981,6 +985,7 @@ export function QuoteRequestForm(props = {}) {
 
             <div className="form-group">
               <label htmlFor="qr-file">{cfg.fileUploadLabel}</label>
+              {cfg.fileUploadHint && <p className="field-hint">{cfg.fileUploadHint}</p>}
               <div className="file-upload-wrapper">
                 <input
                   type="file" id="qr-file" name="file-upload"
@@ -1092,13 +1097,27 @@ export function QuoteRequestForm(props = {}) {
                 *
                 * Standalone (no redirect configured) is unchanged.
                 */}
-              {cfg.successRedirectUrl ? (
+              {cfg.successRedirectUrl && !failedUploads.length ? (
                 <p className="step-description">One moment — taking you to your confirmation.</p>
               ) : (
                 <>
                   <h2 className="step-title">{personalisedTitle('success')}</h2>
                   <p className="step-description">{cfg.successDescription}</p>
                 </>
+              )}
+              {failedUploads.length > 0 && (
+                <div className="upload-failed-note">
+                  <p>
+                    One thing: we couldn&apos;t receive {failedUploads.length === 1 ? 'your attachment' : 'some of your attachments'} —
+                    {' '}{failedUploads.map((f) => f.filename).join(', ')}.
+                  </p>
+                  <p>
+                    Your request is safely with us and we&apos;ve flagged it, so we&apos;ll ask for
+                    {' '}{failedUploads.length === 1 ? 'it' : 'them'} when we reply. You can also email
+                    {' '}{failedUploads.length === 1 ? 'the file' : 'the files'} to{' '}
+                    <a href="mailto:enquiries@squideo.co.uk">enquiries@squideo.co.uk</a>.
+                  </p>
+                </div>
               )}
             </div>
           )}

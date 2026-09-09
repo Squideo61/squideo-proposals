@@ -22,6 +22,7 @@ import { companyCreditTotals } from '../partnerCredits.js';
 import { allocationsByVideo, settleSignedOffAllocations } from '../videoCreditAllocations.js';
 import { isFreelancer, userOnDeal } from './access.js';
 import { quotedProjectExVat } from '../proposalPricing.js';
+import { ensureUploadErrors, readUploadErrors } from '../quoteRequestUploadErrors.js';
 import { APP_URL } from '../email.js';
 
 // Self-heal for db/migrations/20260604_deal_files_drive.sql — Drive-backed
@@ -1568,7 +1569,9 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     // a manual migration — self-heal so workspaces that skipped it still load
     // deals without 'relation does not exist'. Likewise deal_contacts and the
     // deal-file Drive columns (so the files query can select drive_file_id).
-    await Promise.all([ensureMessageDealsTable(), ensureMessageDealBlocksTable(), ensureDealContactsTable(), ensureDealFileDriveColumns(), ensureDealPo()]);
+    await Promise.all([ensureMessageDealsTable(), ensureMessageDealBlocksTable(), ensureDealContactsTable(), ensureDealFileDriveColumns(), ensureDealPo(),
+      // quote_requests.upload_errors, named by the enquiry-attachments query below.
+      ensureUploadErrors()]);
 
     // Mirror the deal's Drive folder into deal_files (handles files deleted or
     // added directly in Drive) before we read the list below. Best-effort.
@@ -1579,7 +1582,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         console.warn('[deal files] drive reconcile skipped', err.message);
       }
     }
-    const [proposals, events, tasks, emails, files, comments, secondaryContactRows, primaryContactRows, poFileRows, clientUploadRows, scriptFileRows] = await Promise.all([
+    const [proposals, events, tasks, emails, files, comments, secondaryContactRows, primaryContactRows, poFileRows, clientUploadRows, scriptFileRows, quoteRequestRows] = await Promise.all([
       sql`
         SELECT p.id, p.data, p.number_year, p.number_seq, p.created_at,
                s.data AS signature_data,
@@ -1697,6 +1700,22 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
           LEFT JOIN portal_users pu ON pu.id = f.portal_user_id
          WHERE f.deal_id = ${id} AND f.category IN ('script', 'visual_direction')
          ORDER BY f.created_at DESC LIMIT 50
+      `.catch(() => []),
+      // What the client attached to the enquiry this deal came from — the brief
+      // or storyboard they sent before anyone spoke to them. It used to stop at
+      // the quote-requests inbox: qualifying carried the notes across and left
+      // the files behind, so the one document the project starts from lived on a
+      // row nobody opens again. Read live off the quote request rather than
+      // copied onto the deal, so it's the same file the inbox shows and there's
+      // nothing to keep in step.
+      sql`
+        SELECT q.id AS quote_request_id, q.created_at AS requested_at, q.upload_errors,
+               f.id, f.filename, f.mime_type, f.size_bytes, f.blob_url, f.created_at
+          FROM quote_requests q
+          LEFT JOIN quote_request_files f ON f.quote_request_id = q.id
+         WHERE q.deal_id = ${id}
+         ORDER BY q.created_at ASC, f.created_at ASC
+         LIMIT 50
       `.catch(() => []),
     ]);
 
@@ -1915,6 +1934,22 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         uploadedBy: f.uploaded_by || null, source: f.source,
         createdAt: f.created_at,
       })),
+      // What the client attached to the enquiry that became this deal, plus
+      // anything their browser failed to send us (so "they mentioned a
+      // storyboard and there's nothing here" has an answer on the page rather
+      // than in someone's memory of an email).
+      enquiryFiles: (quoteRequestRows || [])
+        .filter(r => r.id && r.blob_url)
+        .map(f => ({
+          id: f.id, filename: f.filename, mimeType: f.mime_type || null,
+          sizeBytes: f.size_bytes == null ? null : Number(f.size_bytes),
+          url: f.blob_url, createdAt: f.created_at,
+        })),
+      enquiryUploadErrors: (quoteRequestRows || [])
+        .reduce((acc, r) => acc.concat(readUploadErrors(r.upload_errors) || []), [])
+        // One row per file, and the join repeats the quote request's own columns
+        // once per attachment.
+        .filter((e, i, all) => all.findIndex(x => x.filename === e.filename) === i),
       // Client-uploaded portal files (company-scoped), split into the two portal
       // categories so the Files card can head them "Brand guidelines" / "Documents".
       clientUploads: (clientUploadRows || []).map(f => ({

@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { put } from '@vercel/blob';
+import { handleUpload } from '@vercel/blob/client';
 import sql from './_lib/db.js';
 import { sendMail, APP_URL } from './_lib/email.js';
 import { resolveRecipients, persistInApp } from './_lib/notifications.js';
@@ -10,9 +11,26 @@ import { getRoleForUser } from './_lib/userRoles.js';
 import { hasPermission } from './_lib/permissions.js';
 import { pickAttribution, ensureLeadAttribution } from './_lib/leadAttribution.js';
 import { pickFormSource, pickFormLabel, ensureFormSource } from './_lib/quoteRequestForms.js';
+import { pickUploadErrors, ensureUploadErrors, readUploadErrors } from './_lib/quoteRequestUploadErrors.js';
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
 const NOTIFY_TO = process.env.QUOTE_REQUEST_NOTIFY_TO || 'adam@squideo.co.uk';
+
+// Attachments off the public forms live in the PUBLIC blob store — the one
+// revision cuts, portal library items and storyboard PDFs already use — not the
+// default (private) store the CRM's own files sit in. Two reasons:
+//
+//   1. The default store is private-only, so `put(..., { access: 'public' })`
+//      against it throws "Cannot use public access on a private store". That is
+//      exactly what this route was doing, and because the browser swallowed
+//      every upload error (see QuoteRequestForm), a client attaching a brief or
+//      a storyboard got a cheerful confirmation and we got nothing.
+//   2. The team alert links these straight out of an email client, which can't
+//      carry a session — the bytes have to be fetchable without one.
+//
+// Same env fallback chain as api/revisions/[action].js.
+const QUOTE_BLOB_TOKEN =
+  process.env.REVISION_BLOB_READ_WRITE_TOKEN || process.env.REVIEW_BLOB_READ_WRITE_TOKEN;
 
 
 export const config = {
@@ -114,6 +132,25 @@ export function buildNotificationEmail(qr, files, { qualifyUrl, disqualifyUrl, c
        </ul>`
     : '';
 
+  // Files the client picked and the browser couldn't send. Loud on purpose: the
+  // lead reads as complete without it, and the thing we're missing is usually
+  // the brief the whole project hangs off.
+  const failed = readUploadErrors(qr.upload_errors) || [];
+  const failedHtml = failed.length
+    ? `<h3 style="margin:18px 0 8px;font-size:14px;font-weight:700;color:#9A3412;">Attachments that failed to upload (${failed.length})</h3>
+       <div style="font-size:13px;line-height:1.6;background:#FFF7ED;border:1px solid #FED7AA;border-radius:8px;padding:12px 14px;">
+         <ul style="margin:0;padding:0 0 0 18px;">
+           ${failed
+             .map(
+               (f) =>
+                 `<li>${escapeHtml(f.filename)}${f.sizeBytes ? ` <span style="color:#9A3412;">(${Math.round(f.sizeBytes / 1024)} KB)</span>` : ''}</li>`
+             )
+             .join('')}
+         </ul>
+         <p style="margin:8px 0 0;color:#9A3412;">They picked these but we didn't receive them — ask for them when you reply.</p>
+       </div>`
+    : '';
+
   const buttons = [];
   if (qualifyUrl) {
     buttons.push(`<a href="${escapeHtml(qualifyUrl)}" style="display:inline-block;background:#16A34A;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;margin:0 8px 8px 0;">Qualify — create deal</a>`);
@@ -146,6 +183,7 @@ export function buildNotificationEmail(qr, files, { qualifyUrl, disqualifyUrl, c
           </table>
           ${details}
           ${filesHtml}
+          ${failedHtml}
           ${ctaHtml}
           <p style="margin:20px 0 0;font-size:12px;color:#6B7785;">Submitted ${escapeHtml(new Date(qr.created_at).toLocaleString('en-GB'))}.</p>
         </td></tr>
@@ -426,8 +464,43 @@ export default async function handler(req, res) {
       return res.status(204).end();
     }
 
+    // Mints a client-upload token so the browser streams the file straight to
+    // Blob. The platform caps a request body to ~4.5 MB and rejects it before
+    // any of our code runs, which is well under the 20 MB this form offers — a
+    // storyboard or a brief deck is routinely bigger. Everything else in the app
+    // (portal files, library, revisions, storyboards, course) already uploads
+    // this way; the public forms were the last ones posting bytes to us.
+    //
+    // Unauthenticated by necessity — it's a public form — but no more open than
+    // the raw endpoint below has always been: same store, same prefix, and the
+    // pathname gets a random suffix so nothing can be overwritten. No
+    // onUploadCompleted: it makes the Blob API wait on a callback that never
+    // lands in dev, and the row is written by the submit that follows anyway.
+    if (action === 'upload-token') {
+      if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+      if (!QUOTE_BLOB_TOKEN) {
+        return res.status(503).json({ error: 'File storage not configured' });
+      }
+      const body = await readJsonBody(req);
+      try {
+        const jsonResponse = await handleUpload({
+          body,
+          request: req,
+          token: QUOTE_BLOB_TOKEN,
+          // No maximumSizeInBytes / allowedContentTypes: either one makes the
+          // multipart-create call 400 (see api/revisions/[action].js). The form
+          // caps the total at 20 MB before it starts.
+          onBeforeGenerateToken: async () => ({ addRandomSuffix: true }),
+        });
+        return res.status(200).json(jsonResponse);
+      } catch (err) {
+        if (res.headersSent) return;
+        return res.status(400).json({ error: err?.message || 'Upload authorisation failed' });
+      }
+    }
+
     if (action === 'upload') {
-      if (!process.env.BLOB_READ_WRITE_TOKEN) {
+      if (!QUOTE_BLOB_TOKEN) {
         return res.status(503).json({ error: 'File storage not configured' });
       }
       const filename = decodeURIComponent(req.headers['x-filename'] || 'upload');
@@ -442,6 +515,7 @@ export default async function handler(req, res) {
       const blob = await put(`quote-requests/${fileId}/${safeName}`, fileBuffer, {
         access: 'public',
         contentType: mimeType,
+        token: QUOTE_BLOB_TOKEN,
       });
       return res.status(201).json({
         id: fileId,
@@ -480,6 +554,10 @@ export default async function handler(req, res) {
 
     // Which of the marketing site's forms this came off, if any.
     await ensureFormSource();
+    // …and what the browser couldn't upload, so a brief that failed on the way
+    // in is something we know to ask for rather than something nobody sees.
+    await ensureUploadErrors();
+    const uploadErrors = pickUploadErrors(body.uploadErrors);
     const formSource = pickFormSource(body.formSource);
     const formLabel = formSource ? pickFormLabel(body.formLabel) : null;
 
@@ -502,15 +580,16 @@ export default async function handler(req, res) {
       created_at: createdAt,
       // Not written by the INSERT below (that binds `formSource` directly) —
       // carried on the object so the team notification can show which form it
-      // was without a second lookup.
+      // was without a second lookup. Same for the failed attachments.
       form_source: formSource,
+      upload_errors: uploadErrors,
     };
 
     await sql`
       INSERT INTO quote_requests (
         id, form_session_id, name, email, phone, country_code, country_name,
         company, project_details, timeline, budget, opt_in,
-        source_url, user_agent, ip_address, created_at, form_source,
+        source_url, user_agent, ip_address, created_at, form_source, upload_errors,
         attr_channel, attr_source, attr_medium, attr_campaign, attr_term, attr_content,
         attr_gclid, attr_gbraid, attr_wbraid, attr_fbclid, attr_msclkid,
         attr_campaign_id, attr_adgroup_id, attr_keyword, attr_matchtype, attr_network,
@@ -520,6 +599,7 @@ export default async function handler(req, res) {
         ${qr.country_code}, ${qr.country_name}, ${qr.company}, ${qr.project_details},
         ${qr.timeline}, ${qr.budget}, ${qr.opt_in}, ${qr.source_url},
         ${qr.user_agent}, ${qr.ip_address}, ${qr.created_at}, ${formSource},
+        ${uploadErrors ? JSON.stringify(uploadErrors) : null},
         ${attr.attr_channel ?? null}, ${attr.attr_source ?? null}, ${attr.attr_medium ?? null},
         ${attr.attr_campaign ?? null}, ${attr.attr_term ?? null}, ${attr.attr_content ?? null},
         ${attr.attr_gclid ?? null}, ${attr.attr_gbraid ?? null}, ${attr.attr_wbraid ?? null},

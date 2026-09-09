@@ -7,6 +7,7 @@ import { BRAND } from '../../theme.js';
 import { portalApi } from '../api.js';
 import { usePortal } from '../PortalContext.jsx';
 import { Card, fmtBytes } from '../components.jsx';
+import { uploadEnquiryFile } from '../../lib/quoteUpload.js';
 import { Sparkles, Upload, CheckCircle2, X, Wallet } from 'lucide-react';
 
 // Mirrors the public form's options (src/components/QuoteRequestForm.jsx).
@@ -49,18 +50,11 @@ export default function RequestVideo() {
     try {
       const uploaded = [];
       for (const file of toUpload) {
-        // Reuses the public quote-request upload endpoint (same blob store the
-        // CRM's quote-request view reads from).
+        // Shared with the public quote form: same endpoint, same blob store the
+        // CRM's quote-request view reads from, and the same reason for going
+        // straight to Blob — a brief over ~4.5 MB never survived the old POST.
         // eslint-disable-next-line no-await-in-loop
-        const res = await fetch('/api/quote-requests?action=upload', {
-          method: 'POST',
-          headers: { 'Content-Type': file.type || 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) },
-          body: file,
-        });
-        // eslint-disable-next-line no-await-in-loop
-        const json = await res.json();
-        if (!res.ok) throw new Error(json?.error || 'Upload failed');
-        uploaded.push(json);
+        uploaded.push(await uploadEnquiryFile(file));
       }
       setFiles((f) => [...f, ...uploaded]);
     } catch (err) {

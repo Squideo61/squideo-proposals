@@ -463,6 +463,19 @@ function DetailModal({ request, reviewedContact, reviewedIsExisting, busy, onClo
         </>
       )}
 
+      {/* Attachments the client picked and their browser couldn't send. The row
+          otherwise reads as though they attached nothing at all. */}
+      {request.uploadErrors?.length > 0 && (
+        <div style={{ marginTop: 16, background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 8, padding: '10px 12px' }}>
+          <h3 style={{ margin: '0 0 4px', fontSize: 13, fontWeight: 700, color: '#9A3412', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+            Didn&apos;t reach us ({request.uploadErrors.length})
+          </h3>
+          <div style={{ fontSize: 12.5, color: '#9A3412', lineHeight: 1.55 }}>
+            {request.uploadErrors.map((f) => f.filename).join(', ')} — attached on the form, but the upload failed. Worth asking for when you reply.
+          </div>
+        </div>
+      )}
+
       {!isQualified && reviewedContact && (
         reviewedIsExisting ? (
           <div style={{ marginTop: 16, padding: 10, border: '1px solid #16A34A44', borderRadius: 8, fontSize: 12, background: '#F0FDF4', color: '#15803D', display: 'flex', alignItems: 'center', gap: 6 }}>
