@@ -98,6 +98,21 @@ describe('payment option on a signed copy', () => {
   });
 });
 
+describe('where a signed copy is returned to', () => {
+  it('names the person who raised the proposal, not the shared inbox', () => {
+    // preparedByEmail is already the proposal's owner everywhere else — deal
+    // owner, PO contact, who Stripe and view alerts ring — so a paper copy
+    // should come back to them rather than landing in hello@ to be forwarded.
+    openPrintWindow(proposal({ preparedByEmail: 'adam@squideo.co.uk' }), { signable: true });
+    expect(written).toContain('Please return the signed copy to <strong>adam@squideo.co.uk</strong>');
+  });
+
+  it('falls back to the shared inbox when the proposal has no owner on it', () => {
+    openPrintWindow(proposal({ preparedByEmail: null }), { signable: true });
+    expect(written).toContain('<strong>hello@squideo.com</strong>');
+  });
+});
+
 describe('the delivery team grid', () => {
   it('lays four people out 2x2 rather than stranding the fourth', () => {
     openPrintWindow(proposal(), { signable: true });
