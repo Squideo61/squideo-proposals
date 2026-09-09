@@ -440,7 +440,13 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
   const [recordSignedOn, setRecordSignedOn] = useState(() => new Date().toISOString().slice(0, 10));
   const [recordMethod, setRecordMethod] = useState('pdf');
   const [recordNote, setRecordNote] = useState('');
+  const [recordFile, setRecordFile] = useState(null);
   const [recording, setRecording] = useState(false);
+  const [recordProgress, setRecordProgress] = useState(null);
+  // The signed copy is filed before the signature is written, so if the write
+  // then fails, pressing the button again must not put a second copy in the
+  // deal's Drive folder. Holds the file already uploaded for this attempt.
+  const uploadedCopyRef = useRef(null);
   const [paymentChoice, setPaymentChoice] = useState(null);
   const isMobile = useIsMobile();
   const signRef = useRef(null);
@@ -682,6 +688,17 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
       showMsg('Please draw or upload your signature.');
       return;
     }
+    // What record mode requires instead: the document itself. A recorded
+    // acceptance is one person's word that a contract exists, so the evidence
+    // has to be on file with it — the server refuses the record without it.
+    if (recordMode && !recordFile && !uploadedCopyRef.current) {
+      showMsg('Attach the signed copy the client returned.');
+      return;
+    }
+    if (recordMode && !dealId) {
+      showMsg('This proposal has no deal yet, so there is nowhere to file the signed copy. Open it from its deal and try again.');
+      return;
+    }
     // The date the client signed, which in record mode is typed in and can be
     // days back. Keep the time-of-day off it — we only know the day — but land
     // it at midday so a timezone shift can't slide it onto the wrong date.
@@ -802,12 +819,27 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
     if (recordMode) {
       setRecording(true);
       try {
-        await actions.recordSignature(id, sig);
+        // File the signed copy first. Doing it the other way round would let a
+        // failed upload leave a recorded acceptance with no evidence behind it,
+        // which is the thing this is meant to prevent. An orphaned file, by
+        // contrast, is just a document in the deal's folder where it belongs.
+        if (!uploadedCopyRef.current) {
+          setRecordProgress(0);
+          uploadedCopyRef.current = await actions.uploadDealFile(dealId, recordFile, (loaded, total) => {
+            setRecordProgress(total ? loaded / total : null);
+          });
+        }
+        setRecordProgress(null);
+        await actions.recordSignature(id, {
+          ...sig,
+          recordedOffline: { ...sig.recordedOffline, file: { id: uploadedCopyRef.current.id } },
+        });
       } catch (err) {
         showMsg(err?.message || 'Could not record the acceptance — nothing was saved.');
         return;
       } finally {
         setRecording(false);
+        setRecordProgress(null);
       }
       showMsg('Recorded as signed. The deal has moved to Signed and the team has been notified.');
       if (onSigned) onSigned(sig);
@@ -967,7 +999,7 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
 
       {recordMode && (
         <div style={{ background: '#DCFCE7', borderBottom: '1px solid #BBF7D0', color: '#14532D', padding: '10px 24px', fontSize: 13, lineHeight: 1.5 }}>
-          <strong>Recording a signed proposal.</strong> Tick the recommendations and payment route exactly as the client agreed them, then fill in the acceptance box at the bottom. This <strong>will</strong> be saved: the deal moves to Signed and the team is notified. No payment is taken and the client is not emailed.
+          <strong>Recording a signed proposal.</strong> Tick the recommendations and payment route exactly as the client agreed them, then fill in the acceptance box at the bottom and <strong>attach the signed copy they returned</strong>. This <strong>will</strong> be saved: the deal moves to Signed and the team is notified. No payment is taken and the client is not emailed.
         </div>
       )}
 
@@ -2006,12 +2038,27 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
                     <option value="verbal">Agreed verbally</option>
                   </select>
                 </Field>
+                <Field label="Signed copy (required)">
+                  <input
+                    type="file"
+                    accept="application/pdf,image/*"
+                    onChange={(e) => {
+                      setRecordFile(e.target.files?.[0] || null);
+                      uploadedCopyRef.current = null;   // a new pick replaces any already filed
+                    }}
+                    style={{ fontSize: 13 }}
+                  />
+                  <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 4 }}>
+                    The document the client returned — a PDF, or a photo or scan of the signed page.
+                    It's filed against this deal alongside the rest of the paperwork.
+                  </div>
+                </Field>
                 <Field label="Note (optional)">
                   <input
                     className="input"
                     value={recordNote}
                     onChange={(e) => setRecordNote(e.target.value)}
-                    placeholder="e.g. signed copy saved in the deal's Drive folder"
+                    placeholder="e.g. countersigned by their finance director"
                   />
                 </Field>
               </>
@@ -2034,7 +2081,11 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
             </label>
             <button onClick={handleSign} disabled={recording} className="btn" style={{ width: '100%', justifyContent: 'center', padding: '14px 20px', fontSize: 15, marginTop: 12, background: '#16A34A', flexDirection: 'column', gap: 4, opacity: recording ? 0.7 : 1 }}>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 16 }}>
-                <Check size={18} /> {recordMode ? (recording ? 'Recording…' : 'Record as signed') : 'Accept & Sign'}
+                <Check size={18} /> {recordMode
+                  ? (recording
+                    ? (recordProgress != null ? `Filing signed copy… ${Math.round(recordProgress * 100)}%` : 'Recording…')
+                    : 'Record as signed')
+                  : 'Accept & Sign'}
               </span>
               <span style={{ fontSize: 13, fontWeight: 500, opacity: 0.95 }}>
                 {partnerSelected ? (

@@ -61,10 +61,11 @@ const STAFF = { email: 'adam@squideo.co.uk', name: 'Adam Shelton', role: 'admin'
 
 // No existing signature, an owner row for the permission check, and an empty
 // proposal payload for the alert. Everything else answers as a bare write.
-function withCleanProposal({ ownerEmail = 'adam@squideo.co.uk' } = {}) {
+function withCleanProposal({ ownerEmail = 'adam@squideo.co.uk', signedCopy = { id: 'file_1', filename: 'CKD-signed-proposal.pdf' } } = {}) {
   setSqlHandler((text) => {
     if (text.includes('SELECT 1 FROM signatures')) return [];
     if (text.includes('owner_email')) return ownerEmail ? [{ owner_email: ownerEmail }] : [];
+    if (text.includes('FROM deal_files')) return signedCopy ? [signedCopy] : [];
     if (text.includes('SELECT data FROM proposals')) return [{ data: { proposalTitle: 'Explainer', vatRate: 0.2 } }];
     return [];
   });
@@ -83,7 +84,7 @@ function res() {
 const post = (body) => ({ method: 'POST', query: { id: 'id_1' }, headers: {}, body, url: '/api/signatures/id_1' });
 
 const CLIENT_SIG = { name: 'Elaine Chan', email: 'elaine@carrkamasa.co.uk', paymentOption: '5050', total: 2400 };
-const OFFLINE = { method: 'pdf', note: 'Signed copy in the Drive folder' };
+const OFFLINE = { method: 'pdf', note: 'Signed copy in the Drive folder', file: { id: 'file_1' } };
 
 // The row the handler wrote, parsed back out of the INSERT's JSON parameter.
 function insertedSignature() {
@@ -140,6 +141,47 @@ describe('who may record an offline acceptance', () => {
     await handler(post({ ...CLIENT_SIG, signedAt: '2026-09-01T12:00:00.000Z' }), r);
     expect(r.statusCode).toBe(201);
     expect(insertedSignature().data.recordedOffline).toBeUndefined();
+  });
+});
+
+describe('the signed copy is not optional', () => {
+  it('refuses a record with no document attached', async () => {
+    withCleanProposal();
+    const r = res();
+    await handler(post({ ...CLIENT_SIG, signedAt: '2026-09-01T12:00:00.000Z', recordedOffline: { method: 'pdf' } }), r);
+    expect(r.statusCode).toBe(400);
+    expect(r.body.error).toContain('Attach the signed copy');
+    // Enforced here rather than only in the form: this endpoint is what makes
+    // the deal real, so the evidence has to be a condition of the write.
+    expect(insertedSignature()).toBeNull();
+  });
+
+  it('refuses a file that is not filed against this deal', async () => {
+    withCleanProposal({ signedCopy: null });
+    const r = res();
+    await handler(post({ ...CLIENT_SIG, signedAt: '2026-09-01T12:00:00.000Z', recordedOffline: { ...OFFLINE, file: { id: 'file_from_another_deal' } } }), r);
+    expect(r.statusCode).toBe(400);
+    expect(r.body.error).toContain('not filed against this deal');
+    expect(insertedSignature()).toBeNull();
+  });
+
+  it('records the filename from the file row, not from the body', async () => {
+    withCleanProposal();
+    await handler(post({
+      ...CLIENT_SIG,
+      signedAt: '2026-09-01T12:00:00.000Z',
+      recordedOffline: { ...OFFLINE, file: { id: 'file_1', filename: 'not-what-was-uploaded.pdf' } },
+    }), res());
+    expect(insertedSignature().data.recordedOffline.file).toEqual({ id: 'file_1', filename: 'CKD-signed-proposal.pdf' });
+  });
+
+  it('leaves the client sign path free of the requirement', async () => {
+    // A client signing the link has no deal file to attach and shouldn't need one.
+    session = null;
+    withCleanProposal({ signedCopy: null });
+    const r = res();
+    await handler(post({ ...CLIENT_SIG, signedAt: '2026-09-01T12:00:00.000Z' }), r);
+    expect(r.statusCode).toBe(201);
   });
 });
 
@@ -212,6 +254,7 @@ describe('what the client and the team are told', () => {
     expect(alert.text).toContain('Adam Shelton');
     expect(alert.text).toContain('signed PDF returned');
     expect(alert.text).toContain('No online payment has been taken');
+    expect(alert.text).toContain('CKD-signed-proposal.pdf');
     expect(alert.inApp.body).toContain('recorded by Adam Shelton');
   });
 
@@ -264,6 +307,20 @@ describe('the record flow in ClientView', () => {
   });
 
   it('awaits the write so a refusal surfaces instead of passing silently', () => {
-    expect(view).toContain('await actions.recordSignature(id, sig)');
+    expect(view).toContain('await actions.recordSignature(id, {');
+  });
+
+  it('files the signed copy before writing the signature', () => {
+    // The other order lets a failed upload leave a recorded acceptance with no
+    // evidence behind it — the exact thing the requirement exists to prevent.
+    const upload = view.indexOf('actions.uploadDealFile(dealId, recordFile');
+    const write = view.indexOf('await actions.recordSignature(id, {');
+    expect(upload).toBeGreaterThan(-1);
+    expect(write).toBeGreaterThan(upload);
+  });
+
+  it('does not re-upload the copy when a retry follows a failed write', () => {
+    // Otherwise a second press puts a duplicate in the deal's Drive folder.
+    expect(view).toContain('if (!uploadedCopyRef.current) {');
   });
 });

@@ -413,7 +413,7 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
           // An acceptance taken away from the link must not claim to be an
           // electronic signature given on our form — it wasn't, and this copy
           // may end up attached to an invoice.
-          ? `This acceptance was received ${esc(OFFLINE_METHOD_LABEL[signed.recordedOffline.method] || 'outside the online proposal')} and recorded against this proposal by ${esc(signed.recordedOffline.byName || signed.recordedOffline.by || 'the Squideo team')}${signed.recordedOffline.at ? ' on ' + esc(new Date(signed.recordedOffline.at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })) : ''}. The signed copy the client returned is the record of their signature.`
+          ? `This acceptance was received ${esc(OFFLINE_METHOD_LABEL[signed.recordedOffline.method] || 'outside the online proposal')} and recorded against this proposal by ${esc(signed.recordedOffline.byName || signed.recordedOffline.by || 'the Squideo team')}${signed.recordedOffline.at ? ' on ' + esc(new Date(signed.recordedOffline.at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })) : ''}. The copy the client signed${signed.recordedOffline.file?.filename ? ` (${esc(signed.recordedOffline.file.filename)})` : ''} is filed against this deal and is the record of their signature.`
           : `This document confirms electronic acceptance of the proposal via the Squideo CRM portal. By typing their name${signed.signatureImage ? ' and signing' : ''} on the acceptance form, the signatory provided their electronic signature.`}
       </p>
     </div>`;

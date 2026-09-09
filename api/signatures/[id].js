@@ -59,9 +59,9 @@ const OFFLINE_METHODS = {
 };
 
 // Build the audit stamp for a "Record signed proposal". Everything identifying
-// comes from the session, never the request body, so the public POST clients
-// use to sign can't forge a staff-recorded acceptance.
-function offlineStamp(requested, user) {
+// comes from the session and the file row, never the request body, so the
+// public POST clients use to sign can't forge a staff-recorded acceptance.
+function offlineStamp(requested, user, fileRow) {
   const method = Object.hasOwn(OFFLINE_METHODS, requested?.method) ? requested.method : 'pdf';
   const rawNote = typeof requested?.note === 'string' ? requested.note.trim() : '';
   return {
@@ -70,6 +70,7 @@ function offlineStamp(requested, user) {
     at: new Date().toISOString(),
     method,
     note: rawNote ? rawNote.slice(0, 500) : null,
+    file: { id: fileRow.id, filename: fileRow.filename || null },
   };
 }
 
@@ -322,7 +323,25 @@ export default async function handler(req, res) {
       if (ownerEmail && !isOwner && !hasPermission(await getRole(user.role), 'signatures.manage_all')) {
         return res.status(403).json({ error: 'Only the deal owner or an admin can record a signed proposal.' });
       }
-      recordedOffline = offlineStamp(offlineRequest, user);
+      // The signed copy is not optional. A recorded acceptance is one person's
+      // word that a contract exists, so the document has to be on file with it
+      // — enforced here and not only in the form, since this endpoint is the
+      // thing that makes the deal real. It must already be filed against THIS
+      // proposal's deal, so a stray id from elsewhere can't stand in for it.
+      const fileId = typeof offlineRequest.file?.id === 'string' ? offlineRequest.file.id : null;
+      if (!fileId) {
+        return res.status(400).json({ error: 'Attach the signed copy the client returned before recording it.' });
+      }
+      const fileRows = await sql`
+        SELECT f.id, f.filename
+          FROM deal_files f
+          JOIN proposals p ON p.deal_id = f.deal_id
+         WHERE f.id = ${fileId} AND p.id = ${id}
+      `;
+      if (!fileRows.length) {
+        return res.status(400).json({ error: 'That signed copy is not filed against this deal, so it could not be verified.' });
+      }
+      recordedOffline = offlineStamp(offlineRequest, user, fileRows[0]);
       rest.recordedOffline = recordedOffline;
     }
 
@@ -399,7 +418,7 @@ export default async function handler(req, res) {
         subject,
         html: signedHtml({ proposal, signature: rest, signerName: name, signerEmail: email, signedAt: signedAtISO, link }),
         text: recordedOffline
-          ? `${recordedBy} recorded "${title}" as signed by ${name || 'the client'} (${email || 'no email'})${priceLabel ? ` for ${priceLabel}` : ''} on ${formatSignedWhen(signedAtISO)} — ${howLabel}. No online payment has been taken. ${link}`
+          ? `${recordedBy} recorded "${title}" as signed by ${name || 'the client'} (${email || 'no email'})${priceLabel ? ` for ${priceLabel}` : ''} on ${formatSignedWhen(signedAtISO)} — ${howLabel}. The signed copy${recordedOffline.file?.filename ? ` (${recordedOffline.file.filename})` : ''} is filed against the deal. No online payment has been taken. ${link}`
           : `${name || 'Someone'} (${email || ''}) signed "${title}"${priceLabel ? ` for ${priceLabel}` : ''} on ${formatSignedWhen(signedAtISO)}. ${link}`,
         // Spelled out rather than left to fall back to subject/text: this is the
         // line a phone shows on the lock screen, and the fallback put a raw ISO
