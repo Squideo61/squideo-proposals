@@ -17,17 +17,14 @@
 // Every test here holds the proposal back until the session check has answered,
 // which is the order that broke.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import React, { act } from 'react';
-import { createRoot } from 'react-dom/client';
+import React from 'react';
 import { StoreProvider, useStore } from '../src/store.jsx';
 import { PublicClientShell } from '../src/components/PublicClientShell.jsx';
 import { ClientView } from '../src/components/ClientView.jsx';
 import { ErrorBoundary } from '../src/components/ErrorBoundary.jsx';
 import { DEFAULT_PROPOSAL, makeContentCreditTemplate, makeMonthlyPlanTemplate } from '../src/defaults.js';
+import { h, held, mountRoot, reply, settle } from './helpers/renderInDom.js';
 
-globalThis.IS_REACT_ACT_ENVIRONMENT = true;
-
-const h = React.createElement;
 const ID = 'prop_race';
 
 const proposalFrom = (template) => ({
@@ -44,17 +41,10 @@ const PROPOSAL_TYPES = [
   ['Content Credit', proposalFrom(makeContentCreditTemplate(DEFAULT_PROPOSAL))],
 ];
 
-const reply = (status, body) => Promise.resolve({
-  status,
-  ok: status >= 200 && status < 300,
-  json: () => Promise.resolve(body),
-});
-
 // Answers the session check at once (nobody signed in) and holds the proposal
 // until release() — the order a client's browser usually sees.
 function stubRequests(proposal) {
-  let release;
-  const gate = new Promise((resolve) => { release = resolve; });
+  const { gate, release } = held();
   vi.stubGlobal('fetch', vi.fn((url) => {
     const path = String(url);
     if (path === '/api/auth/me') return reply(401, { error: 'Not signed in' });
@@ -64,57 +54,34 @@ function stubRequests(proposal) {
     }
     return reply(200, {});   // view tracking, example posters
   }));
-  return () => release();
+  return release;
 }
 
-// Let every pending request chain, and the renders it triggers, finish.
-const settle = () => act(async () => {
-  for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
-});
+let view;
 
-let container;
-let root;
-let consoleErrors;
-
-beforeEach(() => {
-  container = document.createElement('div');
-  document.body.appendChild(container);
-  root = createRoot(container);
-  consoleErrors = [];
-  // React reports a caught render error through console.error; keep the output
-  // clean and hold on to it so a failure can say what React objected to.
-  vi.spyOn(console, 'error').mockImplementation((...args) => {
-    consoleErrors.push(args.map((a) => (a instanceof Error ? a.message : String(a))).join(' '));
-  });
-});
+beforeEach(() => { view = mountRoot(); });
 
 afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
+  await view.unmount();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
-const crashed = () => container.querySelector('[role="alert"]');
-const hookErrors = () => consoleErrors.filter((m) => /Rendered (more|fewer) hooks|change in the order of Hooks/.test(m));
-
 function expectProposalShown() {
-  expect(crashed()?.textContent ?? null, 'the error boundary caught a crash').toBeNull();
-  expect(hookErrors()).toEqual([]);
-  expect(container.textContent).toContain('Prepared for');
-  expect(container.textContent).toContain('Testshire University');
+  expect(view.crashText(), 'the error boundary caught a crash').toBeNull();
+  expect(view.hookErrors()).toEqual([]);
+  expect(view.container.textContent).toContain('Prepared for');
+  expect(view.container.textContent).toContain('Testshire University');
 }
 
 describe('a client opening their proposal link', () => {
   it('waits for the proposal rather than saying it was not found', async () => {
     const release = stubRequests(proposalFrom(DEFAULT_PROPOSAL));
-    await act(async () => {
-      root.render(h(ErrorBoundary, null, h(StoreProvider, null, h(PublicClientShell, { proposalId: ID }))));
-    });
+    await view.render(h(ErrorBoundary, null, h(StoreProvider, null, h(PublicClientShell, { proposalId: ID }))));
     await settle();   // the session check has answered; the proposal hasn't
 
-    expect(container.textContent).not.toContain('Proposal not found');
-    expect(container.textContent).toContain('Loading proposal');
+    expect(view.container.textContent).not.toContain('Proposal not found');
+    expect(view.container.textContent).toContain('Loading proposal');
 
     release();
     await settle();
@@ -123,9 +90,7 @@ describe('a client opening their proposal link', () => {
 
   it.each(PROPOSAL_TYPES)('opens a %s proposal instead of crashing', async (_type, proposal) => {
     const release = stubRequests(proposal);
-    await act(async () => {
-      root.render(h(ErrorBoundary, null, h(StoreProvider, null, h(PublicClientShell, { proposalId: ID }))));
-    });
+    await view.render(h(ErrorBoundary, null, h(StoreProvider, null, h(PublicClientShell, { proposalId: ID }))));
     await settle();
     release();
     await settle();
@@ -146,11 +111,9 @@ function LoadsLate({ id }) {
 describe('the proposal view', () => {
   it.each(PROPOSAL_TYPES)('keeps its hooks in order when a %s proposal arrives after it mounted', async (_type, proposal) => {
     const release = stubRequests(proposal);
-    await act(async () => {
-      root.render(h(ErrorBoundary, null, h(StoreProvider, null, h(LoadsLate, { id: ID }))));
-    });
+    await view.render(h(ErrorBoundary, null, h(StoreProvider, null, h(LoadsLate, { id: ID }))));
     await settle();
-    expect(container.textContent).toContain('Proposal not found');   // the early return really did fire
+    expect(view.container.textContent).toContain('Proposal not found');   // the early return really did fire
 
     release();
     await settle();
@@ -159,9 +122,7 @@ describe('the proposal view', () => {
 
   it('still puts a Monthly Plan client on their plan when the proposal arrives late', async () => {
     const release = stubRequests(proposalFrom(makeMonthlyPlanTemplate(DEFAULT_PROPOSAL)));
-    await act(async () => {
-      root.render(h(ErrorBoundary, null, h(StoreProvider, null, h(LoadsLate, { id: ID }))));
-    });
+    await view.render(h(ErrorBoundary, null, h(StoreProvider, null, h(LoadsLate, { id: ID }))));
     await settle();
     release();
     await settle();
@@ -169,7 +130,7 @@ describe('the proposal view', () => {
 
     // Signing is the opt-in, so the button prices the plan's first month (1
     // minute at the template's £300) rather than an empty £0 project.
-    const signButton = [...container.querySelectorAll('button')].find((b) => b.textContent.includes('Accept & Sign'));
+    const signButton = [...view.container.querySelectorAll('button')].find((b) => b.textContent.includes('Accept & Sign'));
     expect(signButton?.textContent).toContain('£300.00 first month');
   });
 });

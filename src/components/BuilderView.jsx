@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { BookmarkPlus, Building2, Check, ChevronLeft, CreditCard, Eye, GripVertical, Lightbulb, List, Lock, Mic, Package, Plus, PoundSterling, Save, Star, Users, Video, Volume2, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
@@ -429,6 +429,18 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
     if (aiVoIncluded && !state.voiceoverArtists) actions.loadVoiceoverArtists();
   }, [aiVoIncluded, state.voiceoverArtists]);
 
+  // Mobile section state + nav. Each Section is keyed and gets a ref so the
+  // nav strip can scrollIntoView and force-expand. On desktop this state is
+  // ignored (Section receives no controlled `collapsed` prop and behaves as
+  // it always has).
+  const sectionRefs = useRef({});
+  const [collapsedMap, setCollapsedMap] = useState({});
+
+  // Every hook has to be above this point. The proposal can be missing on one
+  // render and there on the next — opened before the proposals list has it, or
+  // deleted elsewhere while it's open — and a hook below this return would be
+  // called on only one of those renders, which React refuses ("Something went
+  // wrong"). tests/builderLoad.test.js covers both directions.
   if (!data) {
     return (
       <div style={{ padding: 60, textAlign: 'center' }}>
@@ -541,13 +553,9 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
     ? 'Template: ' + (data.name || 'Untitled')
     : [data.clientName, data.contactBusinessName].filter(Boolean).join(' · ') || 'New Proposal';
 
-  // Mobile section state + nav. Each Section is keyed and gets a ref so the
-  // nav strip can scrollIntoView and force-expand. On desktop this state is
-  // ignored (Section receives no controlled `collapsed` prop and behaves as
-  // it always has).
-  const sectionRefs = useRef({});
-  const [collapsedMap, setCollapsedMap] = useState({});
-  const sectionMeta = useMemo(() => buildSectionMeta(data, isTemplate, issues, isDefault), [data, isTemplate, issues, isDefault]);
+  // Hints for the mobile section nav (its ref and collapsed state are declared
+  // above the not-found return). Built fresh each render — `issues` is too.
+  const sectionMeta = buildSectionMeta(data, isTemplate, issues, isDefault);
   const setCollapsed = (id, value) => setCollapsedMap(m => ({ ...m, [id]: value }));
   const sectionProps = (id) => isMobile
     ? {

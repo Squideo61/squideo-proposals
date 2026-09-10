@@ -176,7 +176,36 @@ function PaymentPlanControl({ proposalId, dealId, value }) {
 // (#/project — back to the Production board), and only the caller knows which
 // one it opened. Inferring it from `productionOnly` got it wrong for everyone
 // outside the producer shell: a project opened by a director said "Pipeline".
-export function DealDetailView({ dealId, onBack, backLabel, onOpenProposal, onCreateProposal, onOpenVideo, onOpenCompany, productionOnly = false, hideFinancials = false }) {
+export function DealDetailView(props) {
+  const { dealId, onBack, productionOnly = false } = props;
+  const { state, actions } = useStore();
+
+  useEffect(() => {
+    if (dealId) {
+      actions.loadDealDetail(dealId);
+      if (!productionOnly) actions.loadScheduledEmails(dealId);
+    }
+  }, [dealId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A deal can open before it's in the store — a link to one created after this
+  // tab loaded, say — so wait for it here and mount the page only once it has
+  // arrived. The page calls hooks all the way down, so it can't make this check
+  // itself: the render that brought the deal in would call more hooks than the
+  // one before it, moving from a loaded deal to a missing one fewer, and React
+  // throws on both ("Something went wrong"). tests/dealPageLoad.test.js covers
+  // each.
+  if (!state.dealDetail[dealId] && !state.deals[dealId]) {
+    return (
+      <div style={{ padding: 32 }}>
+        <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Back</button>
+        <p style={{ marginTop: 24, color: BRAND.muted }}>Loading deal…</p>
+      </div>
+    );
+  }
+  return <DealDetailBody {...props} />;
+}
+
+function DealDetailBody({ dealId, onBack, backLabel, onOpenProposal, onCreateProposal, onOpenVideo, onOpenCompany, productionOnly = false, hideFinancials = false }) {
   const { state, actions, showMsg } = useStore();
   const isMobile = useIsMobile();
   const [editing, setEditing] = useState(false);
@@ -240,27 +269,12 @@ export function DealDetailView({ dealId, onBack, backLabel, onOpenProposal, onCr
   // returned outside the link (null = closed).
   const [recordingProposal, setRecordingProposal] = useState(null);
 
-  useEffect(() => {
-    if (dealId) {
-      actions.loadDealDetail(dealId);
-      if (!productionOnly) actions.loadScheduledEmails(dealId);
-    }
-  }, [dealId]); // eslint-disable-line react-hooks/exhaustive-deps
-
+  // Always there: DealDetailView only mounts this once the deal has loaded.
   const detail = state.dealDetail[dealId];
   const deal = detail || state.deals[dealId];
   const company = deal?.companyId ? state.companies[deal.companyId] : null;
   const contact = deal?.primaryContactId ? state.contacts[deal.primaryContactId] : null;
   const owner = deal?.ownerEmail ? state.users[deal.ownerEmail] : null;
-
-  if (!deal) {
-    return (
-      <div style={{ padding: 32 }}>
-        <button onClick={onBack} className="btn-ghost"><ArrowLeft size={14} /> Back</button>
-        <p style={{ marginTop: 24, color: BRAND.muted }}>Loading deal…</p>
-      </div>
-    );
-  }
 
   const proposals = detail?.proposals || [];
 
@@ -4684,8 +4698,6 @@ function CcSuggestionStrip({ dealId, addresses, defaultCompanyId }) {
   const [creating, setCreating] = useState(null);
   const [busyEmail, setBusyEmail] = useState(null);
 
-  if (!addresses.length) return null;
-
   // Map email → existing contact (for one-click linking).
   const contactByEmail = useMemo(() => {
     const m = new Map();
@@ -4694,6 +4706,8 @@ function CcSuggestionStrip({ dealId, addresses, defaultCompanyId }) {
     }
     return m;
   }, [state.contacts]);
+
+  if (!addresses.length) return null;
 
   // When at least one address has no contact record at all, frame the strip as
   // "not in your contacts" (the CRM has never seen them); otherwise these are
