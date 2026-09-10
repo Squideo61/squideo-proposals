@@ -59,6 +59,17 @@ export const SCHEDULE_TEMPLATE = [
   },
 ];
 
+// Free-text boxes the team can add under any section to elaborate on it. Each
+// section carries its own ordered `notes: [{ id, text }]`; dragging a box to a
+// different section just moves the entry between arrays. Older schedules have
+// no `notes` key, so always read through sectionNotes().
+export function sectionNotes(section) {
+  return Array.isArray(section?.notes) ? section.notes : [];
+}
+export function newScheduleNote(text = '') {
+  return { id: `n_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`, text };
+}
+
 // ── Working-day date maths ──
 
 // Advance a Date by `n` Mon–Fri days (bank holidays not accounted for). n may be
@@ -101,6 +112,7 @@ export function seedSchedule(deal) {
       id: s.id,
       label: s.label,
       enabled: true,
+      notes: [],
       rows: s.rows.map(r => ({
         id: r.id,
         label: r.label,

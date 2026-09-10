@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Calendar, Eraser, ListChecks, FileDown, Check, Users } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Calendar, Eraser, ListChecks, FileDown, Check, Users, Plus, GripVertical, Trash2 } from 'lucide-react';
 import { Modal } from '../ui.jsx';
 import { Card, Empty } from './Card.jsx';
 import { DateTimePicker, formatDTDisplay } from './TaskFormModal.jsx';
@@ -7,6 +7,7 @@ import { useStore } from '../../store.jsx';
 import { BRAND } from '../../theme.js';
 import {
   seedSchedule, autofillFromKickOff, enabledRows, FIELD_LABELS, FIELD_ORDER,
+  sectionNotes, newScheduleNote,
 } from '../../lib/scheduleTemplate.js';
 import { openSchedulePrintWindow } from '../../utils/printSchedule.js';
 
@@ -64,6 +65,78 @@ export function ScheduleCard({ deal, video, onOpen }) {
 
 function fmt(local) { return local ? formatDTDisplay(local) : ''; }
 
+// "Pre-Production: Storyboard" → "Storyboard" for the compact Move-to menu.
+const shortSectionLabel = (label) => String(label || '').replace(/^.*?:\s*/, '');
+
+function DropLine() {
+  return <div style={{ height: 3, borderRadius: 2, background: BRAND.blue, margin: '6px 4px' }} />;
+}
+
+// One free-text box under a schedule section. Dragged by its grip (the textarea
+// itself stays selectable); the Move-to menu does the same job on touch
+// screens, where native drag-and-drop doesn't fire.
+function NoteBox({ note, sectionId, sections, autoFocus, dragging, dropBefore, dropProps, onDragStart, onDragEnd, onChange, onMove, onRemove }) {
+  const boxRef = useRef(null);
+  const areaRef = useRef(null);
+
+  // Grow with the text so longer explanations don't hide behind a scrollbar.
+  useEffect(() => {
+    const el = areaRef.current; if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = Math.max(64, el.scrollHeight + 2) + 'px';
+  }, [note.text]);
+  useEffect(() => { if (autoFocus) areaRef.current?.focus(); }, [autoFocus]);
+
+  return (
+    <div {...dropProps}>
+      {dropBefore && <DropLine />}
+      <div
+        ref={boxRef}
+        style={{
+          margin: '10px 4px 4px', padding: '8px 10px 10px', border: '1px solid ' + BRAND.border, borderRadius: 8,
+          background: BRAND.paper, opacity: dragging ? 0.4 : 1,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+          <span
+            draggable
+            onDragStart={e => {
+              e.dataTransfer.effectAllowed = 'move';
+              e.dataTransfer.setData('text/plain', note.id);
+              if (boxRef.current) e.dataTransfer.setDragImage(boxRef.current, 16, 16);
+              onDragStart();
+            }}
+            onDragEnd={onDragEnd}
+            title="Drag to move this text box"
+            style={{ display: 'inline-flex', cursor: 'grab', color: BRAND.muted, padding: 2 }}
+          >
+            <GripVertical size={15} />
+          </span>
+          <span style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4 }}>Text box</span>
+          <select
+            value={sectionId}
+            onChange={e => onMove(e.target.value)}
+            title="Move to another section"
+            style={{ marginLeft: 'auto', padding: '3px 6px', border: '1px solid ' + BRAND.border, borderRadius: 6, fontSize: 12, background: 'white', maxWidth: 180 }}
+          >
+            {sections.map(s => <option key={s.id} value={s.id}>{shortSectionLabel(s.label)}</option>)}
+          </select>
+          <button type="button" className="btn-icon" onClick={onRemove} title="Remove text box" style={{ display: 'inline-flex', padding: 4, color: BRAND.muted }}>
+            <Trash2 size={14} />
+          </button>
+        </div>
+        <textarea
+          ref={areaRef}
+          value={note.text}
+          onChange={e => onChange(e.target.value)}
+          placeholder="Add more detail about this stage…"
+          style={{ width: '100%', boxSizing: 'border-box', padding: '8px 10px', border: '1px solid ' + BRAND.border, borderRadius: 6, fontSize: 13, fontFamily: 'inherit', lineHeight: 1.45, resize: 'vertical', background: 'white' }}
+        />
+      </div>
+    </div>
+  );
+}
+
 // ── The editable, doc-like popout ──
 export function ScheduleModal({ deal, dealId, video, videoId, company, primaryContact, onClose }) {
   const { state, actions, showMsg } = useStore();
@@ -111,11 +184,74 @@ export function ScheduleModal({ deal, dealId, video, videoId, company, primaryCo
     return s;
   });
 
+  // ── Text boxes ── free-text notes under a section, draggable between sections.
+  const [focusNoteId, setFocusNoteId] = useState(null);
+  const [dragNoteId, setDragNoteId] = useState(null);
+  const [dropAt, setDropAt] = useState(null); // { sid, beforeId } while hovering
+  const addNote = (sid) => {
+    const note = newScheduleNote();
+    update(s => {
+      const sec = s.sections.find(x => x.id === sid);
+      if (sec) sec.notes = [...sectionNotes(sec), note];
+      return s;
+    });
+    setFocusNoteId(note.id);
+  };
+  const setNoteText = (nid, text) => update(s => {
+    for (const sec of s.sections) for (const n of sectionNotes(sec)) if (n.id === nid) n.text = text;
+    return s;
+  });
+  const removeNote = (nid) => update(s => {
+    for (const sec of s.sections) sec.notes = sectionNotes(sec).filter(n => n.id !== nid);
+    return s;
+  });
+  // Move a note into section `toSid`, before `beforeId` (or to the end).
+  const moveNote = (nid, toSid, beforeId = null) => {
+    if (nid === beforeId) return;
+    update(s => {
+      let note = null;
+      for (const sec of s.sections) {
+        const i = sectionNotes(sec).findIndex(n => n.id === nid);
+        if (i >= 0) { note = sec.notes[i]; sec.notes = sec.notes.filter(n => n.id !== nid); }
+      }
+      const to = s.sections.find(x => x.id === toSid);
+      if (!note || !to) return s;
+      const list = [...sectionNotes(to)];
+      const at = beforeId ? list.findIndex(n => n.id === beforeId) : -1;
+      if (at >= 0) list.splice(at, 0, note); else list.push(note);
+      to.notes = list;
+      return s;
+    });
+  };
+  const endDrag = () => { setDragNoteId(null); setDropAt(null); };
+  const dropHandlers = (sid, beforeId = null) => ({
+    onDragOver: (e) => {
+      if (!dragNoteId) return; // ignore stray drags (e.g. selected text)
+      e.preventDefault();
+      e.stopPropagation();
+      if (dropAt?.sid !== sid || dropAt?.beforeId !== beforeId) setDropAt({ sid, beforeId });
+    },
+    onDrop: (e) => {
+      if (!dragNoteId) return;
+      e.preventDefault();
+      e.stopPropagation();
+      moveNote(dragNoteId, sid, beforeId);
+      endDrag();
+    },
+  });
+
   // Pass the browser's UTC offset so the server maps the wall-clock schedule
-  // times correctly when it reconciles milestones on save.
-  const persist = () => isVideo
-    ? actions.updateVideo(videoId, { productionSchedule: schedule, tzOffsetMinutes: new Date().getTimezoneOffset() })
-    : actions.saveDeal(dealId, { productionSchedule: schedule, tzOffsetMinutes: new Date().getTimezoneOffset() });
+  // times correctly when it reconciles milestones on save. Empty text boxes
+  // are dropped rather than stored.
+  const persist = () => {
+    const clean = {
+      ...schedule,
+      sections: schedule.sections.map(sec => ({ ...sec, notes: sectionNotes(sec).filter(n => n.text.trim()) })),
+    };
+    return isVideo
+      ? actions.updateVideo(videoId, { productionSchedule: clean, tzOffsetMinutes: new Date().getTimezoneOffset() })
+      : actions.saveDeal(dealId, { productionSchedule: clean, tzOffsetMinutes: new Date().getTimezoneOffset() });
+  };
 
   const save = async () => {
     setSaving(true);
@@ -195,13 +331,32 @@ export function ScheduleModal({ deal, dealId, video, videoId, company, primaryCo
       </div>
 
       {/* Sections */}
-      {schedule.sections.map(section => (
-        <div key={section.id} style={{ marginBottom: 18, border: '1px solid ' + BRAND.border, borderRadius: 10, overflow: 'hidden', opacity: section.enabled ? 1 : 0.55 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: '#EAF6FB' }}>
+      {schedule.sections.map(section => {
+        const notes = sectionNotes(section);
+        const dropHere = dragNoteId && dropAt?.sid === section.id;
+        return (
+        <div
+          key={section.id}
+          {...dropHandlers(section.id)}
+          style={{
+            marginBottom: 18, border: '1px solid ' + (dropHere ? BRAND.blue : BRAND.border), borderRadius: 10, overflow: 'hidden',
+            opacity: section.enabled ? 1 : 0.55, boxShadow: dropHere ? `0 0 0 2px ${BRAND.blue}33` : 'none',
+          }}
+        >
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, padding: '10px 14px', background: '#EAF6FB' }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
               <input type="checkbox" checked={section.enabled} onChange={e => setSection(section.id, { enabled: e.target.checked })} />
               {section.label}
             </label>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => addNote(section.id)}
+              title="Add a text box to explain this stage in more detail"
+              style={{ marginLeft: 'auto', padding: '4px 10px', fontSize: 12 }}
+            >
+              <Plus size={14} /> Add text box
+            </button>
           </div>
           <div style={{ padding: 12 }}>
             {section.rows.map(row => (
@@ -226,9 +381,28 @@ export function ScheduleModal({ deal, dealId, video, videoId, company, primaryCo
                 </div>
               </div>
             ))}
+            {notes.map(note => (
+              <NoteBox
+                key={note.id}
+                note={note}
+                sectionId={section.id}
+                sections={schedule.sections}
+                autoFocus={focusNoteId === note.id}
+                dragging={dragNoteId === note.id}
+                dropBefore={dragNoteId && dragNoteId !== note.id && dropAt?.sid === section.id && dropAt?.beforeId === note.id}
+                dropProps={dropHandlers(section.id, note.id)}
+                onDragStart={() => setDragNoteId(note.id)}
+                onDragEnd={endDrag}
+                onChange={text => setNoteText(note.id, text)}
+                onMove={toSid => moveNote(note.id, toSid)}
+                onRemove={() => removeNote(note.id)}
+              />
+            ))}
+            {dropHere && dropAt?.beforeId == null && <DropLine />}
           </div>
         </div>
-      ))}
+        );
+      })}
 
       {/* Actions */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'flex-end', marginTop: 8, paddingTop: 16, borderTop: '1px solid ' + BRAND.border }}>

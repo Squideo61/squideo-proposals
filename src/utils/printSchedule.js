@@ -3,7 +3,7 @@
 // window.print(). No PDF library — the same pattern every other client doc uses.
 import { SQUIDEO_LOGO } from '../defaults.js';
 import { CONFIG } from '../theme.js';
-import { FIELD_LABELS, FIELD_ORDER, enabledRows } from '../lib/scheduleTemplate.js';
+import { FIELD_LABELS, FIELD_ORDER, enabledRows, sectionNotes } from '../lib/scheduleTemplate.js';
 import { printButtonHTML, writeDoc } from './printWindow.js';
 
 function esc(str) {
@@ -23,19 +23,22 @@ export function buildScheduleHTML(schedule, deal, company, primaryContact) {
   // Which date columns appear at all (union across enabled rows), in fixed order.
   const activeFields = FIELD_ORDER.filter(f => rows.some(({ row }) => row.fields.includes(f)));
 
-  // Group enabled rows by their section, preserving order.
-  const bySection = [];
-  for (const { section, row } of rows) {
-    let bucket = bySection.find(b => b.section.id === section.id);
-    if (!bucket) { bucket = { section, rows: [] }; bySection.push(bucket); }
-    bucket.rows.push(row);
-  }
+  // Each switched-on section with its enabled rows and any filled-in text
+  // boxes. A section with only text boxes still prints (heading + notes).
+  const bySection = (schedule?.sections || [])
+    .filter(section => section.enabled)
+    .map(section => ({
+      section,
+      rows: rows.filter(r => r.section.id === section.id).map(r => r.row),
+      notes: sectionNotes(section).filter(n => String(n.text || '').trim()),
+    }))
+    .filter(b => b.rows.length || b.notes.length);
 
   const headCells = ['Stage', ...activeFields.map(f => FIELD_LABELS[f])]
     .map(h => `<th style="text-align:left;padding:8px 10px;font-size:12px;font-weight:700;color:#0F2A3D;border-bottom:2px solid #2BB8E6;">${esc(h)}</th>`)
     .join('');
 
-  const sectionsHTML = bySection.map(({ section, rows: srows }) => {
+  const sectionsHTML = bySection.map(({ section, rows: srows, notes }) => {
     const body = srows.map(row => {
       const cells = activeFields.map(f => {
         const v = row.fields.includes(f) ? fmt(row[f]) : '—';
@@ -43,12 +46,17 @@ export function buildScheduleHTML(schedule, deal, company, primaryContact) {
       }).join('');
       return `<tr><td style="padding:8px 10px;font-size:13px;font-weight:600;color:#0F2A3D;border-bottom:1px solid #E5E9EE;">${esc(row.label)}</td>${cells}</tr>`;
     }).join('');
-    return `
-      <h2 class="page-title">${esc(section.label)}</h2>
+    const table = srows.length ? `
       <table style="width:100%;border-collapse:collapse;margin-bottom:8px;">
         <thead><tr>${headCells}</tr></thead>
         <tbody>${body}</tbody>
-      </table>`;
+      </table>` : '';
+    const notesHTML = notes.map(n =>
+      `<div class="note">${esc(n.text.trim())}</div>`
+    ).join('');
+    return `
+      <h2 class="page-title">${esc(section.label)}</h2>
+      ${table}${notesHTML}`;
   }).join('');
 
   const clientName = company?.name || deal?.title || '';
@@ -72,6 +80,7 @@ export function buildScheduleHTML(schedule, deal, company, primaryContact) {
     }
     .page-title { font-size: 18px; font-weight: 700; margin: 28px 0 10px; padding-bottom: 6px; border-bottom: 2px solid #2BB8E6; }
     .muted { color: #6B7785; }
+    .note { margin: 10px 0 0; padding: 10px 12px; background: #F4FAFD; border-left: 3px solid #2BB8E6; border-radius: 4px; font-size: 13px; line-height: 1.55; white-space: pre-wrap; break-inside: avoid; }
   </style>
 </head>
 <body>
