@@ -1,8 +1,14 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 
 vi.mock('../api/_lib/db.js', async () => ({
   default: (await import('./helpers/mockDb.js')).sqlMock,
 }));
+
+// settleSignedOffAllocations loads videoCredit.js — and through it the
+// notifications, invoicing and Xero modules — the first time it runs. Load it
+// before any test starts its clock: with the whole suite running at once, that
+// one-off import alone could take a test past its five seconds.
+beforeAll(() => import('../api/_lib/videoCredit.js'), 60_000);
 
 import {
   setVideoCreditAllocation,
