@@ -11,6 +11,7 @@ import { portalApi } from '../api.js';
 import { DEMO_STAGES, demoConfigured } from '../demo/stages.js';
 import { demoProgress } from '../demo/store.js';
 import { LEAD_MAGNET } from '../../lib/leadMagnet.js';
+import { formatCreditMinutes } from '../../lib/creditFormat.js';
 
 function BriefDraftCard({ draft }) {
   const when = draft.updatedAt ? new Date(draft.updatedAt) : null;
@@ -206,8 +207,8 @@ function ProjectCard({ project }) {
       {project.credit?.allocated > 0 && (
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 12.5, color: BRAND.ink }}>
           <Wallet size={14} style={{ color: BRAND.blue, flexShrink: 0 }} />
-          <strong>{project.credit.remaining} min</strong>
-          <span style={{ color: BRAND.muted }}>of your {project.credit.allocated} min credit left</span>
+          <strong>{formatCreditMinutes(project.credit.remaining)} min</strong>
+          <span style={{ color: BRAND.muted }}>of your {formatCreditMinutes(project.credit.allocated)} min credit left</span>
         </div>
       )}
 

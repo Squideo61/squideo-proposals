@@ -8,6 +8,7 @@ import { formatGBP, formatRelativeTime, formatTaskDue, formatDuration, useIsMobi
 import { sanitizeEmailBody } from '../../utils/emailImages.js';
 import { openPrintWindow, printOptionsForSigned } from '../../utils/printProposal.js';
 import { RecordSignedModal } from './RecordSignedModal.jsx';
+import { fmtCredits } from './creditDisplay.jsx';
 import { ActionMenu, Badge, CallLink, Modal, RefBadge, FormRow } from '../ui.jsx';
 import { EmailComposerModal } from './EmailComposer.jsx';
 import { referenceMonth } from '../../lib/reference.js';
@@ -571,7 +572,7 @@ export function DealDetailView({ dealId, onBack, backLabel, onOpenProposal, onCr
                 type="button"
                 onClick={() => company && onOpenCompany?.(company.id)}
                 title={detail.companyCredit.reserved > 0
-                  ? `${detail.companyCredit.available} min free · ${detail.companyCredit.reserved} min already reserved against specific videos`
+                  ? `${fmtCredits(detail.companyCredit.available)} min free · ${fmtCredits(detail.companyCredit.reserved)} min already reserved against specific videos`
                   : 'This customer holds credit — open their organisation to see the ledger'}
                 style={{
                   display: 'inline-flex', alignItems: 'center', gap: 5, marginTop: 6,
@@ -583,8 +584,10 @@ export function DealDetailView({ dealId, onBack, backLabel, onOpenProposal, onCr
                 <Wallet size={12} />
                 {/* "Free" rather than a bare total: some of the balance may
                     already be earmarked for videos that haven't started. */}
-                {detail.companyCredit.available ?? detail.companyCredit.remaining} min credit free
-                {detail.companyCredit.reserved > 0 ? ` · ${detail.companyCredit.reserved} reserved` : ''}
+                {/* Through the shared formatter: the balance is a sum of ledger
+                    rows, and printed raw it read "2.3000000000000007". */}
+                {fmtCredits(detail.companyCredit.available ?? detail.companyCredit.remaining)} min credit free
+                {detail.companyCredit.reserved > 0 ? ` · ${fmtCredits(detail.companyCredit.reserved)} reserved` : ''}
               </button>
             )}
           </Field>

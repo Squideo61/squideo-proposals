@@ -10,6 +10,7 @@ import { usePortal } from '../PortalContext.jsx';
 import { Card, SectionHeading, EmptyState, fmtGBP } from '../components.jsx';
 import { Clapperboard, CreditCard, Film, FileText, Minus, Plus, Sparkles, Wallet } from 'lucide-react';
 import { LEAD_MAGNET } from '../../lib/leadMagnet.js';
+import { formatCreditMinutes } from '../../lib/creditFormat.js';
 
 const MIN = 1;
 const MAX = 120;
@@ -24,7 +25,8 @@ function quoteFor(minutes, p) {
   return { m, discount, unitExVat, subtotalExVat, vat, totalIncVat: subtotalExVat + vat };
 }
 
-const fmtMins = (n) => `${Math.round((n + Number.EPSILON) * 10) / 10} min`;
+// The shared one-decimal credit format, so this page and the CRM can't drift.
+const fmtMins = (n) => `${formatCreditMinutes(n)} min`;
 
 export default function VideoCredit() {
   const { companyId, user, showToast } = usePortal();

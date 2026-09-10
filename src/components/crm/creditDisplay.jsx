@@ -1,5 +1,6 @@
 import React from 'react';
 import { BRAND } from '../../theme.js';
+import { formatCreditMinutes } from '../../lib/creditFormat.js';
 
 // Shared formatting + usage-bar visuals for credit/money allocations. Used by
 // the deal-page "Credit Based Projects" (RetainersCard) and the read-only
@@ -9,10 +10,9 @@ export function fmtMoney(n) {
   return '£' + Number(n || 0).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-export function fmtCredits(n) {
-  const v = Number(n) || 0;
-  return Number.isInteger(v) ? String(v) : v.toFixed(2).replace(/\.?0+$/, '');
-}
+// One decimal place, via the helper the client portal uses too — see
+// src/lib/creditFormat.js for why the two must agree.
+export const fmtCredits = formatCreditMinutes;
 
 // allocationType is 'money' or 'credits'.
 export function fmtValue(allocationType, n) {

@@ -7,6 +7,7 @@ import { VideoProgressBar } from './ProductionProgressBar.jsx';
 import { Modal, RefBadge } from '../ui.jsx';
 import { videoReference } from '../../lib/reference.js';
 import { fmtMins } from './ClientCreditCard.jsx';
+import { fmtCredits } from './creditDisplay.jsx';
 
 // The project's videos + the credit behind them. Each video moves through the
 // board independently and is edited on its own page (onOpenVideo); this panel
@@ -137,7 +138,8 @@ export function ProductionPanel({ dealId, deal, videos, creditProject, companyCr
           // Credit-based deal: the pool lives in the Credit Based Project card, so
           // just show the balance here (topping up happens over there).
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: '#92400E', background: '#FEF3C7', borderRadius: 999, padding: '3px 10px' }}>
-            <Coins size={12} /> {remaining} credit{remaining === 1 ? '' : 's'} remaining
+            {/* Plural off the rounded figure, so 0.98 reads "1 credit" not "1 credits". */}
+            <Coins size={12} /> {fmtCredits(remaining)} credit{fmtCredits(remaining) === '1' ? '' : 's'} remaining
           </span>
         ) : (
           <>
