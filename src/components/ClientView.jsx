@@ -483,6 +483,24 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
     return () => { cancelled = true; };
   }, [examplesKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // A Monthly Plan has nothing to opt into: the plan is the proposal, so the
+  // programme is always on and the commitment is whatever the proposal says.
+  // Done in an effect rather than in the initial state because on a public link
+  // the proposal arrives a beat after mount, so the state seeded then would be
+  // seeded from nothing.
+  const monthlyMinutes = isMonthlyPlan(data) ? monthlyPlanFor(data).minutesPerMonth : null;
+  useEffect(() => {
+    if (signed || monthlyMinutes === null) return;
+    setPartnerSelected(true);
+    setPartnerCredits(monthlyMinutes);
+  }, [signed, monthlyMinutes]);
+
+  // Every hook has to be above this point. These returns fire while a public
+  // link's proposal is still loading, so a hook below them is skipped on that
+  // render and called on the next — React refuses that ("Rendered more hooks
+  // than during the previous render", minified #310) and the client gets an
+  // error page instead of their proposal. tests/publicProposalLoad.test.js
+  // renders the view through exactly that sequence.
   if (!data) {
     if (state.loading) {
       return (
@@ -661,17 +679,6 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
   const incVat = (n) => formatGBP(n * (1 + (data.vatRate || 0)));
   // When VAT is 0%, drop every "+ VAT" / "inc. VAT" reference from the proposal.
   const showVat = (Number(data.vatRate) || 0) > 0;
-
-  // A Monthly Plan has nothing to opt into: the plan is the proposal, so the
-  // programme is always on and the commitment is whatever the proposal says.
-  // Done in an effect rather than in the initial state because on a public link
-  // the proposal arrives a beat after mount, so the state seeded then would be
-  // seeded from nothing.
-  useEffect(() => {
-    if (signed || !isMonthly) return;
-    setPartnerSelected(true);
-    setPartnerCredits(monthlyPlan.minutesPerMonth);
-  }, [signed, isMonthly, monthlyPlan?.minutesPerMonth]);
 
   const handleSign = async () => {
     if (!sigName.trim() || !sigEmail.trim() || !sigAccepted) {

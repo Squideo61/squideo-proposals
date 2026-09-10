@@ -1798,9 +1798,10 @@ export function StoreProvider({ children }) {
       setState(s => ({ ...s, payments: { ...s.payments, [id]: payment } }));
       return api.post('/api/payments/' + id, payment).catch(() => {});
     },
+    // Resolves once the proposal (or the failure to find it) is in the store.
     loadPublicProposal(id) {
       setState(s => ({ ...s, loading: true }));
-      Promise.all([
+      return Promise.all([
         api.get('/api/proposals/' + id).catch(() => null),
         api.get('/api/signatures/' + id).catch(() => null),
         api.get('/api/payments/' + id).catch(() => null),

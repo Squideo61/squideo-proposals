@@ -13,9 +13,16 @@ export function PublicClientShell({ proposalId }) {
   const { state, actions, showMsg, toast } = useStore();
   const verifiedRef = useRef(false);
   const [showThanks, setShowThanks] = useState(readThanksFlag);
+  // Which proposal this page has finished loading. Not the store's `loading`
+  // flag: the session check clears that as well, and for a client — who is never
+  // signed in — it usually answers before the proposal does, so the page went on
+  // to say "Proposal not found" until the proposal caught up.
+  const [loadedId, setLoadedId] = useState(null);
 
   useEffect(() => {
-    actions.loadPublicProposal(proposalId);
+    let alive = true;
+    actions.loadPublicProposal(proposalId).then(() => { if (alive) setLoadedId(proposalId); });
+    return () => { alive = false; };
   }, [proposalId]); // eslint-disable-line
 
   // Keep our flag in sync with browser navigation (back/forward).
@@ -51,7 +58,7 @@ export function PublicClientShell({ proposalId }) {
       .catch(() => showMsg('Could not verify payment - please contact us.'));
   }, [proposalId]); // eslint-disable-line
 
-  if (state.loading) {
+  if (loadedId !== proposalId) {
     return (
       <div style={{ minHeight: '100vh', background: BRAND.paper, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <div style={{ fontSize: 14, color: BRAND.muted }}>Loading proposal…</div>
