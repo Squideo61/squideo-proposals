@@ -90,6 +90,92 @@ async function proRataCreditLines(dealId) {
   return out;
 }
 
+const gbp = (n) => '£' + (Number(n) || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+// "Acme Widgets Ltd" ≈ "ACME WIDGETS LIMITED" — for comparing a Xero contact
+// with the deal's company when there's no Xero contact id to compare.
+const comparableName = (s) => String(s || '').toLowerCase()
+  .replace(/\b(ltd|limited|plc|llp|inc|the)\b/g, '')
+  .replace(/[^a-z0-9]/g, '');
+
+// Can Xero invoice `invoiceNumber` be linked to `dealId` as a pro-rata part of
+// its final balance? Blockers stop the link; warnings are shown for a person to
+// judge (e.g. billed to a differently-named contact — often a parent company).
+async function checkProRataLink(dealId, invoiceNumber, expectedNet) {
+  const blockers = [];
+  const warnings = [];
+  const x = await getInvoiceByNumber(invoiceNumber);
+  if (!x) {
+    return { xero: null, blockers: [`${invoiceNumber} wasn’t found in Xero — check the number.`], warnings };
+  }
+  const n = x.invoiceNumber || invoiceNumber;
+
+  if (x.status === 'VOIDED' || x.status === 'DELETED') blockers.push(`${n} is ${x.status.toLowerCase()} in Xero.`);
+  else if (x.status !== 'AUTHORISED' && x.status !== 'PAID') blockers.push(`${n} is still a draft in Xero — approve it there first.`);
+  if (x.currency && x.currency !== 'GBP') blockers.push(`${n} is in ${x.currency} — only GBP invoices can be linked here.`);
+  if (x.subTotal == null) blockers.push(`Xero didn’t return an amount for ${n}.`);
+
+  // Anything the CRM already holds counts toward a deal somewhere — linking it
+  // again would count the same money twice.
+  const [known] = await sql`
+    SELECT (SELECT deal_id FROM manual_invoices WHERE xero_invoice_id = ${x.invoiceId} LIMIT 1) AS manual_deal,
+           EXISTS (SELECT 1 FROM manual_invoices WHERE xero_invoice_id = ${x.invoiceId}) AS in_manual,
+           EXISTS (SELECT 1 FROM payments WHERE xero_invoice_id = ${x.invoiceId})
+             OR EXISTS (SELECT 1 FROM partner_invoices WHERE xero_invoice_id = ${x.invoiceId})
+             OR EXISTS (SELECT 1 FROM proposal_billing WHERE xero_invoice_id = ${x.invoiceId}) AS in_other
+  `;
+  if (known?.in_manual) {
+    blockers.push(known.manual_deal === dealId ? `${n} is already linked to this deal.` : `${n} is already linked to another deal or customer in the CRM.`);
+  } else if (known?.in_other) {
+    blockers.push(`${n} is already recorded in the CRM (from a proposal payment or invoice request).`);
+  }
+
+  if (expectedNet != null && x.subTotal != null && Math.abs(Number(x.subTotal) - expectedNet) > 0.01) {
+    blockers.push(`${n} is for ${gbp(x.subTotal)} net, not the ${gbp(expectedNet)} entered.`);
+  }
+
+  // Same client? Compare Xero contact ids where the company has one, else names.
+  const who = await resolveXeroContactInfo(dealId, null).catch(() => null);
+  if (who) {
+    const sameContact = (who.xeroContactId && x.contactId && who.xeroContactId === x.contactId)
+      || (comparableName(who.name) && comparableName(who.name) === comparableName(x.contactName));
+    if (!sameContact) warnings.push(`It’s billed to ${x.contactName || 'a different contact'}, not ${who.name}.`);
+  }
+
+  // VAT treatment should match the signed proposal's.
+  const [prop] = await sql`
+    SELECT p.data->>'vatRate' AS rate FROM proposals p JOIN signatures s ON s.proposal_id = p.id
+     WHERE p.deal_id = ${dealId} ORDER BY p.created_at DESC LIMIT 1
+  `;
+  if (prop && x.subTotal > 0) {
+    const proposalVat = Number(prop.rate) > 0;
+    const invoiceVat = Number(x.totalTax) > 0.005;
+    if (proposalVat && !invoiceVat) warnings.push(`${n} has no VAT, but the proposal does.`);
+    if (!proposalVat && invoiceVat) warnings.push(`${n} charges VAT, but the proposal doesn’t.`);
+  }
+
+  return { xero: x, blockers, warnings };
+}
+
+// What the Split box is shown about the invoice it looked up.
+function publicLinkCheck({ xero: x, blockers, warnings }) {
+  return {
+    invoice: x ? {
+      number: x.invoiceNumber,
+      contactName: x.contactName,
+      status: x.status,
+      issueDate: x.issueDate,
+      dueDate: x.dueDate,
+      net: x.subTotal,
+      vat: x.totalTax,
+      total: x.total,
+      amountDue: x.amountDue,
+      currency: x.currency || 'GBP',
+    } : null,
+    blockers,
+    warnings,
+  };
+}
+
 // Create a Xero ACCREC invoice for a deal/proposal/company from explicit line
 // items, store it in manual_invoices, and (optionally) flip the given extras to
 // 'invoiced'. Extracted from the JSON POST handler so other flows (an extra
@@ -513,6 +599,69 @@ export async function invoicesRoute(req, res, id, action, user) {
       attachments: attachment ? [attachment] : [],
     };
     return res.status(200).json({ invoice: created, draft, dealTitle: row.deal_title || null, attached: !!attachment });
+  }
+
+  // --- POST /api/crm/invoices/link-pro-rata — the other way to split a final
+  // balance: the part-payment invoice was already raised (and sent) in Xero, so
+  // link it instead of creating another. { dealId, proposalId?, invoiceNumber,
+  // expectedNet, check? }. check:true only looks it up and reports what does and
+  // doesn't match; otherwise the same checks run again and the link is recorded,
+  // tagged pro-rata so the final invoice deducts it. The net must match what was
+  // entered to the penny — the wrong invoice would quietly wreck the final.
+  if (id === 'link-pro-rata' && req.method === 'POST') {
+    if (!hasPermission(await getRole(user.role), 'invoices.manage')) {
+      return res.status(403).json({ error: 'You do not have permission to link invoices' });
+    }
+    const dealId = trimOrNull(req.body?.dealId);
+    const invoiceNumber = trimOrNull(req.body?.invoiceNumber);
+    if (!dealId || !invoiceNumber) return res.status(400).json({ error: 'dealId and invoiceNumber required' });
+    const expectedNet = numberOrNull(req.body?.expectedNet);
+
+    const found = await checkProRataLink(dealId, invoiceNumber, expectedNet);
+    if (req.body?.check) return res.status(200).json(publicLinkCheck(found));
+    if (expectedNet == null) return res.status(400).json({ error: 'Enter the amount the invoice is for' });
+    if (found.blockers.length) return res.status(409).json({ error: found.blockers[0], ...publicLinkCheck(found) });
+    if (!(await ensureInvoiceProRataColumn())) {
+      return res.status(503).json({ error: 'Could not prepare the invoice for splitting — try again' });
+    }
+
+    const x = found.xero;
+    const newId = makeId('inv');
+    const row = {
+      id: newId,
+      deal_id: dealId,
+      status: 'issued',
+      xero_invoice_id: x.invoiceId,
+      amount: x.total,
+      currency: x.currency || 'GBP',
+      currency_rate: x.currencyRate ?? null,
+      subtotal_ex_vat: x.subTotal,
+      tax_amount: x.totalTax,
+      payment_method: null,
+    };
+    await sql`
+      INSERT INTO manual_invoices (
+        id, proposal_id, deal_id, invoice_number, amount, issued_at, due_at, status,
+        notes, uploaded_by, xero_invoice_id, currency, currency_rate,
+        subtotal_ex_vat, tax_amount, pro_rata_of
+      ) VALUES (
+        ${newId}, ${trimOrNull(req.body?.proposalId)}, ${dealId}, ${x.invoiceNumber || invoiceNumber},
+        ${x.total}, ${x.issueDate || new Date().toISOString().slice(0, 10)}, ${x.dueDate || null}, 'issued',
+        ${'Part payment of final balance (linked from Xero)'}, ${user.email || null}, ${x.invoiceId},
+        ${row.currency}, ${row.currency_rate}, ${x.subTotal}, ${x.totalTax}, 'final'
+      )
+    `;
+    // Already paid in Xero → settle it the way the Xero sync would (paid date
+    // from Xero; a payment that isn't recent stays a silent correction).
+    let status = 'issued';
+    if (x.status === 'PAID') {
+      const updates = await syncFromXero([row], user).catch((err) => {
+        console.error('[invoices] link-pro-rata paid sync failed', err);
+        return new Map();
+      });
+      if (updates.get(newId)?.status === 'paid') status = 'paid';
+    }
+    return res.status(201).json({ id: 'manual:' + newId, invoiceNumber: x.invoiceNumber, status });
   }
 
   // --- POST /api/crm/invoices/final-release — toggle the staff override that

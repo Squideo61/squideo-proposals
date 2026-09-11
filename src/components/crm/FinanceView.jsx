@@ -3249,24 +3249,35 @@ function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoRece
   );
 }
 
-// Split the final balance: invoice PART of it now — a client who's signed off one
-// video early and wants to pay for it — and leave the rest outstanding. The
-// invoice is raised in Xero tagged as pro-rata, so it moves to "Invoiced —
-// awaiting payment", the row's remaining final shrinks (its % badge with it), and
-// the eventual final invoice deducts it. Net (ex-VAT) like the rest of the page;
-// the VAT and gross the client sees are shown alongside.
+// Xero status → what it means here.
+const XERO_STATUS_LABEL = { AUTHORISED: 'Awaiting payment', PAID: 'Paid', DRAFT: 'Draft', SUBMITTED: 'Awaiting approval', VOIDED: 'Voided', DELETED: 'Deleted' };
+
+// Split the final balance: bill PART of it now — a client who's signed off one
+// video early and wants to pay for it — and leave the rest outstanding. Either
+// raise the invoice here, or link one that was already raised (and sent) in Xero,
+// checked against the amount first. Either way it's tagged pro-rata, so it moves
+// to "Invoiced — awaiting payment" (or banks, if Xero has it paid), the row's
+// remaining final shrinks (its % badge with it), and the eventual final invoice
+// deducts it. Net (ex-VAT) like the rest of the page; VAT and gross alongside.
 function ProRataInvoiceModal({ row, line, name, onClose, onCreated }) {
   const { showMsg } = useStore();
   const isMobile = useIsMobile();
   const balance = round2Money(line.amount);
   const signedNet = Number(row.signedNet) || 0;
   const vatPct = (Number(row.vatRate) || 0) > 0 ? 20 : 0;
+  const [mode, setMode] = useState('create'); // 'create' | 'link'
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
   const [descTouched, setDescTouched] = useState(false);
   const [reference, setReference] = useState(row.poNumber || '');
   const [issuedAt, setIssuedAt] = useState(() => new Date().toISOString().slice(0, 10));
   const [saving, setSaving] = useState(false);
+  // Link mode: the Xero invoice number, what the lookup found, and the person's
+  // say-so when the lookup raised warnings (e.g. a differently-named contact).
+  const [xeroNumber, setXeroNumber] = useState('');
+  const [checking, setChecking] = useState(false);
+  const [check, setCheck] = useState(null); // { number, invoice, blockers, warnings }
+  const [confirmed, setConfirmed] = useState(false);
 
   const parsed = parseFloat(amount);
   const net = Number.isFinite(parsed) ? round2Money(parsed) : 0;
@@ -3274,6 +3285,53 @@ function ProRataInvoiceModal({ row, line, name, onClose, onCreated }) {
   const valid = net > 0.005 && !tooMuch;
   const vat = round2Money(net * vatPct / 100);
   const remaining = round2Money(balance - (valid ? net : 0));
+
+  // The lookup is only good for the number it was run on.
+  const found = check && check.number === xeroNumber.trim() ? check : null;
+  const inv = found?.invoice || null;
+  const invNet = inv && inv.net != null ? round2Money(inv.net) : null;
+  const amountMatches = invNet != null && valid && Math.abs(invNet - net) <= 0.01;
+  const invFitsBalance = invNet != null && invNet > 0.005 && invNet < balance - 0.005;
+  const canLink = !!found && !!inv && found.blockers.length === 0 && amountMatches
+    && (found.warnings.length === 0 || confirmed);
+  // A matched Xero invoice's own VAT, else the deal's rate.
+  const shownVat = mode === 'link' && amountMatches ? round2Money(inv.vat) : vat;
+
+  const runCheck = async () => {
+    const num = xeroNumber.trim();
+    if (!num || checking) return;
+    setChecking(true);
+    setConfirmed(false);
+    try {
+      const r = await api.post('/api/crm/invoices/link-pro-rata', { dealId: row.dealId, invoiceNumber: num, check: true });
+      setCheck({ number: num, invoice: r.invoice || null, blockers: r.blockers || [], warnings: r.warnings || [] });
+      // Nothing typed yet → take the invoice's own amount, when it fits.
+      const n = r.invoice?.net != null ? round2Money(r.invoice.net) : null;
+      if (!amount.trim() && n != null && n > 0.005 && n < balance - 0.005) setAmount(n.toFixed(2));
+    } catch (err) {
+      showMsg?.(err.message || 'Could not look the invoice up in Xero', 'error');
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const link = async () => {
+    if (!canLink || saving) return;
+    setSaving(true);
+    try {
+      const result = await api.post('/api/crm/invoices/link-pro-rata', {
+        dealId: row.dealId,
+        proposalId: row.proposalId || undefined,
+        invoiceNumber: xeroNumber.trim(),
+        expectedNet: net,
+      });
+      showMsg?.(`${result?.invoiceNumber || 'Invoice'} linked${result?.status === 'paid' ? ' (already paid)' : ''} — ${formatGBP(remaining)} left on the final`, 'success');
+      onCreated();
+    } catch (err) {
+      showMsg?.(err.message || 'Could not link the invoice', 'error');
+      setSaving(false);
+    }
+  };
   const share = (v) => (signedNet > 0.005 ? (v / signedNet) * 100 : null);
   const number = row.number ? formatProposalNumber(row.number) : '';
   // Prefilled until edited — worth naming the video that's been signed off.
@@ -3326,7 +3384,101 @@ function ProRataInvoiceModal({ row, line, name, onClose, onCreated }) {
       </div>
 
       <div style={{ marginBottom: 14 }}>
-        <span style={label}>Amount to invoice now (ex VAT)</span>
+        <span style={label}>Invoice in Xero</span>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {[{ v: 'create', t: 'Create a new one' }, { v: 'link', t: 'Link one already sent' }].map((m) => (
+            <button
+              key={m.v}
+              type="button"
+              onClick={() => setMode(m.v)}
+              className="btn-ghost"
+              style={{
+                flex: 1, fontSize: 13, padding: '9px 10px', borderRadius: 8,
+                border: '1px solid ' + (mode === m.v ? BRAND.blue : BRAND.border),
+                background: mode === m.v ? BRAND.blue + '10' : 'white',
+                color: mode === m.v ? BRAND.blue : BRAND.ink,
+                fontWeight: mode === m.v ? 700 : 500,
+              }}
+            >
+              {m.t}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {mode === 'link' && (
+        <div style={{ marginBottom: 14 }}>
+          <span style={label}>Xero invoice number</span>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              type="text"
+              className="input"
+              value={xeroNumber}
+              placeholder="e.g. INV-6123"
+              onChange={(e) => setXeroNumber(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') runCheck(); }}
+              style={{ flex: 1, minWidth: 0, boxSizing: 'border-box' }}
+            />
+            <button type="button" className="btn" onClick={runCheck} disabled={!xeroNumber.trim() || checking} style={{ whiteSpace: 'nowrap' }}>
+              {checking ? 'Checking…' : 'Check'}
+            </button>
+          </div>
+          {found && !inv && (
+            <div style={{ fontSize: 12, color: '#B91C1C', marginTop: 6 }}>{found.blockers[0] || 'Not found in Xero.'}</div>
+          )}
+          {inv && (
+            <div style={{ marginTop: 8, border: '1px solid ' + BRAND.border, borderRadius: 8, padding: '10px 12px', fontSize: 13 }}>
+              <div style={summaryRow}>
+                <strong style={{ color: BRAND.ink }}>{inv.number}</strong>
+                <span style={{ fontSize: 11, fontWeight: 700, color: inv.status === 'PAID' ? '#15803D' : BRAND.muted }}>
+                  {XERO_STATUS_LABEL[inv.status] || inv.status}
+                </span>
+              </div>
+              <div style={{ ...summaryRow, fontSize: 12, color: BRAND.muted, marginTop: 2 }}>
+                <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {inv.contactName || 'Unknown contact'}{inv.issueDate ? ` · ${new Date(inv.issueDate).toLocaleDateString('en-GB')}` : ''}
+                </span>
+                <span style={{ flexShrink: 0 }}>{formatGBP(inv.net)} net + {formatGBP(inv.vat)} VAT = {formatGBP(inv.total)}</span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 8, fontSize: 12 }}>
+                {invNet != null && (
+                  amountMatches ? (
+                    <span style={{ color: '#15803D', display: 'flex', gap: 5, alignItems: 'flex-start' }}><Check size={13} style={{ flexShrink: 0, marginTop: 1 }} /> Matches the {formatGBP(net)} net entered</span>
+                  ) : (
+                    <span style={{ color: '#B91C1C', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <X size={13} style={{ flexShrink: 0 }} />
+                      {valid ? `It's ${formatGBP(invNet)} net, not the ${formatGBP(net)} entered.` : `It's ${formatGBP(invNet)} net.`}
+                      {invFitsBalance && (
+                        <button type="button" className="btn-ghost" onClick={() => setAmount(invNet.toFixed(2))} style={{ fontSize: 12, padding: '2px 8px' }}>
+                          Use {formatGBP(invNet)}
+                        </button>
+                      )}
+                    </span>
+                  )
+                )}
+                {invNet != null && !invFitsBalance && (
+                  <span style={{ color: '#B91C1C', display: 'flex', gap: 5, alignItems: 'flex-start' }}><X size={13} style={{ flexShrink: 0, marginTop: 1 }} /> That’s not part of the {formatGBP(balance)} balance — a part payment has to be less than it.</span>
+                )}
+                {found.blockers.map((b) => (
+                  <span key={b} style={{ color: '#B91C1C', display: 'flex', gap: 5, alignItems: 'flex-start' }}><X size={13} style={{ flexShrink: 0, marginTop: 1 }} /> {b}</span>
+                ))}
+                {found.warnings.map((w) => (
+                  <span key={w} style={{ color: '#B45309', display: 'flex', gap: 5, alignItems: 'flex-start' }}>⚠ {w}</span>
+                ))}
+                {found.blockers.length === 0 && found.warnings.length > 0 && (
+                  <label style={{ display: 'flex', gap: 6, alignItems: 'center', color: BRAND.ink, marginTop: 2, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
+                    Yes, this is the right invoice
+                  </label>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div style={{ marginBottom: 14 }}>
+        <span style={label}>{mode === 'link' ? 'Amount it’s for (ex VAT)' : 'Amount to invoice now (ex VAT)'}</span>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <input
             type="text"
@@ -3336,7 +3488,7 @@ function ProRataInvoiceModal({ row, line, name, onClose, onCreated }) {
             value={amount}
             placeholder="0.00"
             onChange={(e) => setAmount(e.target.value.replace(/[£,\s]/g, ''))}
-            onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+            onKeyDown={(e) => { if (e.key === 'Enter') (mode === 'link' ? link() : submit()); }}
             style={{ flex: isMobile ? '1 1 100%' : '0 0 150px', textAlign: 'right', boxSizing: 'border-box' }}
           />
           {quick.map((q) => (
@@ -3359,37 +3511,41 @@ function ProRataInvoiceModal({ row, line, name, onClose, onCreated }) {
         )}
       </div>
 
-      <div style={{ marginBottom: 14 }}>
-        <span style={label}>Invoice line</span>
-        <input
-          type="text"
-          className="input"
-          value={descTouched ? description : autoDescription}
-          onChange={(e) => { setDescTouched(true); setDescription(e.target.value); }}
-          style={{ width: '100%', boxSizing: 'border-box' }}
-        />
-        <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 4 }}>What the client sees on the invoice — worth naming the video that’s been signed off.</div>
-      </div>
+      {mode === 'create' && (
+        <>
+          <div style={{ marginBottom: 14 }}>
+            <span style={label}>Invoice line</span>
+            <input
+              type="text"
+              className="input"
+              value={descTouched ? description : autoDescription}
+              onChange={(e) => { setDescTouched(true); setDescription(e.target.value); }}
+              style={{ width: '100%', boxSizing: 'border-box' }}
+            />
+            <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 4 }}>What the client sees on the invoice — worth naming the video that’s been signed off.</div>
+          </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12, marginBottom: 14 }}>
-        <div>
-          <span style={label}>Invoice date</span>
-          <input type="date" className="input" value={issuedAt} onChange={(e) => setIssuedAt(e.target.value)} style={{ width: '100%', boxSizing: 'border-box' }} />
-        </div>
-        <div>
-          <span style={label}>Reference</span>
-          <input type="text" className="input" value={reference} placeholder="e.g. the customer’s PO number" onChange={(e) => setReference(e.target.value)} style={{ width: '100%', boxSizing: 'border-box' }} />
-        </div>
-      </div>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12, marginBottom: 14 }}>
+            <div>
+              <span style={label}>Invoice date</span>
+              <input type="date" className="input" value={issuedAt} onChange={(e) => setIssuedAt(e.target.value)} style={{ width: '100%', boxSizing: 'border-box' }} />
+            </div>
+            <div>
+              <span style={label}>Reference</span>
+              <input type="text" className="input" value={reference} placeholder="e.g. the customer’s PO number" onChange={(e) => setReference(e.target.value)} style={{ width: '100%', boxSizing: 'border-box' }} />
+            </div>
+          </div>
+        </>
+      )}
 
       <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 8, padding: '10px 12px', fontSize: 13, display: 'flex', flexDirection: 'column', gap: 4 }}>
         <div style={summaryRow}>
-          <span style={{ color: BRAND.muted }}>Invoice now</span>
-          <strong style={{ color: BRAND.ink }}>{formatGBP(valid ? net + vat : 0)}{vatPct ? ' inc VAT' : ''}</strong>
+          <span style={{ color: BRAND.muted }}>{mode === 'link' ? 'Part payment' : 'Invoice now'}</span>
+          <strong style={{ color: BRAND.ink }}>{formatGBP(valid ? shownVat + net : 0)}{shownVat > 0 ? ' inc VAT' : ''}</strong>
         </div>
-        {vatPct > 0 && (
+        {(vatPct > 0 || shownVat > 0) && (
           <div style={{ ...summaryRow, fontSize: 12, color: BRAND.muted }}>
-            <span>{formatGBP(valid ? net : 0)} net + {formatGBP(valid ? vat : 0)} VAT</span>
+            <span>{formatGBP(valid ? net : 0)} net + {formatGBP(valid ? shownVat : 0)} VAT</span>
             {valid && share(net) != null && <span>{formatSharePct(share(net))} of project</span>}
           </div>
         )}
@@ -3404,9 +3560,15 @@ function ProRataInvoiceModal({ row, line, name, onClose, onCreated }) {
 
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
         <button onClick={onClose} className="btn-ghost" disabled={saving}>Cancel</button>
-        <button onClick={submit} className="btn-primary" disabled={!valid || saving || !lineDescription}>
-          {saving ? 'Creating in Xero…' : 'Create invoice in Xero'}
-        </button>
+        {mode === 'link' ? (
+          <button onClick={link} className="btn-primary" disabled={!canLink || saving} title={!found ? 'Check the invoice number first' : undefined}>
+            {saving ? 'Linking…' : inv ? `Link ${inv.number}` : 'Link invoice'}
+          </button>
+        ) : (
+          <button onClick={submit} className="btn-primary" disabled={!valid || saving || !lineDescription}>
+            {saving ? 'Creating in Xero…' : 'Create invoice in Xero'}
+          </button>
+        )}
       </div>
     </Modal>
   );
