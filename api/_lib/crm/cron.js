@@ -33,6 +33,7 @@ import { notifyPortalUser, resolvePortalRecipients } from '../portal/notificatio
 import { shouldRemind } from '../portal/tasks.js';
 import { portalTaskReminderHtml, PORTAL_URL } from '../portal/emails.js';
 import { emailLogoUrl } from '../portal/logo.js';
+import { cronAcademyAlerts } from './academies.js';
 
 export async function cronHandler(req, res, action) {
   if (req.method !== 'GET' && req.method !== 'POST') return res.status(405).end();
@@ -71,6 +72,7 @@ export async function cronHandler(req, res, action) {
     case 'brief-digest':      return cronBriefDigest(res);
     case 'campaign-send':     return cronCampaignSend(res);
     case 'harvest-sweep':     return cronHarvestSweep(res);
+    case 'academy-alerts':    return cronAcademyAlerts(res);
     default:                  return res.status(404).json({ error: 'Unknown cron action: ' + action });
   }
 }

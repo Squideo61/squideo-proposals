@@ -31,6 +31,7 @@ const BuilderView = lazyNamed(() => import('./components/BuilderView.jsx'), 'Bui
 const TemplatesView = lazyNamed(() => import('./components/TemplatesView.jsx'), 'TemplatesView');
 const PartnerCreditsView = lazyNamed(() => import('./components/PartnerCreditsView.jsx'), 'PartnerCreditsView');
 const PortalActivityView = lazyNamed(() => import('./components/crm/PortalActivityView.jsx'), 'PortalActivityView');
+const AcademiesView = lazyNamed(() => import('./components/crm/AcademiesView.jsx'), 'AcademiesView');
 const PartnerCreditDetailView = lazyNamed(() => import('./components/PartnerCreditDetailView.jsx'), 'PartnerCreditDetailView');
 const AdminView = lazyNamed(() => import('./components/admin/AdminView.jsx'), 'AdminView');
 const AccountSettings = lazyNamed(() => import('./components/AccountSettings.jsx'), 'AccountSettings');
@@ -801,6 +802,9 @@ function AppShell() {
           onOpen={(clientKey) => navigate('partner-credit-detail', clientKey)}
           onOpenDeal={(id) => navigate('deal', id)}
         />
+      )}
+      {view === 'academies' && (
+        <AcademiesView onOpenCompany={(id) => navigate('company', id)} />
       )}
       {view === 'portal-activity' && (
         <PortalActivityView

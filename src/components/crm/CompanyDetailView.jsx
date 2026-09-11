@@ -6,6 +6,7 @@ import { useIsMobile, formatGBP, formatRelativeTime, effectiveAddress, formatAdd
 import { api } from '../../api.js';
 import { Card, Empty } from './Card.jsx';
 import { CompanyCreditsCard } from './CompanyCreditsCard.jsx';
+import { CompanyAcademyCard } from './CompanyAcademyCard.jsx';
 import { CreditAccessCard } from './CreditAccessCard.jsx';
 import { CompanyLogoCard } from './CompanyLogoCard.jsx';
 import { PortalMembersCard } from './PortalMembersCard.jsx';
@@ -296,6 +297,9 @@ export function CompanyDetailView({ companyId, onBack, onOpenDeal, onOpenContact
       <div style={{ marginBottom: 16 }}>
         <CompanyCreditsCard companyId={companyId} />
       </div>
+
+      {/* Their Squideo Academy, when one is linked (renders nothing otherwise). */}
+      <CompanyAcademyCard companyId={companyId} />
 
       {/* Whether this organisation sees the rate card in their portal, and at
           what rate. Company-scoped, which is why the deal and contact pages

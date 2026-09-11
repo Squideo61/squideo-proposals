@@ -163,6 +163,15 @@ function collectPredicted(pending, partners, predictKeys, excludedKeys, predictM
   // Active partners ride along automatically (subscription = next month's fee,
   // credits-only = remaining-credit value) — no manual flag needed.
   for (const pt of (partners || [])) if (pt.clientKey) add(predictKeyForPartner(pt.clientKey), { name: pt.clientName || 'Partner', amount: Number(pt.outstanding) || 0, source: 'Partner', clientKey: pt.clientKey, auto: true, type: 'partner', row: pt });
+  // Squideo Academy fees ride along automatically too, because they recur: what
+  // an academy is due to be invoiced, and then its invoice until it is paid.
+  // Flagging an academy invoice by hand above wins (same key, added first).
+  for (const a of (p.academies || [])) {
+    if (a.key) add(a.key, { name: a.company || a.academy || 'Academy', amount: Number(a.amountExVat) || 0, source: 'Academy', companyId: a.companyId || null, auto: true, type: 'academy', row: a });
+  }
+  for (const r of (p.companyInvoices || [])) {
+    if (r.academy) add(predictKeyForManual(r), { name: r.company || 'Academy invoice', amount: Number(r.amountExVat) || 0, source: 'Academy', companyId: r.companyId || null, auto: true, type: 'manual', row: r });
+  }
   // "Other" recurring revenue (web hosting etc.) also rides along automatically —
   // it recurs every month, so it's predicted by default like a partner fee. Once
   // it's marked received for this month, it's already banked, so it drops off.

@@ -376,6 +376,48 @@ export const NOTIFICATIONS = [
     group: 'Finance',
     channel: 'finance',
   },
+  // Squideo Academy subscriptions (api/_lib/crm/academies.js, daily). Each also
+  // leaves a task for the account owner: whoever owns the company's latest deal.
+  {
+    key: 'academy.trial_ending',
+    label: 'Academy trial ends in 30 days',
+    description: 'A client academy\'s free trial ends within a month: the moment to talk about a plan.',
+    audience: 'broadcast',
+    group: 'Academies',
+    channel: 'finance',
+  },
+  {
+    key: 'academy.plan_requested',
+    label: 'Academy asked for a plan',
+    description: 'A client asks for a plan from their academy\'s Plan page.',
+    audience: 'broadcast',
+    group: 'Academies',
+    channel: 'finance',
+  },
+  {
+    key: 'academy.over_allowance',
+    label: 'Academy outgrowing its plan',
+    description: 'An academy has gone over its plan\'s learner allowance two months running: an upsell conversation.',
+    audience: 'broadcast',
+    group: 'Academies',
+    channel: 'finance',
+  },
+  {
+    key: 'academy.low_usage',
+    label: 'Academy barely used',
+    description: 'A paying academy averages a fifth of its allowance or less: a churn risk worth a check-in.',
+    audience: 'broadcast',
+    group: 'Academies',
+    channel: 'finance',
+  },
+  {
+    key: 'academy.renewal_due',
+    label: 'Academy renews within a month',
+    description: 'An annual academy plan renews in 30 days, with how it has been used and which plan it fits.',
+    audience: 'broadcast',
+    group: 'Academies',
+    channel: 'finance',
+  },
 ];
 
 const KEYS = new Set(NOTIFICATIONS.map(n => n.key));

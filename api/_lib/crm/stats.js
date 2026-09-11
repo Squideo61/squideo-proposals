@@ -14,6 +14,7 @@ import { commissionTotalsForMonths, commissionByMemberForMonth } from './commiss
 import { crmCostGbpByMonth } from './costSnapshot.js';
 import { demoScope } from './demoScope.js';
 import { zipStore } from '../zip.js';
+import { academyFinanceView } from './academies.js';
 
 // Business finance/performance aggregates across ALL customers. Unions the same
 // five paid-money sources as companies.js (allCompanyBalances /
@@ -1682,8 +1683,28 @@ async function pendingPaymentsReport() {
   const other = await fetchRecurringOther();
   const otherTotal = round2(other.reduce((s, x) => s + (Number(x.amountExVat) || 0), 0));
 
+  // Squideo Academy: what linked academies are due to be invoiced, and which of
+  // the company invoices above are academy invoices, so the Predicted tab can
+  // carry both on its own (academy fees recur, like a partner's). Capped at a
+  // few seconds and best-effort: the academy platform must never slow Finance
+  // down or stop it loading.
+  let academies = [];
+  try {
+    const view = await Promise.race([
+      academyFinanceView(),
+      new Promise((resolve) => setTimeout(() => resolve(null), 3000)),
+    ]);
+    if (view) {
+      academies = view.due;
+      const academyInvoiceIds = new Set(view.invoiceIds);
+      for (const ci of companyInvoices) if (academyInvoiceIds.has(ci.id)) ci.academy = true;
+    }
+  } catch (err) {
+    console.warn('[stats] academy finance view failed', err?.message || err);
+  }
+
   return {
-    normal, po, manual, companyInvoices, other,
+    normal, po, manual, companyInvoices, other, academies,
     totals: { normal: sum(normal), po: sum(po), manual: manualTotal, manualInvoiced, companyInvoices: companyInvoicedNet, other: otherTotal, invoiced, notInvoiced },
   };
 }

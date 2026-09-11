@@ -13,6 +13,7 @@ import { ensureCompanyLogoColumns, decodeLogo, portalLogoPath } from '../portal/
 import { listVideoCreditOrders, raiseInvoiceForCreditOrder, cancelCreditOrder, reconcileVideoCreditOrders } from '../videoCredit.js';
 import { listVideoCreditAllocations, settleSignedOffAllocations } from '../videoCreditAllocations.js';
 import { loadCompanyCredit, setCompanyCredit } from './companyCredit.js';
+import { companyAcademyRoute } from './academies.js';
 
 // Self-heal for db/migrations/20260603_company_address.sql. Called at the top of
 // every companies code path so a workspace that skipped the manual Neon apply
@@ -276,6 +277,9 @@ export async function companiesRoute(req, res, id, action, user) {
       })),
     });
   }
+
+  // GET /companies/:id/academy — the company's Squideo Academy, for its card.
+  if (action === 'academy') return companyAcademyRoute(req, res, id, user);
 
   // GET /companies/:id/credits — a read-only mirror of every credit allocated
   // against this company, from both sources: deal "credit based projects"

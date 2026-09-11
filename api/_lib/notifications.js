@@ -468,6 +468,32 @@ export async function ensureSampleProjectNotificationDefault() {
   }
 }
 
+// Academy alerts go to whoever already hears about new quote requests: they are
+// sales conversations. The trial and plan-request ones are bell-only by default,
+// because the academy platform already emails Squideo about both.
+let academyDefaultsReady = false;
+export async function ensureAcademyNotificationDefaults() {
+  if (academyDefaultsReady) return;
+  try {
+    for (const key of ['academy.trial_ending', 'academy.plan_requested', 'academy.over_allowance',
+      'academy.low_usage', 'academy.renewal_due']) {
+      await sql`UPDATE roles SET notification_defaults = jsonb_set(
+        notification_defaults, ${'{' + key + '}'}::text[],
+        COALESCE(notification_defaults->'quote_request.new', 'false'::jsonb), true)
+        WHERE NOT (notification_defaults ? ${key})`;
+    }
+    await ensureNotificationChannelColumns();
+    for (const key of ['academy.trial_ending', 'academy.plan_requested']) {
+      await sql`UPDATE roles SET notification_channel_defaults = jsonb_set(
+        notification_channel_defaults, ${'{' + key + '}'}::text[], '"in_app"'::jsonb, true)
+        WHERE NOT (notification_channel_defaults ? ${key})`;
+    }
+    academyDefaultsReady = true;
+  } catch (err) {
+    console.warn('[notifications] ensureAcademyNotificationDefaults failed', err.message);
+  }
+}
+
 export async function ensurePortalNotificationDefaults() {
   if (portalDefaultsReady) return;
   try {

@@ -1351,6 +1351,23 @@ async function createStripePaymentLink({ invoiceId, invoiceNumber, amount, dealI
   return link.url;
 }
 
+// The same poll for a given set of CRM invoices, by id: how the Academies page
+// and its daily job learn that an academy invoice has been paid in Xero without
+// anybody opening the company's invoices card. Never throws.
+export async function syncManualInvoicesFromXero(ids) {
+  const list = (ids || []).filter(Boolean);
+  if (!list.length) return new Map();
+  try {
+    const rows = await sql`
+      SELECT * FROM manual_invoices
+       WHERE id = ANY(${list}) AND status = 'issued' AND xero_invoice_id IS NOT NULL`;
+    return rows.length ? await syncFromXero(rows, {}) : new Map();
+  } catch (err) {
+    console.warn('[invoices] syncManualInvoicesFromXero failed', err?.message || err);
+    return new Map();
+  }
+}
+
 // Polls Xero for the current status of issued+linked manual_invoices and
 // applies any transitions to PAID/VOIDED. Returns a Map keyed by manual_invoice
 // id with the patched columns so the caller can splice them into its response.

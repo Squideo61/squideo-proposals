@@ -165,6 +165,10 @@
     {
       "path": "/api/crm/cron/harvest-sweep",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/crm/cron/academy-alerts",
+      "schedule": "15 8 * * *"
     }
   ],
   "headers": [
