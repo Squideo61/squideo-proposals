@@ -1393,6 +1393,8 @@ async function pendingPaymentsReport() {
     }
   }
 
+  // The invoiced-but-unpaid query nets extras out of each invoice (below).
+  await ensureDealExtrasTable();
   const [stripeRows, partnerRows, manualPayRows, miPaidRows, pbPaidRows, miIssuedRows, pbInvoicedRows] = await Promise.all([
     sql`SELECT d.id AS did, COALESCE(SUM(pay.amount),0) AS v
           FROM payments pay JOIN proposals p ON p.id=pay.proposal_id JOIN deals d ON d.id=p.deal_id GROUP BY d.id`,
@@ -1412,14 +1414,26 @@ async function pendingPaymentsReport() {
          WHERE pb.paid_amount IS NOT NULL GROUP BY d.id`,
     // Invoiced but NOT yet paid, per deal — the only thing this report now shows
     // as "pending". Two sources of a raised-and-unpaid invoice:
-    //   1) manual invoices still in 'issued' (not paid, not void) — full amount.
+    //   1) manual invoices still in 'issued' (not paid, not void) — less any
+    //      extras billed on them, which carry their own lines and invoiced tag.
+    //      Left in, an extra invoiced on its own would read as part of the
+    //      signed balance being invoiced (and split the final line).
     //   2) proposal-billing ("email me an invoice") — invoice_amount less anything
     //      already paid against it.
-    sql`SELECT COALESCE(mi.deal_id, dp.id) AS did, COALESCE(SUM(mi.amount),0) AS v
+    sql`SELECT COALESCE(mi.deal_id, dp.id) AS did,
+               COALESCE(SUM(CASE WHEN ex.net > 0 AND mi.subtotal_ex_vat > 0
+                                 THEN mi.amount * GREATEST(0, 1 - ex.net / mi.subtotal_ex_vat)
+                                 ELSE mi.amount END),0) AS v
           FROM manual_invoices mi
           LEFT JOIN deals dd ON dd.id = mi.deal_id
           LEFT JOIN proposals pr ON pr.id = mi.proposal_id
           LEFT JOIN deals dp ON dp.id = pr.deal_id
+          LEFT JOIN LATERAL (
+            SELECT COALESCE(SUM(de.amount), 0) AS net
+              FROM deal_extras de
+             WHERE mi.xero_invoice_id IS NOT NULL
+               AND de.xero_invoice_id = mi.xero_invoice_id
+          ) ex ON TRUE
          WHERE mi.status='issued' GROUP BY COALESCE(mi.deal_id, dp.id)`,
     sql`SELECT d.id AS did,
                COALESCE(SUM(GREATEST(pb.invoice_amount - COALESCE(pb.paid_amount,0), 0)),0) AS v
@@ -1539,10 +1553,34 @@ async function pendingPaymentsReport() {
     }
     // Tag each line invoiced vs not: the invoiced-but-unpaid amount covers the
     // earliest lines first (deposit before final). The rest is "not invoiced".
+    // A line only partly covered — a pro-rata invoice for one video signed off
+    // early — splits in two: the invoiced part (→ "Invoiced — awaiting payment")
+    // and the remainder, still to invoice. Within £1 counts as the whole line,
+    // so VAT/rounding pennies never leave a sliver behind on either side.
+    const SPLIT_TOLERANCE = 1;
     let invRemain = invUnpaidNet;
+    const tagged = [];
     for (const l of lines) {
-      if (invRemain >= l.amount - 0.005) { l.invoiced = true; invRemain = round2(invRemain - l.amount); }
-      else l.invoiced = false;
+      if (invRemain > 0.005 && invRemain >= l.amount - SPLIT_TOLERANCE) {
+        tagged.push({ ...l, invoiced: true });
+        invRemain = round2(Math.max(0, invRemain - l.amount));
+      } else if (invRemain >= SPLIT_TOLERANCE) {
+        tagged.push({ ...l, amount: round2(invRemain), invoiced: true });
+        tagged.push({ ...l, amount: round2(l.amount - invRemain), invoiced: false });
+        invRemain = 0;
+      } else {
+        tagged.push({ ...l, invoiced: false });
+      }
+    }
+    lines.length = 0;
+    lines.push(...tagged);
+    // Deposit/final lines carry their share of the signed total, so the badge can
+    // say "25% Final" once part of the balance has been split off (or paid).
+    const signedNet = net(inc);
+    for (const l of lines) {
+      if ((l.type === 'deposit' || l.type === 'final') && signedNet > 0.005) {
+        l.pct = Math.round((l.amount / signedNet) * 1000) / 10;
+      }
     }
     for (const e of extras) {
       const amt = round2(Number(e.amount) || 0);
@@ -1569,6 +1607,9 @@ async function pendingPaymentsReport() {
       companyId: inf.company_id || null,
       stage: inf.stage || null,
       committed: round2(net(inc) + extrasNet),
+      // The signed proposal total alone (net, no extras) — what a pro-rata
+      // split's percentages are of.
+      signedNet,
       paid: net(paidInc),
       outstanding: round2(outstandingNet + extrasNet),
       outstandingGross: round2(outstandingInc + extrasGross),

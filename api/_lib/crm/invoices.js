@@ -44,13 +44,59 @@ export function ensureInvoiceExcludeColumn() {
   return excludeColumnEnsured;
 }
 
+// Self-heal for db/migrations/20260911_manual_invoices_pro_rata.sql. A pro-rata
+// invoice bills PART of a deal's final balance early (a video signed off ahead
+// of the rest); the column is how the final invoice later finds it to deduct.
+// Never rejects — resolves false when the column couldn't be ensured, so
+// callers decide what that means for them.
+let proRataColumnEnsured = null;
+export function ensureInvoiceProRataColumn() {
+  if (proRataColumnEnsured) return proRataColumnEnsured;
+  proRataColumnEnsured = sql`
+    ALTER TABLE manual_invoices ADD COLUMN IF NOT EXISTS pro_rata_of TEXT
+  `.then(() => true).catch((err) => {
+    console.error('[invoices] ensure pro_rata_of column failed', err?.message || err);
+    proRataColumnEnsured = null;
+    return false;
+  });
+  return proRataColumnEnsured;
+}
+
+// Part payments already invoiced against a deal's final balance, as credit lines
+// for the final invoice ("Less: part payment already invoiced (INV-…)"), so the
+// part payments plus the final add up to exactly the balance. Each credit uses
+// the VAT treatment of the invoice it offsets. Voided ones are ignored, so voiding
+// a pro-rata invoice puts that money back on the final.
+async function proRataCreditLines(dealId) {
+  if (!dealId || !(await ensureInvoiceProRataColumn())) return [];
+  const rows = await sql`
+    SELECT invoice_number, amount, subtotal_ex_vat, tax_amount
+      FROM manual_invoices
+     WHERE deal_id = ${dealId} AND pro_rata_of = 'final' AND status <> 'void'
+     ORDER BY issued_at ASC NULLS LAST, created_at ASC
+  `;
+  const out = [];
+  for (const r of rows) {
+    const tax = Number(r.tax_amount) || 0;
+    const net = r.subtotal_ex_vat != null ? Number(r.subtotal_ex_vat) : (Number(r.amount) || 0) - tax;
+    if (!(net > 0.005)) continue;
+    out.push({
+      description: `Less: part payment already invoiced${r.invoice_number ? ` (${r.invoice_number})` : ''}`,
+      quantity: 1,
+      unitAmount: -Number(net.toFixed(2)),
+      vatRate: tax > 0.005 ? 20 : 0,
+    });
+  }
+  return out;
+}
+
 // Create a Xero ACCREC invoice for a deal/proposal/company from explicit line
 // items, store it in manual_invoices, and (optionally) flip the given extras to
 // 'invoiced'. Extracted from the JSON POST handler so other flows (an extra
 // billed "now", or a PO quote turned into an invoice) reuse the exact same path.
 // Throws Error with a `.status` for caller-facing validation failures.
 export async function createXeroInvoiceForDeal(body, user) {
-  const { dealId, proposalId, companyId, contactName, lineItems, invoiceNumber, reference, issuedAt, dueAt, extraIds, recordAsSale } = body || {};
+  const { dealId, proposalId, companyId, contactName, lineItems, invoiceNumber, reference, issuedAt, dueAt, extraIds, recordAsSale, proRataOf } = body || {};
 
   if (!Array.isArray(lineItems) || !lineItems.length) {
     const e = new Error('At least one line item required'); e.status = 400; throw e;
@@ -58,11 +104,25 @@ export async function createXeroInvoiceForDeal(body, user) {
   if (!dealId && !proposalId && !companyId) {
     const e = new Error('dealId, proposalId or companyId required'); e.status = 400; throw e;
   }
+  if (proRataOf != null && proRataOf !== 'final') {
+    const e = new Error('Only the final balance can be split'); e.status = 400; throw e;
+  }
 
   let resolvedDealId = dealId || null;
   if (!resolvedDealId && proposalId) {
     const [pr] = await sql`SELECT deal_id FROM proposals WHERE id = ${proposalId}`;
     resolvedDealId = pr?.deal_id || null;
+  }
+  // A pro-rata invoice is only safe to raise if it can be tagged: an untagged
+  // one would never be deducted, and the final invoice would bill it again. So
+  // settle that BEFORE anything exists in Xero.
+  if (proRataOf) {
+    if (!resolvedDealId) {
+      const e = new Error('A pro-rata invoice has to belong to a deal'); e.status = 400; throw e;
+    }
+    if (!(await ensureInvoiceProRataColumn())) {
+      const e = new Error('Could not prepare the invoice for splitting — try again'); e.status = 503; throw e;
+    }
   }
 
   const linked = (resolvedDealId || proposalId)
@@ -156,6 +216,16 @@ export async function createXeroInvoiceForDeal(body, user) {
       ${Number(taxTotal.toFixed(2))}
     )
   `;
+
+  if (proRataOf) {
+    try {
+      await sql`UPDATE manual_invoices SET pro_rata_of = ${proRataOf} WHERE id = ${newId}`;
+    } catch (err) {
+      // The invoice is real in Xero by now, so don't fail the request — but this
+      // needs a human: the final invoice won't know to deduct it.
+      console.error('[invoices] tagging pro-rata invoice failed', newId, err);
+    }
+  }
 
   if (Array.isArray(extraIds) && extraIds.length) {
     try {
@@ -322,6 +392,15 @@ export async function invoicesRoute(req, res, id, action, user) {
     const freeSub = freeSubtitleLine(proposal, signed);
     if (freeSub) lineItems.push(freeSub);
 
+    // Part of the balance already billed pro-rata comes off the final.
+    if (isFinal && isDeposit) {
+      const credits = await proRataCreditLines(dealId);
+      if (credits.length) {
+        lineItems.push(...credits);
+        paymentLabel = `${paymentLabel}, less ${credits.length} part payment${credits.length > 1 ? 's' : ''} already invoiced`;
+      }
+    }
+
     // Ad-hoc extras added during production ("Add extra to final") ride on the
     // final invoice as their own lines — at the extra's own VAT rate, else the
     // proposal's. Pulled live, so an extra that's since been deleted simply
@@ -386,6 +465,8 @@ export async function invoicesRoute(req, res, id, action, user) {
       if (l.discountAmount) unit -= Number(l.discountAmount) / qty;
       return { description: l.description, quantity: qty, unitAmount: Number(unit.toFixed(2)), vatRate: l.taxType === 'OUTPUT2' ? 20 : 0 };
     });
+    // Less anything already billed pro-rata against this balance.
+    if (isDeposit) lineItems.push(...(await proRataCreditLines(dealId)));
     const extras = await pendingExtrasForDeal(dealId);
     const proposalVatPct = Number(proposal.vatRate) > 0 ? 20 : 0;
     for (const e of extras) {
@@ -396,6 +477,10 @@ export async function invoicesRoute(req, res, id, action, user) {
     }
     if (!lineItems.length) {
       return res.status(400).json({ error: 'Nothing to invoice — this deal has no 50/50 balance or outstanding extras.' });
+    }
+    const netTotal = lineItems.reduce((s, l) => s + (Number(l.quantity) || 1) * (Number(l.unitAmount) || 0), 0);
+    if (netTotal <= 0.005) {
+      return res.status(400).json({ error: 'Nothing left to invoice — the balance has already been billed in part payments.' });
     }
 
     const created = await createXeroInvoiceForDeal(

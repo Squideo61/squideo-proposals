@@ -1,0 +1,13 @@
+-- Pro-rata (split) invoices against a deal's final balance.
+--
+-- When a client signs off one of their videos early and wants to pay for it,
+-- Finance → Pending Payments can split the 50% final balance: part of it is
+-- invoiced now and the rest stays outstanding. The pro-rata invoice is tagged
+-- here so the eventual final invoice ("Send final invoice" / "Create invoice"
+-- in final mode) can deduct it with a "Less: part payment already invoiced"
+-- line, and the two add up to exactly the balance. Voided ones are ignored.
+--
+--   pro_rata_of — the portion the invoice was split from ('final'), else NULL
+--
+-- Also self-healed by ensureInvoiceProRataColumn() in api/_lib/crm/invoices.js.
+ALTER TABLE manual_invoices ADD COLUMN IF NOT EXISTS pro_rata_of TEXT;

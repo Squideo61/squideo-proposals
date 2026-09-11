@@ -1,12 +1,13 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, PoundSterling, PiggyBank, Wallet, Landmark, Crown, ChevronDown, MoreVertical, FileText, ExternalLink, Check, X, Trash2, Link2, RotateCcw, CreditCard, Banknote, CalendarCheck, TrendingUp, Plus, Pencil, StickyNote, Archive, ArchiveRestore } from 'lucide-react';
+import { ArrowLeft, PoundSterling, PiggyBank, Wallet, Landmark, Crown, ChevronDown, MoreVertical, FileText, ExternalLink, Check, X, Trash2, Link2, RotateCcw, CreditCard, Banknote, CalendarCheck, TrendingUp, Plus, Pencil, StickyNote, Archive, ArchiveRestore, Scissors } from 'lucide-react';
 import {
   ResponsiveContainer,
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from 'recharts';
 import { BRAND } from '../../theme.js';
 import { useStore } from '../../store.jsx';
+import { api } from '../../api.js';
 import { formatGBP, formatProposalNumber, useIsMobile, realCompany } from '../../utils.js';
 import { permissionsInclude } from '../../lib/permissions.js';
 import { PerformancePanel, resolveIncomeTargets } from './PerformanceView.jsx';
@@ -2884,11 +2885,22 @@ function SalesRow({ r, onOpenDeal, onToggleExclude }) {
   );
 }
 
-function PaymentBadge({ type }) {
+// "25%" / "16.7%" — a share of the signed total, to one decimal only when needed.
+const formatSharePct = (pct) => {
+  const r = Math.round((Number(pct) || 0) * 10) / 10;
+  return `${r % 1 === 0 ? r.toFixed(0) : r.toFixed(1)}%`;
+};
+
+// `pct` (a deposit/final line's share of the signed total, from the server)
+// relabels the badge once it's moved off 50% — part of the final split off
+// pro-rata, or part-paid — so "50% Final" becomes e.g. "25% Final".
+function PaymentBadge({ type, pct }) {
   const m = PAYMENT_TYPE_META[type] || PAYMENT_TYPE_META.full;
+  const shifted = (type === 'deposit' || type === 'final') && pct != null && Math.abs(pct - 50) >= 0.05;
+  const label = shifted ? `${formatSharePct(pct)} ${type === 'final' ? 'Final' : 'Deposit'}` : m.label;
   return (
     <span style={{ fontSize: 10, fontWeight: 700, color: m.color, background: m.bg, padding: '1px 6px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: 0.3, whiteSpace: 'nowrap', flexShrink: 0 }}>
-      {m.label}
+      {label}
     </span>
   );
 }
@@ -3016,6 +3028,7 @@ function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoRece
   const [predictingDate, setPredictingDate] = useState(false);
   const [paying, setPaying] = useState(false);
   const [payingInvoice, setPayingInvoice] = useState(null);
+  const [splitting, setSplitting] = useState(null); // the final line being split
   const company = realCompany(d.company);
   const name = dealRowName(d);
   // Only keep the deal title as a second line when it adds something beyond the
@@ -3068,6 +3081,14 @@ function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoRece
           ? [{ description: l.label, quantity: 1, unitAmount: l.amount, vatRate: Math.round((d.vatRate || 0) * 100), extraId: l.id }]
           : undefined,
       }),
+    })) : []),
+    // Invoice PART of the final balance now — a client who's signed off one video
+    // early and wants to pay for it. The rest stays here as the remaining final,
+    // and the final invoice deducts what's billed now.
+    ...(canManage ? invoiceLines.filter((l) => l.type === 'final').map((l) => ({
+      label: 'Split / pro-rata invoice…',
+      icon: Scissors,
+      onClick: () => setSplitting(l),
     })) : []),
     // Banking a payment doesn't wait on the row being predicted — money lands
     // when it lands, and this is the list you're looking at when it does.
@@ -3122,7 +3143,7 @@ function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoRece
           {(number || showPoPill(d, isPo) || isPredicted || (single && (single0.type || single0.invoiced === false || single0.label))) && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 5 }}>
               {number && <span style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, flexShrink: 0 }}>{number}</span>}
-              {single && <PaymentBadge type={single0.type} />}
+              {single && <PaymentBadge type={single0.type} pct={single0.pct} />}
               {showPoPill(d, isPo) && <PoStatusPill d={d} />}
               {isPredicted && <PredictedTag />}
               {single && single0.invoiced === false && <NotInvoicedTag />}
@@ -3141,7 +3162,7 @@ function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoRece
               {name}
             </span>
             {number && <span style={{ fontSize: 11, fontWeight: 600, color: BRAND.muted, flexShrink: 0 }}>{number}</span>}
-            {single && <PaymentBadge type={single0.type} />}
+            {single && <PaymentBadge type={single0.type} pct={single0.pct} />}
             {showPoPill(d, isPo) && <PoStatusPill d={d} />}
             {isPredicted && <PredictedTag />}
             {single && single0.invoiced === false && <NotInvoicedTag />}
@@ -3168,7 +3189,7 @@ function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoRece
           {lines.map((l, i) => (
             <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
               <span style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-                <PaymentBadge type={l.type} />
+                <PaymentBadge type={l.type} pct={l.pct} />
                 {l.invoiced === false && <NotInvoicedTag />}
                 {l.label && (
                   <span style={{ fontSize: 12, color: BRAND.muted, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
@@ -3202,6 +3223,15 @@ function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoRece
         onPaid={() => { setPaying(false); if (onChanged) onChanged(); }}
       />
     )}
+    {splitting && (
+      <ProRataInvoiceModal
+        row={d}
+        line={splitting}
+        name={name}
+        onClose={() => setSplitting(null)}
+        onCreated={() => { setSplitting(null); if (onChanged) onChanged(); }}
+      />
+    )}
     {payingInvoice && (
       // Deliberately no xeroInvoiceId: these are OUR invoice records, and the
       // manual route (PATCH the invoice to paid) records the payment in Xero
@@ -3216,6 +3246,169 @@ function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoRece
       />
     )}
     </>
+  );
+}
+
+// Split the final balance: invoice PART of it now — a client who's signed off one
+// video early and wants to pay for it — and leave the rest outstanding. The
+// invoice is raised in Xero tagged as pro-rata, so it moves to "Invoiced —
+// awaiting payment", the row's remaining final shrinks (its % badge with it), and
+// the eventual final invoice deducts it. Net (ex-VAT) like the rest of the page;
+// the VAT and gross the client sees are shown alongside.
+function ProRataInvoiceModal({ row, line, name, onClose, onCreated }) {
+  const { showMsg } = useStore();
+  const isMobile = useIsMobile();
+  const balance = round2Money(line.amount);
+  const signedNet = Number(row.signedNet) || 0;
+  const vatPct = (Number(row.vatRate) || 0) > 0 ? 20 : 0;
+  const [amount, setAmount] = useState('');
+  const [description, setDescription] = useState('');
+  const [descTouched, setDescTouched] = useState(false);
+  const [reference, setReference] = useState(row.poNumber || '');
+  const [issuedAt, setIssuedAt] = useState(() => new Date().toISOString().slice(0, 10));
+  const [saving, setSaving] = useState(false);
+
+  const parsed = parseFloat(amount);
+  const net = Number.isFinite(parsed) ? round2Money(parsed) : 0;
+  const tooMuch = net >= balance - 0.005;
+  const valid = net > 0.005 && !tooMuch;
+  const vat = round2Money(net * vatPct / 100);
+  const remaining = round2Money(balance - (valid ? net : 0));
+  const share = (v) => (signedNet > 0.005 ? (v / signedNet) * 100 : null);
+  const number = row.number ? formatProposalNumber(row.number) : '';
+  // Prefilled until edited — worth naming the video that's been signed off.
+  const autoDescription = `${row.title || name} — part payment of final balance${valid && share(net) != null ? ` (${formatSharePct(share(net))} of project)` : ''}`;
+  const lineDescription = (descTouched ? description : autoDescription).trim();
+
+  // Common splits of what's left: one of two / three / four videos.
+  const quick = [
+    { label: '½', of: 2 },
+    { label: '⅓', of: 3 },
+    { label: '¼', of: 4 },
+  ].map((q) => ({ ...q, value: round2Money(balance / q.of) }));
+
+  const submit = async () => {
+    if (!valid || saving || !lineDescription) return;
+    setSaving(true);
+    try {
+      const result = await api.post('/api/crm/invoices', {
+        dealId: row.dealId,
+        proposalId: row.proposalId || undefined,
+        reference: reference.trim() || undefined,
+        issuedAt,
+        lineItems: [{ description: lineDescription, quantity: 1, unitAmount: net, vatRate: vatPct }],
+        proRataOf: 'final',
+      });
+      showMsg?.(`${result?.invoiceNumber || 'Invoice'} created in Xero — ${formatGBP(remaining)} left on the final`, 'success');
+      onCreated();
+    } catch (err) {
+      showMsg?.(err.message || 'Could not create the invoice', 'error');
+      setSaving(false);
+    }
+  };
+
+  const label = { display: 'block', fontSize: 11, fontWeight: 700, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 5 };
+  const summaryRow = { display: 'flex', justifyContent: 'space-between', gap: 8 };
+  return (
+    <Modal onClose={onClose} maxWidth={500}>
+      <h2 style={{ margin: '0 0 8px', fontSize: 18, fontWeight: 700 }}>Split the final balance</h2>
+      <div style={{ fontSize: 13, color: BRAND.muted, marginBottom: 16 }}>
+        Invoice part of <strong style={{ color: BRAND.ink }}>{name}</strong>{number ? ` (${number})` : ''}’s final balance now — e.g. a video signed
+        off early. The rest stays under Signed deals, and the final invoice deducts what you bill here.
+      </div>
+
+      <div style={{ ...summaryRow, background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 8, padding: '10px 12px', fontSize: 13, marginBottom: 14 }}>
+        <span style={{ color: BRAND.muted }}>Final balance not yet invoiced</span>
+        <span style={{ textAlign: 'right' }}>
+          <strong style={{ color: BRAND.ink }}>{formatGBP(balance)}</strong>
+          {share(balance) != null && <span style={{ color: BRAND.muted }}> · {formatSharePct(share(balance))} of {formatGBP(signedNet)}</span>}
+        </span>
+      </div>
+
+      <div style={{ marginBottom: 14 }}>
+        <span style={label}>Amount to invoice now (ex VAT)</span>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <input
+            type="text"
+            inputMode="decimal"
+            className="input"
+            autoFocus
+            value={amount}
+            placeholder="0.00"
+            onChange={(e) => setAmount(e.target.value.replace(/[£,\s]/g, ''))}
+            onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
+            style={{ flex: isMobile ? '1 1 100%' : '0 0 150px', textAlign: 'right', boxSizing: 'border-box' }}
+          />
+          {quick.map((q) => (
+            <button
+              key={q.of}
+              type="button"
+              className="btn-ghost"
+              onClick={() => setAmount(q.value.toFixed(2))}
+              title={`${q.label} of the remaining balance — one of ${q.of} videos`}
+              style={{ fontSize: 12, padding: '6px 10px', border: '1px solid ' + (Math.abs(net - q.value) < 0.005 ? BRAND.blue : BRAND.border), color: Math.abs(net - q.value) < 0.005 ? BRAND.blue : BRAND.ink }}
+            >
+              {q.label} · {formatGBP(q.value)}
+            </button>
+          ))}
+        </div>
+        {tooMuch && net > 0 && (
+          <div style={{ fontSize: 12, color: '#B91C1C', marginTop: 6 }}>
+            That’s the whole balance — use “Create invoice” instead to raise the final invoice.
+          </div>
+        )}
+      </div>
+
+      <div style={{ marginBottom: 14 }}>
+        <span style={label}>Invoice line</span>
+        <input
+          type="text"
+          className="input"
+          value={descTouched ? description : autoDescription}
+          onChange={(e) => { setDescTouched(true); setDescription(e.target.value); }}
+          style={{ width: '100%', boxSizing: 'border-box' }}
+        />
+        <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 4 }}>What the client sees on the invoice — worth naming the video that’s been signed off.</div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12, marginBottom: 14 }}>
+        <div>
+          <span style={label}>Invoice date</span>
+          <input type="date" className="input" value={issuedAt} onChange={(e) => setIssuedAt(e.target.value)} style={{ width: '100%', boxSizing: 'border-box' }} />
+        </div>
+        <div>
+          <span style={label}>Reference</span>
+          <input type="text" className="input" value={reference} placeholder="e.g. the customer’s PO number" onChange={(e) => setReference(e.target.value)} style={{ width: '100%', boxSizing: 'border-box' }} />
+        </div>
+      </div>
+
+      <div style={{ background: BRAND.paper, border: '1px solid ' + BRAND.border, borderRadius: 8, padding: '10px 12px', fontSize: 13, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={summaryRow}>
+          <span style={{ color: BRAND.muted }}>Invoice now</span>
+          <strong style={{ color: BRAND.ink }}>{formatGBP(valid ? net + vat : 0)}{vatPct ? ' inc VAT' : ''}</strong>
+        </div>
+        {vatPct > 0 && (
+          <div style={{ ...summaryRow, fontSize: 12, color: BRAND.muted }}>
+            <span>{formatGBP(valid ? net : 0)} net + {formatGBP(valid ? vat : 0)} VAT</span>
+            {valid && share(net) != null && <span>{formatSharePct(share(net))} of project</span>}
+          </div>
+        )}
+        <div style={{ ...summaryRow, borderTop: '1px solid ' + BRAND.border, paddingTop: 6, marginTop: 2 }}>
+          <span style={{ color: BRAND.muted }}>Left on the final</span>
+          <span>
+            <strong style={{ color: BRAND.ink }}>{formatGBP(remaining)}</strong>
+            {share(remaining) != null && <span style={{ color: BRAND.muted }}> · {formatSharePct(share(remaining))} final</span>}
+          </span>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
+        <button onClick={onClose} className="btn-ghost" disabled={saving}>Cancel</button>
+        <button onClick={submit} className="btn-primary" disabled={!valid || saving || !lineDescription}>
+          {saving ? 'Creating in Xero…' : 'Create invoice in Xero'}
+        </button>
+      </div>
+    </Modal>
   );
 }
 

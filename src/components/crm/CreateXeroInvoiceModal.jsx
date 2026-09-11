@@ -115,9 +115,16 @@ export function CreateXeroInvoiceModal({ dealId, companyId, deals, initialDealId
       showMsg?.('Contact / company name is required', 'error');
       return;
     }
-    const validLines = lineItems.filter(li => li.description.trim() && Number(li.unitAmount) > 0);
-    if (!validLines.length) {
+    // Negative lines are allowed — a final invoice deducts part payments already
+    // billed pro-rata ("Less: part payment already invoiced") — but the invoice
+    // as a whole must still bill something.
+    const validLines = lineItems.filter(li => li.description.trim() && Number(li.unitAmount) !== 0 && Number.isFinite(Number(li.unitAmount)));
+    if (!validLines.some(li => Number(li.unitAmount) > 0)) {
       showMsg?.('Add at least one line item with a description and price', 'error');
+      return;
+    }
+    if (subtotal <= 0.005) {
+      showMsg?.('The invoice total must be more than zero', 'error');
       return;
     }
     if (companyMode && dealChoice === '__new__' && !newDealTitle.trim()) {
@@ -327,7 +334,6 @@ export function CreateXeroInvoiceModal({ dealId, companyId, deals, initialDealId
                   />
                   <input
                     type="number"
-                    min="0"
                     step="0.01"
                     value={li.unitAmount}
                     onChange={e => updateLine(li._key, 'unitAmount', e.target.value)}
@@ -344,9 +350,10 @@ export function CreateXeroInvoiceModal({ dealId, companyId, deals, initialDealId
                     <option value={20}>20%</option>
                     <option value={0}>0%</option>
                   </select>
-                  <span style={{ fontSize: 12, fontWeight: 600, textAlign: 'right', color: Number(li.discountRate) >= 100 ? '#15803D' : (calc.total > 0 ? BRAND.ink : BRAND.muted) }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, textAlign: 'right', color: Number(li.discountRate) >= 100 ? '#15803D' : (calc.total < 0 ? '#B91C1C' : calc.total > 0 ? BRAND.ink : BRAND.muted) }}>
                     {Number(li.discountRate) >= 100
                       ? 'FREE'
+                      : calc.total < 0 ? '−' + formatGBP(-calc.total)
                       : (calc.total > 0 ? formatGBP(calc.total) : '—')}
                   </span>
                   <button
