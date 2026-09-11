@@ -4,8 +4,9 @@
 // academy platform over its private API; the company, the invoices and the
 // alerts are the CRM's. The top line answers "what is this worth and what needs
 // doing": recurring revenue, trials ending, money waiting to be invoiced and
-// plans asked for. Setting a plan up is still done in the staff CMS, which is
-// one click away on every academy.
+// plans asked for. A plan is set up in the staff CMS, one click away on every
+// academy, or by a signed proposal: an academy sold on one that did not name the
+// academy waits at the top of the page until it is applied to it.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { GraduationCap, RefreshCw } from 'lucide-react';
 import { BRAND } from '../../theme.js';
@@ -14,7 +15,8 @@ import { formatGBP, useIsMobile } from '../../utils.js';
 import { Modal, ResponsiveTable } from '../ui.jsx';
 import { AcademyPanel } from './AcademyPanel.jsx';
 import {
-  AcademyInvoiceModal, FlagChips, LinkCompanyModal, datesText, planText, usageText, valueText,
+  AcademyInvoiceModal, ApplyOrderModal, FlagChips, LinkCompanyModal, datesText, fmtDay, orderText, planText,
+  usageText, valueText,
 } from './academyUi.jsx';
 
 const FILTERS = [
@@ -44,6 +46,7 @@ export function AcademiesView({ onOpenCompany }) {
   const [detailId, setDetailId] = useState(null);
   const [invoicing, setInvoicing] = useState(null);
   const [linking, setLinking] = useState(null);
+  const [applying, setApplying] = useState(null);
 
   const load = useCallback(async () => {
     setBusy(true);
@@ -61,6 +64,7 @@ export function AcademiesView({ onOpenCompany }) {
 
   const academies = data?.academies || [];
   const totals = data?.totals || null;
+  const waiting = data?.orders || [];
   const shown = useMemo(() => {
     const test = (FILTERS.find((f) => f.key === filter) || FILTERS[0]).test;
     return academies.filter(test);
@@ -69,7 +73,7 @@ export function AcademiesView({ onOpenCompany }) {
 
   // After an invoice or a link, the whole list reloads: totals, flags and the
   // Predicted-payments picture all move together.
-  const changed = () => { setInvoicing(null); setLinking(null); load(); };
+  const changed = () => { setInvoicing(null); setLinking(null); setApplying(null); load(); };
   const unmark = async (row) => {
     try {
       await api.post(`/api/crm/academies/${detailId}/unmark`, { rowId: row.id });
@@ -136,7 +140,7 @@ export function AcademiesView({ onOpenCompany }) {
       </div>
       <p style={{ margin: '0 0 14px', fontSize: 13, color: BRAND.muted }}>
         Squideo Academy subscriptions. Plans, trials and usage come from the academy platform; set a plan up
-        in the staff CMS, and invoice it here.
+        in the staff CMS or from a signed proposal, and invoice it here.
       </p>
 
       {error && (
@@ -152,6 +156,30 @@ export function AcademiesView({ onOpenCompany }) {
           <Tile label="On a trial" value={totals.trials} sub={`${totals.trialsEndingThisMonth} ending this month`} />
           <Tile label="To invoice" value={formatGBP(totals.toInvoice)} sub={`${totals.toInvoiceCount} ${totals.toInvoiceCount === 1 ? 'academy' : 'academies'}, ex VAT`} />
           <Tile label="Plans asked for" value={totals.requests} />
+        </div>
+      )}
+
+      {waiting.length > 0 && (
+        <div style={{ border: '1px solid #BFDBFE', background: '#EFF6FF', borderRadius: 10, padding: '10px 12px', marginBottom: 16 }}>
+          <strong style={{ fontSize: 13.5, color: '#1D4ED8' }}>Sold, waiting to be set up</strong>
+          <p style={{ margin: '2px 0 6px', fontSize: 12.5, color: BRAND.muted }}>
+            Signed on a proposal, and not on an academy yet. Create the academy in the staff CMS if it is new, then
+            apply the order: that links it to the company and puts it on the plan.
+          </p>
+          {waiting.map((o) => (
+            <div key={o.id} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 13, padding: '7px 0', borderTop: '1px solid #DBEAFE' }}>
+              <span style={{ flex: 1, minWidth: 220 }}>
+                <strong>{o.companyName || o.dealTitle || 'A client'}</strong>: {orderText(o)}
+                <div style={{ fontSize: 12, color: BRAND.muted }}>
+                  Signed {fmtDay(o.createdAt)}{o.signerName ? ` by ${o.signerName}` : ''}
+                  {o.dealId && <> · <a href={`#/deal/${o.dealId}`}>Deal</a></>}
+                </div>
+              </span>
+              {data?.canLink && (
+                <button className="btn" style={{ fontSize: 12.5 }} onClick={() => setApplying(o)}>Apply to an academy</button>
+              )}
+            </div>
+          ))}
         </div>
       )}
 
@@ -179,7 +207,7 @@ export function AcademiesView({ onOpenCompany }) {
         )}
       </div>
 
-      {detail && !invoicing && !linking && (
+      {detail && !invoicing && !linking && !applying && (
         <Modal onClose={() => setDetailId(null)} maxWidth={720}>
           <AcademyPanel
             academy={detail}
@@ -188,6 +216,7 @@ export function AcademiesView({ onOpenCompany }) {
             onInvoice={setInvoicing}
             onLink={setLinking}
             onUnmark={unmark}
+            onChanged={load}
             onOpenCompany={onOpenCompany ? (id) => { setDetailId(null); onOpenCompany(id); } : null}
           />
         </Modal>
@@ -197,6 +226,9 @@ export function AcademiesView({ onOpenCompany }) {
       )}
       {linking && (
         <LinkCompanyModal academy={linking} onClose={() => setLinking(null)} onDone={changed} />
+      )}
+      {applying && (
+        <ApplyOrderModal order={applying} academies={academies} onClose={() => setApplying(null)} onDone={changed} />
       )}
     </div>
   );

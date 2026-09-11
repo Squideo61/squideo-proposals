@@ -46,6 +46,12 @@ function publicProposalView(data) {
   for (const k of PUBLIC_PROPOSAL_FIELDS) {
     if (src[k] !== undefined) out[k] = src[k];
   }
+  // A Squideo Academy on the proposal: what the client signs up to, but not
+  // which academy on the platform it is meant for, which is the team's note.
+  if (src.academy?.enabled) {
+    const { plan, billingPeriod, setupFee, description } = src.academy;
+    out.academy = { enabled: true, plan, billingPeriod, setupFee, description };
+  }
   return out;
 }
 

@@ -1,6 +1,7 @@
 import { SQUIDEO_LOGO, extraHasVariants, extraHasQuantity, extraUnitPrice, extraNetUnitPrice, extrasDiscountRate, formatFreeSubtitlesValue, applyInclusionTokens } from '../defaults.js';
 import { CONFIG, DEFAULT_PHOTOS } from '../theme.js';
 import { formatGBP, computeBaseDiscount } from '../utils.js';
+import { DEFAULT_ACADEMY_DESCRIPTION, academyOffer, allowanceText, money, priceText, termsText } from '../lib/academyOffer.js';
 import { printButtonHTML, writeDoc } from './printWindow.js';
 
 // Resolve relative public paths to absolute so they load inside the popup window.
@@ -340,6 +341,34 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
     </div>`;
   })() : '';
 
+  // A Squideo Academy sold alongside the project, as on the proposal page:
+  // its own plan and terms, invoiced separately, outside every total here.
+  const academy = academyOffer(data);
+  const academyVat = (Number(data.vatRate) || 0) > 0 ? ' + VAT' : '';
+  const academyBlock = academy ? `
+    <div class="keep" style="border:1px solid #E5E9EE;border-radius:10px;padding:18px 20px;margin:0 0 24px;">
+      <div style="font-size:16px;font-weight:700;margin:0 0 2px;">Squideo Academy: ${esc(academy.name)} plan</div>
+      <div style="font-size:12px;color:#5C6B77;margin:0 0 10px;">${signed ? 'Part of your signed agreement' : 'Included when you sign this proposal'}</div>
+      <p style="font-size:13px;line-height:1.6;margin:0 0 12px;white-space:pre-wrap;">${esc(academy.description || DEFAULT_ACADEMY_DESCRIPTION)}</p>
+      <div style="display:grid;grid-template-columns:repeat(${academy.setupFee > 0 ? 3 : 2},1fr);gap:8px;margin:0 0 12px;">
+        <div style="background:#FAFBFC;border:1px solid #E5E9EE;border-radius:8px;padding:8px 10px;">
+          <div style="font-size:10px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#5C6B77;">Active learners</div>
+          <div style="font-size:13px;font-weight:700;margin-top:2px;">${esc(allowanceText(academy))}</div>
+        </div>
+        <div style="background:#FAFBFC;border:1px solid #E5E9EE;border-radius:8px;padding:8px 10px;">
+          <div style="font-size:10px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#5C6B77;">${academy.annual ? 'Paid yearly' : 'Paid monthly'}</div>
+          <div style="font-size:13px;font-weight:700;margin-top:2px;">${esc(priceText(academy) + academyVat)}</div>
+        </div>
+        ${academy.setupFee > 0 ? `<div style="background:#FAFBFC;border:1px solid #E5E9EE;border-radius:8px;padding:8px 10px;">
+          <div style="font-size:10px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#5C6B77;">One-off set-up</div>
+          <div style="font-size:13px;font-weight:700;margin-top:2px;">${esc(money(academy.setupFee) + academyVat)}</div>
+        </div>` : ''}
+      </div>
+      <ul style="margin:0;padding-left:18px;font-size:12px;line-height:1.6;color:#5C6B77;">
+        ${termsText(academy, { vat: Boolean(academyVat) }).map((t) => `<li>${esc(t)}</li>`).join('')}
+      </ul>
+    </div>` : '';
+
   const blankSigBlock = `
     <div style="border:2px solid #2BB8E6;border-radius:12px;padding:28px;margin-top:32px;break-inside:avoid;">
       <h2 style="font-size:18px;font-weight:700;margin:0 0 20px;">Acceptance & Signature</h2>
@@ -581,6 +610,8 @@ function buildPrintHTML(data, { signable = false, selectedExtras = {}, selectedE
       <span>${showPartnerDiscount ? `<span style="font-weight:400;font-size:13px;opacity:0.5;text-decoration:line-through;margin-right:8px;">${formatGBP(total)}</span>` : ''}${formatGBP(partnerSelected ? discountedTotal : total)}</span>
     </div>
   </div>` : ''}
+
+  ${academyBlock}
 
   <!-- Payment options -->
   <h2 class="page-title">${signable ? 'Payment Options' : 'Selected Payment Option'}</h2>

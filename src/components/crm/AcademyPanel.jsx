@@ -1,13 +1,15 @@
 // One academy in full, for the Academies page (in a window) and the company
 // page (in its card): plan and what it is worth, usage against the allowance,
-// the trial or renewal date, what needs attention, what is due to invoice and
-// the invoices already raised.
+// the trial or renewal date, what needs attention, what is due to invoice, the
+// invoices already raised, what was sold on a proposal, and whether its
+// invoices raise themselves.
 import React from 'react';
 import { Building2, ExternalLink, Link2, Receipt } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { formatGBP } from '../../utils.js';
 import {
-  CmsLink, FlagChips, InvoiceLine, datesText, penceGBP, planText, usageText, valueText,
+  AutoInvoiceToggle, CmsLink, FlagChips, InvoiceLine, datesText, fmtDay, orderText, penceGBP, planText,
+  usageText, valueText,
 } from './academyUi.jsx';
 
 const FACT = { fontSize: 11.5, color: BRAND.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4 };
@@ -21,10 +23,13 @@ function Fact({ label, children }) {
   );
 }
 
-export function AcademyPanel({ academy: a, canInvoice, canLink, onInvoice, onLink, onUnmark, onOpenCompany, showCompany = true }) {
+export function AcademyPanel({
+  academy: a, canInvoice, canLink, onInvoice, onLink, onUnmark, onOpenCompany, onChanged, showCompany = true,
+}) {
   const s = a.summary || {};
   const over = s.check?.status === 'over';
   const current = s.extra?.current;
+  const sold = (a.orders || []).filter((o) => o.status === 'applied');
   return (
     <div style={{ display: 'grid', gap: 14 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
@@ -102,6 +107,21 @@ export function AcademyPanel({ academy: a, canInvoice, canLink, onInvoice, onLin
         <p style={{ margin: 0, fontSize: 13, color: BRAND.muted }}>
           Extra people so far in {current.label}: {penceGBP(current.total)}. They are invoiced once the period ends.
         </p>
+      )}
+
+      {canInvoice && !a.demo && <AutoInvoiceToggle academy={a} onChanged={onChanged} />}
+
+      {sold.length > 0 && (
+        <div>
+          <div style={{ ...FACT, marginBottom: 4 }}>Sold on a proposal</div>
+          {sold.map((o) => (
+            <div key={o.id} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 13, padding: '3px 0' }}>
+              <span style={{ flex: 1, minWidth: 180 }}>{orderText(o)}</span>
+              <span style={{ color: BRAND.muted }}>Signed {fmtDay(o.createdAt)}{o.signerName ? ` by ${o.signerName}` : ''}</span>
+              {o.dealId && <a href={`#/deal/${o.dealId}`} style={{ fontSize: 12.5 }}>Deal</a>}
+            </div>
+          ))}
+        </div>
       )}
 
       {(a.invoices || []).length > 0 && (

@@ -67,3 +67,18 @@ export async function linkAcademy(id, companyId) {
     method: 'PATCH', body: { crmCompanyId: companyId || null },
   })).academy || null;
 }
+
+/**
+ * Put an academy on a plan, as a signed order does: the platform applies its
+ * own rules (a trial runs on with the plan to follow, a paid plan starts now).
+ */
+export async function setAcademyPlan(id, plan, billingPeriod) {
+  return (await lmsFetch(`academies/${encodeURIComponent(id)}`, {
+    method: 'PATCH', body: { plan, billingPeriod: billingPeriod === 'annual' ? 'annual' : 'monthly' },
+  })).academy || null;
+}
+
+/** The paid plans on the price list, in pence, for the proposal builder. */
+export async function listPlans() {
+  return (await lmsFetch('plans')).plans || [];
+}

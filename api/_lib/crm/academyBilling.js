@@ -81,12 +81,28 @@ export function planPeriod(planStartedAt, billingPeriod, now = new Date()) {
  *
  * `invoiced` is what has already been billed ({ kind, periodKey }), whether it
  * went on an invoice raised here or was marked as billed some other way.
+ * `orders` are signed academy orders applied to this academy; a set-up fee on
+ * one is due as soon as it is applied, even while the academy is still on its
+ * trial, because the set-up work happens first.
  */
-export function billingDue(academy, invoiced = [], now = new Date()) {
-  if (!isBilled(academy)) return [];
-  const s = academy.summary;
+export function billingDue(academy, invoiced = [], now = new Date(), orders = []) {
+  if (!academy?.summary || academy.demo) return [];
   const done = new Set(invoiced.map((r) => `${r.kind}|${r.periodKey}`));
   const lines = [];
+  for (const order of orders || []) {
+    const fee = Math.round((Number(order.setupFee) || 0) * 100) / 100;
+    const periodKey = `setup:${order.id}`;
+    if (order.status === 'applied' && fee > 0 && !done.has(`setup|${periodKey}`)) {
+      lines.push({
+        kind: 'setup',
+        periodKey,
+        label: `Squideo Academy set-up${order.planName ? ` (${order.planName} plan)` : ''}`,
+        amount: fee,
+      });
+    }
+  }
+  if (!isBilled(academy)) return lines;
+  const s = academy.summary;
 
   const period = planPeriod(s.planStartedAt, s.billingPeriod, now);
   if (period) {

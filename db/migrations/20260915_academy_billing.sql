@@ -13,8 +13,8 @@ CREATE TABLE IF NOT EXISTS academy_invoices (
   id                TEXT PRIMARY KEY,
   tenant_id         TEXT NOT NULL,
   company_id        TEXT,
-  kind              TEXT NOT NULL,          -- plan | extras | custom
-  period_key        TEXT NOT NULL,          -- plan:2026-10-20 | extras:2026-07-01 | custom:<id>
+  kind              TEXT NOT NULL,          -- plan | extras | setup | custom
+  period_key        TEXT NOT NULL,          -- plan:2026-10-20 | extras:2026-07-01 | setup:<order id> | custom:<id>
   label             TEXT,
   amount_ex_vat     NUMERIC NOT NULL DEFAULT 0,
   manual_invoice_id TEXT,
@@ -34,4 +34,37 @@ CREATE TABLE IF NOT EXISTS academy_alerts (
   period_key TEXT NOT NULL,
   sent_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (tenant_id, kind, period_key)
+);
+
+-- academy_settings: per academy, whether its invoices raise themselves. When
+-- auto_invoice is on, the daily academy-alerts job puts everything due on one
+-- Xero invoice and Xero emails it, with the same period claims as the button.
+CREATE TABLE IF NOT EXISTS academy_settings (
+  tenant_id    TEXT PRIMARY KEY,
+  auto_invoice BOOLEAN NOT NULL DEFAULT FALSE,
+  updated_by   TEXT,
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- academy_orders: a Squideo Academy sold on a signed proposal. Applied straight
+-- away when the proposal named the academy (tenant_id), otherwise waiting on the
+-- Academies page until someone applies it to the academy once it exists. A
+-- set-up fee is billed (kind setup, period setup:<id>) once the order is
+-- applied. Taking the signature off cancels it; signing again revives it.
+CREATE TABLE IF NOT EXISTS academy_orders (
+  id             TEXT PRIMARY KEY,
+  proposal_id    TEXT UNIQUE,
+  deal_id        TEXT,
+  company_id     TEXT,
+  tenant_id      TEXT,
+  plan           TEXT NOT NULL,
+  plan_name      TEXT,
+  billing_period TEXT,
+  setup_fee      NUMERIC NOT NULL DEFAULT 0,
+  status         TEXT NOT NULL DEFAULT 'waiting',   -- waiting | applied | cancelled
+  signer_name    TEXT,
+  signer_email   TEXT,
+  applied_at     TIMESTAMPTZ,
+  applied_by     TEXT,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

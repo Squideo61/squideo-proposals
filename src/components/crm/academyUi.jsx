@@ -5,7 +5,7 @@
 // Money on the academy platform is in pence; by the time it reaches here the
 // CRM's own server has turned what matters into pounds (due lines, invoices),
 // and plan prices are converted on display.
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ExternalLink, Plus, Trash2 } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { api } from '../../api.js';
@@ -126,11 +126,14 @@ export function InvoiceLine({ row, canInvoice, onUnmark }) {
 export function AcademyInvoiceModal({ academy, onClose, onDone }) {
   const [picked, setPicked] = useState(() => new Set((academy.due || []).map((l) => l.periodKey)));
   const [custom, setCustom] = useState([]);
+  const [email, setEmail] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   // The due line being marked as billed some other way, and its note.
   const [marking, setMarking] = useState(null);
   const [note, setNote] = useState('');
+  // An invoice raised that Xero could not email: said here, not lost in a close.
+  const [unsent, setUnsent] = useState(null);
 
   const lines = useMemo(() => [
     ...(academy.due || []).filter((l) => picked.has(l.periodKey)),
@@ -153,8 +156,14 @@ export function AcademyInvoiceModal({ academy, onClose, onDone }) {
           ...(academy.due || []).filter((l) => picked.has(l.periodKey)).map((l) => ({ kind: l.kind, periodKey: l.periodKey })),
           ...custom.filter((c) => c.label.trim() && Number(c.amount) > 0).map((c) => ({ kind: 'custom', label: c.label.trim(), amount: Number(c.amount) })),
         ],
+        email,
       };
       const r = await api.post(`/api/crm/academies/${academy.id}/invoice`, body);
+      if (email && r.invoice && !r.invoice.emailed) {
+        setUnsent(r);
+        setBusy(false);
+        return;
+      }
       onDone(r.academy, r.invoice);
     } catch (err) {
       setError(err.message);
@@ -173,6 +182,22 @@ export function AcademyInvoiceModal({ academy, onClose, onDone }) {
       setBusy(false);
     }
   };
+
+  if (unsent) {
+    const finish = () => onDone(unsent.academy, unsent.invoice);
+    return (
+      <Modal onClose={finish} maxWidth={460}>
+        <h2 style={{ margin: '0 0 6px', fontSize: 17, color: BRAND.ink }}>Invoice raised, not sent</h2>
+        <p style={{ margin: '0 0 16px', fontSize: 13.5, color: BRAND.ink }}>
+          {unsent.invoice.invoiceNumber || 'The invoice'} is in Xero, but Xero could not email it, usually because the
+          contact has no email address. Send it from Xero.
+        </p>
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <button className="btn" type="button" onClick={finish}>Done</button>
+        </div>
+      </Modal>
+    );
+  }
 
   return (
     <Modal onClose={onClose} maxWidth={560}>
@@ -230,6 +255,11 @@ export function AcademyInvoiceModal({ academy, onClose, onDone }) {
         <Plus size={13} style={{ verticalAlign: -2, marginRight: 4 }} />Add a line
       </button>
 
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: BRAND.ink, marginBottom: 12, cursor: 'pointer' }}>
+        <input type="checkbox" checked={email} onChange={(e) => setEmail(e.target.checked)} />
+        Email it to {academy.company?.name || 'the client'} from Xero
+      </label>
+
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13.5, padding: '10px 0', borderTop: '1px solid ' + BRAND.border }}>
         <span style={{ color: BRAND.muted }}>{formatGBP(net)} + {formatGBP(net * VAT_RATE)} VAT</span>
         <strong style={{ fontVariantNumeric: 'tabular-nums' }}>{formatGBP(net * (1 + VAT_RATE))}</strong>
@@ -279,6 +309,128 @@ export function LinkCompanyModal({ academy, onClose, onDone }) {
         <button className="btn-ghost" type="button" onClick={onClose} disabled={busy}>Cancel</button>
         <button className="btn" type="button" onClick={() => save(companyId)} disabled={busy || !companyId}>
           {busy ? 'Saving…' : 'Link'}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+/**
+ * Whether an academy's invoices raise themselves. When on, the daily job puts
+ * everything due on one Xero invoice each morning and Xero emails it; the
+ * button still works for anything extra.
+ */
+export function AutoInvoiceToggle({ academy, onChanged }) {
+  const [on, setOn] = useState(Boolean(academy.autoInvoice));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  useEffect(() => { setOn(Boolean(academy.autoInvoice)); }, [academy.autoInvoice]);
+  const linked = Boolean(academy.company && !academy.company.missing);
+
+  const change = async (value) => {
+    setOn(value);
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api.post(`/api/crm/academies/${academy.id}/settings`, { autoInvoice: value });
+      if (onChanged) onChanged(r.academy);
+    } catch (err) {
+      setOn(!value);
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div>
+      <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, color: BRAND.ink, cursor: 'pointer' }}>
+        <input type="checkbox" checked={on} disabled={busy || (!linked && !on)} onChange={(e) => change(e.target.checked)} />
+        Invoice automatically
+      </label>
+      <div style={{ fontSize: 12, color: BRAND.muted, marginTop: 2 }}>
+        {!linked && !on
+          ? 'Link it to a company first.'
+          : on
+            ? 'Each morning, anything due goes on one Xero invoice and Xero emails it to the client.'
+            : 'Or turn this on to raise and email each invoice on the morning it falls due.'}
+      </div>
+      {error && <div role="alert" style={{ color: '#B91C1C', fontSize: 12.5, marginTop: 4 }}>{error}</div>}
+    </div>
+  );
+}
+
+// "Team, billed annually, £750 set-up".
+export function orderText(o) {
+  const period = o.billingPeriod === 'annual' ? 'billed annually' : 'billed monthly';
+  return `${o.planName || o.plan}, ${period}${o.setupFee > 0 ? `, ${formatGBP(o.setupFee)} set-up` : ''}`;
+}
+
+/**
+ * Put an academy sold on a proposal onto the academy it is for, once that
+ * academy exists: the server links it to the deal's company and sets the plan.
+ * Academies already linked to that company come first.
+ */
+export function ApplyOrderModal({ order, academies, onClose, onDone }) {
+  const options = useMemo(() => {
+    const rank = (a) => (order.companyId && a.crmCompanyId === order.companyId ? 0 : a.crmCompanyId ? 2 : 1);
+    return (academies || []).filter((a) => !a.demo)
+      .sort((x, y) => rank(x) - rank(y) || String(x.name).localeCompare(String(y.name)));
+  }, [academies, order.companyId]);
+  const [tenantId, setTenantId] = useState(() => {
+    const mine = options.filter((a) => order.companyId && a.crmCompanyId === order.companyId);
+    return mine.length === 1 ? mine[0].id : '';
+  });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const chosen = options.find((a) => a.id === tenantId) || null;
+  const who = order.companyName || order.dealTitle || 'the client';
+  const movesCompany = Boolean(chosen?.company && order.companyId && chosen.company.id !== order.companyId);
+
+  const apply = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      onDone(await api.post(`/api/crm/academies/${tenantId}/apply-order`, { orderId: order.id }));
+    } catch (err) {
+      setError(err.message);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal onClose={onClose} maxWidth={500}>
+      <h2 style={{ margin: '0 0 4px', fontSize: 17, color: BRAND.ink }}>Set up {who}'s academy</h2>
+      <p style={{ margin: '0 0 14px', fontSize: 13, color: BRAND.muted }}>
+        Signed: {orderText(order)}. Applying it links the academy to {who} and puts it on that plan. An academy
+        still on its free trial keeps the trial, with this plan to follow.
+        {order.setupFee > 0 ? ` The ${formatGBP(order.setupFee)} set-up fee is then due to invoice.` : ''}
+      </p>
+      {options.length ? (
+        <>
+          <label htmlFor="apply-order-academy" style={{ display: 'block', fontSize: 12.5, fontWeight: 600, color: BRAND.ink, marginBottom: 4 }}>Academy</label>
+          <select id="apply-order-academy" className="input" value={tenantId} onChange={(e) => setTenantId(e.target.value)} style={{ width: '100%' }}>
+            <option value="">Choose an academy</option>
+            {options.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name} ({a.subdomain}){a.company?.name ? `, ${a.company.name}` : ''}
+              </option>
+            ))}
+          </select>
+        </>
+      ) : (
+        <p style={{ fontSize: 13, color: BRAND.ink, margin: 0 }}>There are no academies yet. Create {who}'s in the staff CMS first.</p>
+      )}
+      {movesCompany && (
+        <p style={{ fontSize: 12.5, color: '#B45309', margin: '8px 0 0' }}>
+          That academy is linked to {chosen.company.name}. Applying this order links it to {who} instead.
+        </p>
+      )}
+      {error && <p role="alert" style={{ color: '#B91C1C', fontSize: 13, margin: '10px 0 0' }}>{error}</p>}
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+        <button className="btn-ghost" type="button" onClick={onClose} disabled={busy}>Cancel</button>
+        <button className="btn" type="button" onClick={apply} disabled={busy || !tenantId}>
+          {busy ? 'Applying…' : 'Apply the order'}
         </button>
       </div>
     </Modal>

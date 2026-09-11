@@ -102,3 +102,4 @@ All env vars are managed in the Vercel dashboard and synced locally with
 | `XERO_CLIENT_ID` / `XERO_CLIENT_SECRET` / `XERO_REDIRECT_URI` | Xero OAuth |
 | `BLOB_READ_WRITE_TOKEN` | Vercel Blob token for deal file uploads |
 | `CRON_SECRET` | Bearer token required by every cron handler |
+| `LMS_API_URL` / `LMS_API_SECRET` | The academy platform (squideo-lms) for the Academies page: its staff address, and the same secret it holds as `CRM_API_SECRET` |

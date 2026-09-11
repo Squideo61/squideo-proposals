@@ -56,6 +56,7 @@ export function CompanyAcademyCard({ companyId }) {
                 onInvoice={setInvoicing}
                 onLink={setLinking}
                 onUnmark={unmark}
+                onChanged={load}
                 showCompany={false}
               />
             </div>

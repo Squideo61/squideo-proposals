@@ -476,14 +476,20 @@ export async function ensureAcademyNotificationDefaults() {
   if (academyDefaultsReady) return;
   try {
     for (const key of ['academy.trial_ending', 'academy.plan_requested', 'academy.over_allowance',
-      'academy.low_usage', 'academy.renewal_due']) {
+      'academy.low_usage', 'academy.renewal_due', 'academy.order_waiting']) {
       await sql`UPDATE roles SET notification_defaults = jsonb_set(
         notification_defaults, ${'{' + key + '}'}::text[],
         COALESCE(notification_defaults->'quote_request.new', 'false'::jsonb), true)
         WHERE NOT (notification_defaults ? ${key})`;
     }
+    // An invoice the daily job raised goes to whoever hears that a Xero invoice
+    // was paid: the same people, the same money.
+    await sql`UPDATE roles SET notification_defaults = jsonb_set(
+      notification_defaults, '{academy.invoice_raised}',
+      COALESCE(notification_defaults->'invoice.paid_xero', 'false'::jsonb), true)
+      WHERE NOT (notification_defaults ? 'academy.invoice_raised')`;
     await ensureNotificationChannelColumns();
-    for (const key of ['academy.trial_ending', 'academy.plan_requested']) {
+    for (const key of ['academy.trial_ending', 'academy.plan_requested', 'academy.order_waiting', 'academy.invoice_raised']) {
       await sql`UPDATE roles SET notification_channel_defaults = jsonb_set(
         notification_channel_defaults, ${'{' + key + '}'}::text[], '"in_app"'::jsonb, true)
         WHERE NOT (notification_channel_defaults ? ${key})`;

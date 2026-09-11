@@ -13,6 +13,8 @@ import { openPrintWindow, openReceiptWindow, printOptionsForSigned } from '../ut
 import { startStripeCheckout } from '../utils/stripeCheckout.js';
 import { Field, Modal, PageTitle, PaymentOption, PriceRow, StickyCTA } from './ui.jsx';
 import { SignedBlock } from './SignedBlock.jsx';
+import { AcademyOfferBlock } from './AcademyOfferBlock.jsx';
+import { academyOffer } from '../lib/academyOffer.js';
 import { SignaturePad } from './SignaturePad.jsx';
 import { StripeSimModal } from './StripeSimModal.jsx';
 
@@ -679,6 +681,9 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
   const incVat = (n) => formatGBP(n * (1 + (data.vatRate || 0)));
   // When VAT is 0%, drop every "+ VAT" / "inc. VAT" reference from the proposal.
   const showVat = (Number(data.vatRate) || 0) > 0;
+  // A Squideo Academy sold alongside the project. Invoiced separately, so it
+  // never touches the totals or the payment options below.
+  const academy = academyOffer(data);
 
   const handleSign = async () => {
     if (!sigName.trim() || !sigEmail.trim() || !sigAccepted) {
@@ -1854,6 +1859,8 @@ export function ClientView({ id, onBack, backLabel = 'Back', onEdit, useRealStri
           )}
         </div>
         )}
+
+        {academy && <AcademyOfferBlock offer={academy} showVat={showVat} signed={Boolean(signed)} isMobile={isMobile} />}
 
         <PageTitle>Payment Options</PageTitle>
         {partnerSelected && !isOneoff && (

@@ -72,6 +72,18 @@ describe('billingDue', () => {
     expect(billingDue(academy({ summary: { extra: { last: { ...last, total: 0 } } } }), [{ kind: 'plan', periodKey: 'plan:2026-10-20' }], NOW)).toEqual([]);
   });
 
+  it('bills a signed set-up fee as soon as its order is applied, trial or not', () => {
+    const trial = academy({ summary: { trial: { phase: 'running', daysLeft: 60 } } });
+    const orders = [
+      { id: 'ord_1', status: 'applied', setupFee: 500, planName: 'Team' },
+      { id: 'ord_2', status: 'waiting', setupFee: 300 },
+    ];
+    expect(billingDue(trial, [], NOW, orders)).toEqual([
+      { kind: 'setup', periodKey: 'setup:ord_1', label: 'Squideo Academy set-up (Team plan)', amount: 500 },
+    ]);
+    expect(billingDue(trial, [{ kind: 'setup', periodKey: 'setup:ord_1' }], NOW, orders)).toEqual([]);
+  });
+
   it('bills nothing on a trial, Free, a quoted deal or a demo', () => {
     expect(billingDue(academy({ summary: { trial: { phase: 'running', daysLeft: 20 } } }), [], NOW)).toEqual([]);
     expect(billingDue(academy({ summary: { plan: { slug: 'free', name: 'Free', monthly: 0, annual: 0 } } }), [], NOW)).toEqual([]);

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { BookmarkPlus, Building2, Check, ChevronLeft, CreditCard, Eye, GripVertical, Lightbulb, List, Lock, Mic, Package, Plus, PoundSterling, Save, Star, Users, Video, Volume2, X } from 'lucide-react';
+import { BookmarkPlus, Building2, Check, ChevronLeft, CreditCard, Eye, GraduationCap, GripVertical, Lightbulb, List, Lock, Mic, Package, Plus, PoundSterling, Save, Star, Users, Video, Volume2, X } from 'lucide-react';
 import { BRAND } from '../theme.js';
 import { useStore } from '../store.jsx';
 import { useIsMobile, formatGBP, computeBaseDiscount } from '../utils.js';
@@ -12,6 +12,8 @@ import { InclusionsBankManager } from './InclusionsBankManager.jsx';
 import { ClientLinkPanel } from './crm/ClientLinkPanel.jsx';
 import { aiSampleArtists, proposalSampleArtistId } from '../lib/proposalSampleVoice.js';
 import { isMonthlyPlan, monthlyPlanFor, monthlyPlanProblems } from '../../api/_lib/monthlyPlan.js';
+import { AcademyProposalEditor } from './AcademyProposalEditor.jsx';
+import { offerHint } from '../lib/academyOffer.js';
 
 // Fetch a Vimeo video's title + thumbnail via our /api/vimeo-oembed proxy
 // (the app CSP blocks calling vimeo.com from the browser). Returns
@@ -161,6 +163,12 @@ function buildSectionMeta(data, isTemplate, issues, isDefault) {
       hint: data.partnerProgramme?.enabled
         ? `Enabled · ${Math.round((data.partnerProgramme.discountRate || 0) * 100)}%`
         : 'Disabled',
+      hasIssues: false,
+    },
+    {
+      id: 'academy',
+      label: 'Academy',
+      hint: offerHint(data),
       hasIssues: false,
     },
     {
@@ -1758,6 +1766,24 @@ export function BuilderView({ id, onBack, onPreview, onSaveAsTemplate, mode }) {
         )}
       </Section>
       )}
+
+      {/* ── Squideo Academy ──
+          A subscription sold alongside the project: its own plan, invoiced
+          separately by the CRM, never part of the project total. */}
+      <Section
+        title="Squideo Academy"
+        color="#0E7490"
+        icon={GraduationCap}
+        collapsedHint={sectionMeta.find(s => s.id === 'academy')?.hint}
+        {...sectionProps('academy')}
+      >
+        <AcademyProposalEditor
+          value={data.academy}
+          onChange={(academy) => update({ academy })}
+          isMobile={isMobile}
+          allowAcademyPick={!isTemplate && !isDefault}
+        />
+      </Section>
 
       {/* ── Optional Extras ── */}
       <Section

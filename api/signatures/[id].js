@@ -8,6 +8,7 @@ import { advanceStage, regressStage, dealIdForProposal, ensureDealForProposal, l
 import { computeProposalTotalExVat } from '../_lib/crm/deals.js';
 import { voidInvoice } from '../_lib/xero.js';
 import { sendPortalWelcome } from '../_lib/portal/onboarding.js';
+import { cancelAcademyOrder, recordAcademyOrder } from '../_lib/crm/academies.js';
 
 // "£2,500" — whole pounds stay whole, because the pence on a quote are noise in
 // a notification, and a trailing ".00" on every one of them trains people to
@@ -135,6 +136,8 @@ export default async function handler(req, res) {
     }
 
     await sql`DELETE FROM signatures WHERE proposal_id = ${id}`;
+    // A Squideo Academy sold on it no longer stands either. Never throws.
+    await cancelAcademyOrder(id);
 
     // CRM: regress the linked deal from 'signed' back to 'proposal_sent' so
     // the pipeline reflects that we're awaiting a fresh view/sign cycle. The
@@ -467,6 +470,19 @@ export default async function handler(req, res) {
       }
     } catch (err) {
       console.error('[signatures] portal welcome failed', err);
+    }
+
+    // A Squideo Academy sold on the proposal: record the order, and put the
+    // academy on its plan when the proposal named it; otherwise the team is
+    // told to set it up. Best-effort, like everything after the signature.
+    try {
+      const proposals = await sql`SELECT data FROM proposals WHERE id = ${id}`;
+      const proposalData = proposals[0]?.data || {};
+      if (proposalData.academy?.enabled) {
+        await recordAcademyOrder({ proposalId: id, dealId, proposalData, signerName: name, signerEmail: email });
+      }
+    } catch (err) {
+      console.error('[signatures] academy order failed', err);
     }
 
     return res.status(201).json({ ok: true });

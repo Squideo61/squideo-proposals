@@ -418,6 +418,22 @@ export const NOTIFICATIONS = [
     group: 'Academies',
     channel: 'finance',
   },
+  {
+    key: 'academy.order_waiting',
+    label: 'Academy sold on a proposal',
+    description: 'A client signs a proposal with a Squideo Academy on it that is not set up yet: create it, then apply the order.',
+    audience: 'broadcast',
+    group: 'Academies',
+    channel: 'finance',
+  },
+  {
+    key: 'academy.invoice_raised',
+    label: 'Academy invoice raised automatically',
+    description: 'The daily job raises and sends an academy invoice for an academy set to invoice itself.',
+    audience: 'broadcast',
+    group: 'Academies',
+    channel: 'finance',
+  },
 ];
 
 const KEYS = new Set(NOTIFICATIONS.map(n => n.key));
