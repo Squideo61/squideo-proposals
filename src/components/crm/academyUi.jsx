@@ -32,7 +32,8 @@ export function planText(a) {
     return `Free trial${after}`;
   }
   const name = s.plan?.name || 'No plan';
-  return s.billingPeriod && s.plan?.monthly > 0 ? `${name}, ${s.billingPeriod}` : name;
+  const card = a.card?.live ? ', by card' : '';
+  return s.billingPeriod && s.plan?.monthly > 0 ? `${name}, ${s.billingPeriod}${card}` : name;
 }
 
 // What it brings in a month, or what it will after its trial.
@@ -65,6 +66,7 @@ const FLAG_TONES = {
   renewal: { color: '#0E7490', bg: '#ECFEFF' },
   over: { color: '#15803D', bg: '#ECFDF3' },
   low_usage: { color: '#B91C1C', bg: '#FEF2F2' },
+  card_failed: { color: '#B91C1C', bg: '#FEF2F2' },
 };
 
 export function FlagChips({ flags }) {
@@ -106,10 +108,12 @@ export function InvoiceLine({ row, canInvoice, onUnmark }) {
       )}
       {!row.invoice && (
         <span style={{ fontSize: 12, color: BRAND.muted }}>
-          {row.source === 'elsewhere' ? `Billed elsewhere${row.note ? `: ${row.note}` : ''}` : 'Invoice not confirmed'}
+          {row.source === 'elsewhere'
+            ? `Billed elsewhere${row.note ? `: ${row.note}` : ''}`
+            : row.source === 'card' ? 'Charged to the card, waiting for Stripe' : 'Invoice not confirmed'}
         </span>
       )}
-      {!row.invoice && canInvoice && onUnmark && (
+      {!row.invoice && row.source !== 'card' && canInvoice && onUnmark && (
         <button className="btn-ghost" style={{ fontSize: 12, padding: '2px 6px' }} onClick={() => onUnmark(row)}>Undo</button>
       )}
     </div>
@@ -124,7 +128,9 @@ export function InvoiceLine({ row, canInvoice, onUnmark }) {
  * CRM kept track.
  */
 export function AcademyInvoiceModal({ academy, onClose, onDone }) {
-  const [picked, setPicked] = useState(() => new Set((academy.due || []).map((l) => l.periodKey)));
+  // What goes on the card is charged there by the daily job, never invoiced.
+  const due = useMemo(() => (academy.due || []).filter((l) => !l.viaCard), [academy.due]);
+  const [picked, setPicked] = useState(() => new Set(due.map((l) => l.periodKey)));
   const [custom, setCustom] = useState([]);
   const [email, setEmail] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -136,9 +142,9 @@ export function AcademyInvoiceModal({ academy, onClose, onDone }) {
   const [unsent, setUnsent] = useState(null);
 
   const lines = useMemo(() => [
-    ...(academy.due || []).filter((l) => picked.has(l.periodKey)),
+    ...due.filter((l) => picked.has(l.periodKey)),
     ...custom.filter((c) => c.label.trim() && Number(c.amount) > 0).map((c) => ({ ...c, amount: Number(c.amount) })),
-  ], [academy.due, picked, custom]);
+  ], [due, picked, custom]);
   const net = lines.reduce((s, l) => s + l.amount, 0);
 
   const toggle = (key) => setPicked((prev) => {
@@ -153,7 +159,7 @@ export function AcademyInvoiceModal({ academy, onClose, onDone }) {
     try {
       const body = {
         lines: [
-          ...(academy.due || []).filter((l) => picked.has(l.periodKey)).map((l) => ({ kind: l.kind, periodKey: l.periodKey })),
+          ...due.filter((l) => picked.has(l.periodKey)).map((l) => ({ kind: l.kind, periodKey: l.periodKey })),
           ...custom.filter((c) => c.label.trim() && Number(c.amount) > 0).map((c) => ({ kind: 'custom', label: c.label.trim(), amount: Number(c.amount) })),
         ],
         email,
@@ -207,9 +213,9 @@ export function AcademyInvoiceModal({ academy, onClose, onDone }) {
         It lands in Pending Payments, and counts as income once Xero says it is paid.
       </p>
 
-      {(academy.due || []).length > 0 ? (
+      {due.length > 0 ? (
         <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
-          {academy.due.map((l) => (
+          {due.map((l) => (
             <div key={l.periodKey} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, fontSize: 13.5 }}>
               <input type="checkbox" id={`due-${l.periodKey}`} checked={picked.has(l.periodKey)} onChange={() => toggle(l.periodKey)} style={{ marginTop: 3 }} />
               <div style={{ flex: 1 }}>
@@ -434,6 +440,84 @@ export function ApplyOrderModal({ order, academies, onClose, onDone }) {
         </button>
       </div>
     </Modal>
+  );
+}
+
+const CARD_STATUS = {
+  active: { label: 'Paid by card', color: '#15803D', bg: '#ECFDF3' },
+  trialing: { label: 'Card saved, charged when the trial ends', color: '#1D4ED8', bg: '#EFF6FF' },
+  past_due: { label: 'Card payment failed', color: '#B91C1C', bg: '#FEF2F2' },
+  incomplete: { label: 'Card payment failed', color: '#B91C1C', bg: '#FEF2F2' },
+  cancelling: { label: 'Card stops at the end of the period', color: '#B45309', bg: '#FFFBEB' },
+  cancelled: { label: 'Card subscription ended', color: BRAND.muted, bg: BRAND.paper },
+};
+
+/**
+ * An academy paying by card: its Stripe subscription, what it takes and when,
+ * and a way to stop it at the end of the period paid for, for moving the
+ * academy onto an invoiced plan. The client manages the card itself from its
+ * own Plan page.
+ */
+export function CardSubscription({ academy, canInvoice, onChanged }) {
+  const card = academy.card;
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  if (!card) return null;
+  const tone = CARD_STATUS[card.status] || CARD_STATUS.active;
+  const per = card.billingPeriod === 'annual' ? 'a year' : 'a month';
+
+  const stop = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api.post(`/api/crm/academies/${academy.id}/card-stop`, {});
+      setConfirming(false);
+      if (onChanged) onChanged(r.academy);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: '10px 12px', display: 'grid', gap: 6 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <strong style={{ fontSize: 13 }}>Card</strong>
+        <span style={{ fontSize: 11.5, fontWeight: 600, color: tone.color, background: tone.bg, borderRadius: 999, padding: '2px 8px' }}>{tone.label}</span>
+        <span style={{ flex: 1 }} />
+        {card.subscriptionId && (
+          <a href={`https://dashboard.stripe.com/subscriptions/${encodeURIComponent(card.subscriptionId)}`} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12.5 }}>
+            Open in Stripe <ExternalLink size={11} style={{ verticalAlign: -1 }} />
+          </a>
+        )}
+      </div>
+      <div style={{ fontSize: 13, color: BRAND.ink }}>
+        {card.planName || card.plan}, {card.amountGross !== null ? `${formatGBP(card.amountGross)} ${per} including VAT` : per}
+        {card.live && card.renewsAt ? `. ${card.status === 'cancelling' ? 'Ends' : 'Next payment'} ${fmtDay(card.cancelAt || card.renewsAt)}` : ''}
+        {card.email ? `. Paid by ${card.email}` : ''}.
+      </div>
+      <div style={{ fontSize: 12, color: BRAND.muted }}>
+        Each payment is mirrored into Xero as a paid invoice, and extra people are charged to the same card.
+      </div>
+      {canInvoice && card.live && card.status !== 'cancelling' && (
+        confirming ? (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 12.5 }}>
+            <span>Stop the card at the end of the period paid for? The academy then drops to Free unless you have moved it onto an invoiced plan.</span>
+            <button className="btn" type="button" style={{ fontSize: 12.5 }} onClick={stop} disabled={busy}>{busy ? 'Stopping…' : 'Stop it'}</button>
+            <button className="btn-ghost" type="button" style={{ fontSize: 12.5 }} onClick={() => setConfirming(false)} disabled={busy}>Keep it</button>
+          </div>
+        ) : (
+          <div>
+            <button className="btn-ghost" type="button" style={{ fontSize: 12.5, padding: 0 }} onClick={() => setConfirming(true)}>
+              Stop card payments
+            </button>
+          </div>
+        )
+      )}
+      {error && <div role="alert" style={{ color: '#B91C1C', fontSize: 12.5 }}>{error}</div>}
+    </div>
   );
 }
 

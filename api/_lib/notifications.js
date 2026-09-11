@@ -476,7 +476,8 @@ export async function ensureAcademyNotificationDefaults() {
   if (academyDefaultsReady) return;
   try {
     for (const key of ['academy.trial_ending', 'academy.plan_requested', 'academy.over_allowance',
-      'academy.low_usage', 'academy.renewal_due', 'academy.order_waiting']) {
+      'academy.low_usage', 'academy.renewal_due', 'academy.order_waiting', 'academy.card_subscribed',
+      'academy.card_cancelled']) {
       await sql`UPDATE roles SET notification_defaults = jsonb_set(
         notification_defaults, ${'{' + key + '}'}::text[],
         COALESCE(notification_defaults->'quote_request.new', 'false'::jsonb), true)
@@ -488,8 +489,14 @@ export async function ensureAcademyNotificationDefaults() {
       notification_defaults, '{academy.invoice_raised}',
       COALESCE(notification_defaults->'invoice.paid_xero', 'false'::jsonb), true)
       WHERE NOT (notification_defaults ? 'academy.invoice_raised')`;
+    // A card payment that failed is money, for the same people.
+    await sql`UPDATE roles SET notification_defaults = jsonb_set(
+      notification_defaults, '{academy.card_payment_failed}',
+      COALESCE(notification_defaults->'invoice.paid_xero', 'false'::jsonb), true)
+      WHERE NOT (notification_defaults ? 'academy.card_payment_failed')`;
     await ensureNotificationChannelColumns();
-    for (const key of ['academy.trial_ending', 'academy.plan_requested', 'academy.order_waiting', 'academy.invoice_raised']) {
+    for (const key of ['academy.trial_ending', 'academy.plan_requested', 'academy.order_waiting', 'academy.invoice_raised',
+      'academy.card_subscribed', 'academy.card_cancelled']) {
       await sql`UPDATE roles SET notification_channel_defaults = jsonb_set(
         notification_channel_defaults, ${'{' + key + '}'}::text[], '"in_app"'::jsonb, true)
         WHERE NOT (notification_channel_defaults ? ${key})`;

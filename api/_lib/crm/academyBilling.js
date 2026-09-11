@@ -12,10 +12,11 @@
 //   - the totals at the top of the Academies page.
 //
 // Money arrives in PENCE from the platform and leaves here in POUNDS, which is
-// what every CRM money column holds.
+// what every CRM money column holds. Card amounts stay in pence, as Stripe's do.
 
 export const LOW_USAGE_SHARE = 0.2;      // three-month average at or under 20% of the allowance
 export const ALERT_WINDOW_DAYS = 30;     // a trial ending or an annual renewal this soon
+export const VAT_RATE = 0.2;
 const DAY = 86_400_000;
 
 export const pounds = (pence) => Math.round(Number(pence) || 0) / 100;
@@ -84,8 +85,12 @@ export function planPeriod(planStartedAt, billingPeriod, now = new Date()) {
  * `orders` are signed academy orders applied to this academy; a set-up fee on
  * one is due as soon as it is applied, even while the academy is still on its
  * trial, because the set-up work happens first.
+ *
+ * An academy paying by card (`card`, its subscription) is charged its plan by
+ * Stripe, so there is no plan line; its extra people are still due, marked
+ * `viaCard`, because they go on the card too rather than on an invoice.
  */
-export function billingDue(academy, invoiced = [], now = new Date(), orders = []) {
+export function billingDue(academy, invoiced = [], now = new Date(), orders = [], { card = null } = {}) {
   if (!academy?.summary || academy.demo) return [];
   const done = new Set(invoiced.map((r) => `${r.kind}|${r.periodKey}`));
   const lines = [];
@@ -103,8 +108,9 @@ export function billingDue(academy, invoiced = [], now = new Date(), orders = []
   }
   if (!isBilled(academy)) return lines;
   const s = academy.summary;
+  const byCard = cardIsLive(card);
 
-  const period = planPeriod(s.planStartedAt, s.billingPeriod, now);
+  const period = byCard ? null : planPeriod(s.planStartedAt, s.billingPeriod, now);
   if (period) {
     const periodKey = `plan:${isoDay(period.from)}`;
     if (!done.has(`plan|${periodKey}`)) {
@@ -129,10 +135,98 @@ export function billingDue(academy, invoiced = [], now = new Date(), orders = []
         periodKey,
         label: `Squideo Academy, extra learners, ${statement.label}`,
         amount: pounds(statement.total),
+        ...(byCard ? { viaCard: true } : {}),
       });
     }
   }
   return lines;
+}
+
+// ── Paying by card ──────────────────────────────────────────────────────────
+//
+// Starter and Team can be paid for by card: a Stripe subscription, charged in
+// pence with VAT on top. Stripe's amounts include VAT; the invoice mirrored
+// into Xero for each payment splits it back out.
+
+// A subscription that is still taking payments, or will again.
+export const LIVE_CARD_STATUSES = Object.freeze(['active', 'trialing', 'past_due', 'incomplete', 'cancelling']);
+
+export const cardIsLive = (card) => Boolean(card && LIVE_CARD_STATUSES.includes(card.status));
+
+/** What a card is charged, in pence, for an amount in pence ex VAT. */
+export const grossPence = (exPence) => Math.round((Number(exPence) || 0) * (1 + VAT_RATE));
+
+/** An amount a card was charged, in pence, split into its ex-VAT part and its VAT. */
+export function splitGross(gross) {
+  const total = Math.round(Number(gross) || 0);
+  const exPence = Math.round(total / (1 + VAT_RATE));
+  return { exPence, vatPence: total - exPence };
+}
+
+/**
+ * How a Stripe subscription stands, in the platform's words: active,
+ * trialing, past_due, incomplete, cancelling, or cancelled once it has ended.
+ * A payment problem is said before a cancellation, because it is the one
+ * somebody needs to act on.
+ */
+export function cardStatusFrom(sub) {
+  if (!sub) return null;
+  if (sub.status === 'canceled' || sub.status === 'incomplete_expired') return 'cancelled';
+  if (sub.status === 'past_due' || sub.status === 'unpaid' || sub.status === 'paused') return 'past_due';
+  if (sub.status === 'incomplete') return 'incomplete';
+  if (sub.cancel_at_period_end || sub.cancel_at) return 'cancelling';
+  if (sub.status === 'trialing') return 'trialing';
+  return 'active';
+}
+
+const fromSeconds = (s) => (Number(s) > 0 ? new Date(Number(s) * 1000).toISOString() : null);
+
+/** When a subscription next charges: the trial's end, or the end of the period. */
+export function cardRenewsAt(sub) {
+  if (!sub) return null;
+  if (sub.status === 'trialing' && sub.trial_end) return fromSeconds(sub.trial_end);
+  return fromSeconds(sub.items?.data?.[0]?.current_period_end ?? sub.current_period_end);
+}
+
+/** The card state the academy platform stores, or null once it has ended. */
+export function cardStateFor(sub) {
+  const status = cardStatusFrom(sub);
+  if (!status || status === 'cancelled') return null;
+  return {
+    status,
+    renewsAt: cardRenewsAt(sub),
+    cancelAt: status === 'cancelling' ? (fromSeconds(sub.cancel_at) || cardRenewsAt(sub)) : null,
+  };
+}
+
+/**
+ * A Stripe checkout that holds the first charge until a free trial ends:
+ * only for a trial running more than two days yet, which is the notice Stripe
+ * needs. Returns the trial's end in seconds, or null to charge today.
+ */
+export function holdUntilTrialEnds(trial, now = new Date()) {
+  if (trial?.phase !== 'running' || !trial.endsAt) return null;
+  const ends = toDate(trial.endsAt);
+  if (!ends || ends.getTime() - now.getTime() <= 2 * DAY) return null;
+  return Math.floor(ends.getTime() / 1000);
+}
+
+/**
+ * What a card payment is for, as the line on its Xero invoice. `meta` is the
+ * subscription's metadata (or the one-off invoice's, for extra people), and
+ * `invoice` Stripe's invoice.
+ */
+export function cardPaymentLabel(meta, invoice) {
+  if (meta?.kind === 'academy_extras') return meta.label || 'Squideo Academy, extra learners';
+  const plan = `${meta?.planName || meta?.plan || 'Squideo Academy'} plan (${meta?.billingPeriod === 'annual' ? 'annual' : 'monthly'})`;
+  if (invoice?.billing_reason === 'subscription_update') {
+    return `Squideo Academy, change to the ${plan}, for the rest of the period, by card`;
+  }
+  const line = invoice?.lines?.data?.find((l) => l?.period?.start) || null;
+  const from = fromSeconds(line?.period?.start);
+  const to = fromSeconds(line?.period?.end);
+  const dates = from && to ? `, ${fmtDay(from)} to ${fmtDay(new Date(new Date(to).getTime() - DAY))}` : '';
+  return `Squideo Academy, ${plan}${dates}, by card`;
 }
 
 /** Barely used: a billed academy whose three-month average is a fifth of its allowance or less. */
@@ -147,7 +241,8 @@ export function isLowUsage(academy) {
 // every month, which is what its invoice is for, not something to flag.
 function renewalSoon(academy, now) {
   const s = academy.summary;
-  if (!isBilled(academy) || s.billingPeriod !== 'annual') return null;
+  // A card renews itself; there is nothing to chase.
+  if (!isBilled(academy) || s.billingPeriod !== 'annual' || cardIsLive(academy.card)) return null;
   const renews = toDate(s.renewsAt);
   if (!renews) return null;
   const days = Math.ceil((renews.getTime() - now.getTime()) / DAY);
@@ -159,11 +254,15 @@ export function academyFlags(academy, due = [], now = new Date()) {
   const s = academy?.summary;
   if (!s) return [];
   const flags = [];
-  const dueTotal = round2(due.reduce((sum, l) => sum + l.amount, 0));
+  // What goes on the card is charged by the daily job, not waiting on anybody.
+  const dueTotal = round2(due.filter((l) => !l.viaCard).reduce((sum, l) => sum + l.amount, 0));
   if (dueTotal > 0) flags.push({ kind: 'to_invoice', label: `£${dueTotal.toFixed(2)} to invoice` });
   if (s.request) flags.push({ kind: 'requested', label: `Asked for ${s.request.plan?.name || 'a plan'}` });
   if (s.trial?.phase === 'running' && s.trial.daysLeft <= ALERT_WINDOW_DAYS) {
     flags.push({ kind: 'trial_ending', label: `Trial ends in ${s.trial.daysLeft} day${s.trial.daysLeft === 1 ? '' : 's'}` });
+  }
+  if (academy.card?.status === 'past_due' || academy.card?.status === 'incomplete') {
+    flags.push({ kind: 'card_failed', label: 'Card payment failed' });
   }
   const renewal = renewalSoon(academy, now);
   if (renewal) flags.push({ kind: 'renewal', label: `Renews ${fmtDay(renewal.renews)}` });
@@ -221,7 +320,7 @@ export function academyTotals(rows, now = new Date()) {
       if (ends && monthKey(ends) === month) trialsEndingThisMonth += 1;
     }
     if (s.request) requests += 1;
-    const due = round2((a.due || []).reduce((sum, l) => sum + l.amount, 0));
+    const due = round2((a.due || []).filter((l) => !l.viaCard).reduce((sum, l) => sum + l.amount, 0));
     if (due > 0) {
       toInvoice += due;
       toInvoiceCount += 1;

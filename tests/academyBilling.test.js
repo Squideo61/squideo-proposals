@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   academyFlags, academyTotals, alertsFor, billingDue, isBilled, isLowUsage, planPeriod,
+  cardPaymentLabel, cardRenewsAt, cardStateFor, cardStatusFrom, grossPence, holdUntilTrialEnds, splitGross,
 } from '../api/_lib/crm/academyBilling.js';
 
 // An academy as the platform's private API hands it over: a Starter plan,
@@ -151,5 +152,64 @@ describe('academyTotals', () => {
     expect(t.trialsEndingThisMonth).toBe(1);
     expect(t.toInvoice).toBe(99 + 990);
     expect(t.toInvoiceCount).toBe(2);
+  });
+});
+
+describe('paying by card', () => {
+  const card = { status: 'active' };
+
+  it('leaves the plan to Stripe, and sends extra people to the card', () => {
+    const last = { from: '2026-10-01', label: 'October 2026', complete: true, total: 1300 };
+    const lines = billingDue(academy({ summary: { extra: { last } } }), [], NOW, [], { card });
+    expect(lines).toEqual([{ kind: 'extras', periodKey: 'extras:2026-10-01', label: 'Squideo Academy, extra learners, October 2026', amount: 13, viaCard: true }]);
+    // Once the card has gone, the plan is invoiced again.
+    expect(billingDue(academy(), [], NOW, [], { card: { status: 'cancelled' } })[0].kind).toBe('plan');
+  });
+
+  it('adds VAT in pence, and splits a payment back out', () => {
+    expect(grossPence(9900)).toBe(11880);
+    expect(grossPence(14900 * 10)).toBe(178800);
+    expect(splitGross(11880)).toEqual({ exPence: 9900, vatPence: 1980 });
+    expect(splitGross(1003)).toEqual({ exPence: 836, vatPence: 167 });
+  });
+
+  it('reads a Stripe subscription in the platform\'s words', () => {
+    const periodEnd = Date.parse('2026-12-05T12:00:00Z') / 1000;
+    const sub = (over) => ({ status: 'active', items: { data: [{ current_period_end: periodEnd }] }, ...over });
+    expect(cardStatusFrom(sub())).toBe('active');
+    expect(cardStatusFrom(sub({ status: 'trialing' }))).toBe('trialing');
+    expect(cardStatusFrom(sub({ cancel_at_period_end: true }))).toBe('cancelling');
+    expect(cardStatusFrom(sub({ status: 'past_due', cancel_at_period_end: true }))).toBe('past_due');
+    expect(cardStatusFrom(sub({ status: 'canceled' }))).toBe('cancelled');
+    expect(cardRenewsAt(sub())).toBe('2026-12-05T12:00:00.000Z');
+    expect(cardStateFor(sub({ cancel_at_period_end: true }))).toEqual({
+      status: 'cancelling', renewsAt: '2026-12-05T12:00:00.000Z', cancelAt: '2026-12-05T12:00:00.000Z',
+    });
+    expect(cardStateFor(sub({ status: 'canceled' }))).toBeNull();
+  });
+
+  it('holds the first charge for a trial with more than two days to run', () => {
+    expect(holdUntilTrialEnds({ phase: 'running', endsAt: '2026-11-25T09:00:00Z' }, NOW)).toBe(Date.parse('2026-11-25T09:00:00Z') / 1000);
+    expect(holdUntilTrialEnds({ phase: 'running', endsAt: '2026-11-06T09:00:00Z' }, NOW)).toBeNull();
+    expect(holdUntilTrialEnds({ phase: 'waiting' }, NOW)).toBeNull();
+    expect(holdUntilTrialEnds({ phase: 'none' }, NOW)).toBeNull();
+  });
+
+  it('describes each card payment for its Xero invoice', () => {
+    const meta = { kind: 'academy_subscription', plan: 'team', planName: 'Team', billingPeriod: 'monthly' };
+    const invoice = {
+      billing_reason: 'subscription_cycle',
+      lines: { data: [{ period: { start: Date.parse('2026-11-20T09:00:00Z') / 1000, end: Date.parse('2026-12-20T09:00:00Z') / 1000 } }] },
+    };
+    expect(cardPaymentLabel(meta, invoice)).toBe('Squideo Academy, Team plan (monthly), 20 Nov 2026 to 19 Dec 2026, by card');
+    expect(cardPaymentLabel(meta, { billing_reason: 'subscription_update' })).toBe('Squideo Academy, change to the Team plan (monthly), for the rest of the period, by card');
+    expect(cardPaymentLabel({ kind: 'academy_extras', label: 'Squideo Academy, extra learners, October 2026' }, {})).toBe('Squideo Academy, extra learners, October 2026');
+  });
+
+  it('flags a failed card payment, and does not chase a renewal the card will take', () => {
+    const failing = { ...academy(), card: { status: 'past_due' } };
+    expect(academyFlags(failing, [], NOW).map((f) => f.kind)).toContain('card_failed');
+    const annual = { ...academy({ summary: { billingPeriod: 'annual', planStartedAt: '2025-11-20T09:00:00Z', renewsAt: '2026-11-20T09:00:00Z' } }), card };
+    expect(alertsFor(annual, NOW)).toEqual([]);
   });
 });

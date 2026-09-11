@@ -434,6 +434,30 @@ export const NOTIFICATIONS = [
     group: 'Academies',
     channel: 'finance',
   },
+  {
+    key: 'academy.card_subscribed',
+    label: 'Academy started paying by card',
+    description: 'An academy chooses Starter or Team on its Plan page and pays by card.',
+    audience: 'broadcast',
+    group: 'Academies',
+    channel: 'finance',
+  },
+  {
+    key: 'academy.card_payment_failed',
+    label: 'Academy card payment failed',
+    description: 'Stripe could not take a card payment from an academy. It retries, and the academy is asked to update its card.',
+    audience: 'broadcast',
+    group: 'Academies',
+    channel: 'finance',
+  },
+  {
+    key: 'academy.card_cancelled',
+    label: 'Academy stopped paying by card',
+    description: 'The card subscription of an academy has ended, and where it went: Free, or an invoiced plan.',
+    audience: 'broadcast',
+    group: 'Academies',
+    channel: 'finance',
+  },
 ];
 
 const KEYS = new Set(NOTIFICATIONS.map(n => n.key));

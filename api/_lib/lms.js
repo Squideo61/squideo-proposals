@@ -10,7 +10,10 @@
 // and a sentence a person can act on, so a page that shows academies can say
 // "the academy platform didn't answer" instead of failing whole.
 
+import { timingSafeEqual } from 'node:crypto';
+
 const TIMEOUT_MS = 8000;
+const MIN_SECRET_LENGTH = 24;
 
 export function lmsConfigured() {
   return Boolean(process.env.LMS_API_URL && process.env.LMS_API_SECRET);
@@ -81,4 +84,31 @@ export async function setAcademyPlan(id, plan, billingPeriod) {
 /** The paid plans on the price list, in pence, for the proposal builder. */
 export async function listPlans() {
   return (await lmsFetch('plans')).plans || [];
+}
+
+/**
+ * Change an academy on the platform in one go, as a card subscription needs:
+ * { plan, billingPeriod, keepRenewal? }, { trial: 'end' } and
+ * { card: { status, renewsAt, cancelAt } | null }, in any combination. The
+ * platform applies them plan first, then the trial, then the card.
+ */
+export async function patchAcademy(id, body) {
+  return (await lmsFetch(`academies/${encodeURIComponent(id)}`, { method: 'PATCH', body })).academy || null;
+}
+
+/**
+ * The other direction: the platform calling the CRM (api/academy-billing), to
+ * take a card payment. It sends the same shared secret. Why a request is
+ * refused, as { status, error }, or null when it may proceed.
+ */
+export function lmsCallerProblem(header, secret = process.env.LMS_API_SECRET) {
+  if (!secret || String(secret).length < MIN_SECRET_LENGTH) {
+    return { status: 503, error: 'The academy platform link is not set up on this server.' };
+  }
+  const want = Buffer.from(`Bearer ${secret}`);
+  const got = Buffer.from(String(header || ''));
+  if (got.length !== want.length || !timingSafeEqual(got, want)) {
+    return { status: 401, error: 'Not authorised.' };
+  }
+  return null;
 }

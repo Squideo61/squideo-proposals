@@ -8,8 +8,8 @@ import { Building2, ExternalLink, Link2, Receipt } from 'lucide-react';
 import { BRAND } from '../../theme.js';
 import { formatGBP } from '../../utils.js';
 import {
-  AutoInvoiceToggle, CmsLink, FlagChips, InvoiceLine, datesText, fmtDay, orderText, penceGBP, planText,
-  usageText, valueText,
+  AutoInvoiceToggle, CardSubscription, CmsLink, FlagChips, InvoiceLine, datesText, fmtDay, orderText, penceGBP,
+  planText, usageText, valueText,
 } from './academyUi.jsx';
 
 const FACT = { fontSize: 11.5, color: BRAND.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4 };
@@ -30,6 +30,8 @@ export function AcademyPanel({
   const over = s.check?.status === 'over';
   const current = s.extra?.current;
   const sold = (a.orders || []).filter((o) => o.status === 'applied');
+  const toInvoice = (a.due || []).filter((l) => !l.viaCard);
+  const toCard = (a.due || []).filter((l) => l.viaCard);
   return (
     <div style={{ display: 'grid', gap: 14 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
@@ -79,7 +81,21 @@ export function AcademyPanel({
 
       <FlagChips flags={a.flags} />
 
-      {(a.due || []).length > 0 && (
+      {a.card && <CardSubscription academy={a} canInvoice={canInvoice} onChanged={onChanged} />}
+
+      {toCard.length > 0 && (
+        <div style={{ fontSize: 13, color: BRAND.ink }}>
+          {toCard.map((l) => (
+            <div key={l.periodKey} style={{ display: 'flex', gap: 8, padding: '2px 0' }}>
+              <span style={{ flex: 1 }}>{l.label}</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums' }}>{formatGBP(l.amount)} + VAT</span>
+            </div>
+          ))}
+          <div style={{ fontSize: 12, color: BRAND.muted }}>Charged to their card by the next morning's run.</div>
+        </div>
+      )}
+
+      {toInvoice.length > 0 && (
         <div style={{ border: '1px solid ' + BRAND.border, borderRadius: 10, padding: '10px 12px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
             <strong style={{ fontSize: 13 }}>To invoice</strong>
@@ -91,7 +107,7 @@ export function AcademyPanel({
               </button>
             )}
           </div>
-          {a.due.map((l) => (
+          {toInvoice.map((l) => (
             <div key={l.periodKey} style={{ display: 'flex', gap: 8, fontSize: 13, padding: '3px 0' }}>
               <span style={{ flex: 1 }}>{l.label}</span>
               <span style={{ fontVariantNumeric: 'tabular-nums' }}>{formatGBP(l.amount)}</span>

@@ -11,6 +11,9 @@ import { completeVideoCreditTopup } from '../_lib/videoCredit.js';
 import { ensureMonthlyPlanTerms } from '../_lib/partnerCredits.js';
 import { escapeHtml } from '../_lib/crm/shared.js';
 import {
+  academyCardPaymentFailed, completeAcademyCheckout, recordAcademyCardPayment, syncAcademySubscription,
+} from '../_lib/crm/academyCards.js';
+import {
   lineItemsForProject,
   lineItemsForDiscountedProject,
   lineItemsForPartnerFirstMonth,
@@ -659,6 +662,25 @@ export default async function handler(req, res) {
         subscription: event.data.object,
         statusOverride: 'canceled',
       });
+    }
+
+    // Squideo Academy card subscriptions (../_lib/crm/academyCards.js). Each
+    // handler ignores events that are not its own, and all of them are safe
+    // to run twice. A failure answers 500 so Stripe sends the event again: an
+    // academy that has paid must end up on its plan. The handlers above only
+    // act on their own kinds, so a resend repeats nothing of theirs.
+    try {
+      const obj = event.data.object;
+      if (event.type === 'checkout.session.completed') await completeAcademyCheckout(stripe, obj);
+      if (event.type === 'invoice.payment_succeeded' || event.type === 'invoice.paid') await recordAcademyCardPayment(stripe, obj);
+      if (event.type === 'invoice.payment_failed') await academyCardPaymentFailed(stripe, obj);
+      if (event.type === 'customer.subscription.created' || event.type === 'customer.subscription.updated') {
+        await syncAcademySubscription(stripe, obj);
+      }
+      if (event.type === 'customer.subscription.deleted') await syncAcademySubscription(stripe, obj, { deleted: true });
+    } catch (err) {
+      console.error('[stripe webhook] academy card handling failed', event.type, err);
+      return res.status(500).json({ error: 'Academy card handling failed; send it again.' });
     }
 
     return res.status(200).json({ received: true });

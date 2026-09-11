@@ -22,11 +22,17 @@
 //   POST /api/crm/academies/:id/unmark              { rowId }                    undo a mark, or a stuck claim
 //   POST /api/crm/academies/:id/settings            { autoInvoice }
 //   POST /api/crm/academies/:id/apply-order         { orderId }   a signed order, onto this academy
+//   POST /api/crm/academies/:id/card-stop           stop its card at the end of the period paid for
 //   GET  /api/crm/companies/:id/academy             the company page card (companies.js routes it here)
-//   cron academy-alerts                             daily: alerts, automatic invoices, statuses from Xero
+//   cron academy-alerts                             daily: alerts, automatic invoices, card jobs, statuses from Xero
 //   recordAcademyOrder()                            called when a proposal with an academy is signed
+//
+// An academy paying by card (Starter and Team) is charged by Stripe: see
+// ./academyCards.js. Here it simply has no plan line to invoice, and its extra
+// people go on the card.
 
 import sql from '../db.js';
+import { ensureAcademyTables } from './academyTables.js';
 import { makeId, trimOrNull, escapeHtml } from './shared.js';
 import { getRole } from '../userRoles.js';
 import { hasPermission } from '../permissions.js';
@@ -36,6 +42,7 @@ import { emailInvoice } from '../xero.js';
 import { sendNotification, ensureAcademyNotificationDefaults } from '../notifications.js';
 import { getAcademy, linkAcademy, listAcademies, listPlans, setAcademyPlan } from '../lms.js';
 import { createXeroInvoiceForDeal, syncManualInvoicesFromXero } from './invoices.js';
+import { cardRowsFor, runCardJobs, stopAcademyCard, stripeClient } from './academyCards.js';
 import {
   academyFlags, academyTotals, alertsFor, billingDue, fmtDay, isBilled, pounds,
 } from './academyBilling.js';
@@ -55,77 +62,9 @@ async function can(user, perms) {
 
 // ── Tables ──────────────────────────────────────────────────────────────────
 
-// academy_invoices: what has been billed for which academy period, one row per
-// line, so a period can never be invoiced twice (the unique index) and each row
-// knows the CRM invoice it went on. A row with no invoice is either a period
-// marked as billed some other way (source 'elsewhere') or a claim taken just
-// before Xero was asked (source 'invoice'), which the unmark action can clear if
-// the request died in between. academy_alerts: which alert has gone out, once.
-// academy_settings: per academy, whether its invoices raise themselves.
-// academy_orders: an academy sold on a proposal, waiting for (or applied to) the
-// academy it is for; a set-up fee on it is billed once it is applied.
-//
-// Never rejects: a self-heal that throws once took the whole CRM down with it.
-let tablesReady = null;
-export function ensureAcademyTables() {
-  if (tablesReady) return tablesReady;
-  tablesReady = (async () => {
-    await sql`
-      CREATE TABLE IF NOT EXISTS academy_invoices (
-        id                TEXT PRIMARY KEY,
-        tenant_id         TEXT NOT NULL,
-        company_id        TEXT,
-        kind              TEXT NOT NULL,
-        period_key        TEXT NOT NULL,
-        label             TEXT,
-        amount_ex_vat     NUMERIC NOT NULL DEFAULT 0,
-        manual_invoice_id TEXT,
-        source            TEXT NOT NULL DEFAULT 'invoice',
-        note              TEXT,
-        created_by        TEXT,
-        created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )`;
-    await sql`CREATE UNIQUE INDEX IF NOT EXISTS academy_invoices_period_uniq ON academy_invoices (tenant_id, kind, period_key)`;
-    await sql`CREATE INDEX IF NOT EXISTS academy_invoices_manual_idx ON academy_invoices (manual_invoice_id)`;
-    await sql`
-      CREATE TABLE IF NOT EXISTS academy_alerts (
-        tenant_id  TEXT NOT NULL,
-        kind       TEXT NOT NULL,
-        period_key TEXT NOT NULL,
-        sent_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        PRIMARY KEY (tenant_id, kind, period_key)
-      )`;
-    await sql`
-      CREATE TABLE IF NOT EXISTS academy_settings (
-        tenant_id    TEXT PRIMARY KEY,
-        auto_invoice BOOLEAN NOT NULL DEFAULT FALSE,
-        updated_by   TEXT,
-        updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )`;
-    await sql`
-      CREATE TABLE IF NOT EXISTS academy_orders (
-        id             TEXT PRIMARY KEY,
-        proposal_id    TEXT UNIQUE,
-        deal_id        TEXT,
-        company_id     TEXT,
-        tenant_id      TEXT,
-        plan           TEXT NOT NULL,
-        plan_name      TEXT,
-        billing_period TEXT,
-        setup_fee      NUMERIC NOT NULL DEFAULT 0,
-        status         TEXT NOT NULL DEFAULT 'waiting',
-        signer_name    TEXT,
-        signer_email   TEXT,
-        applied_at     TIMESTAMPTZ,
-        applied_by     TEXT,
-        created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )`;
-  })().catch((err) => {
-    tablesReady = null;
-    console.warn('[academies] ensureAcademyTables failed', err?.message || err);
-  });
-  return tablesReady;
-}
+// In ./academyTables.js; exported from here too, for the modules that already
+// reach it here.
+export { ensureAcademyTables };
 
 // ── Reading ─────────────────────────────────────────────────────────────────
 
@@ -235,17 +174,19 @@ function serialiseOrder(r) {
 async function composeAcademies(academies, now = new Date()) {
   const ids = academies.map((a) => a.id);
   const companyIds = [...new Set(academies.map((a) => a.crmCompanyId).filter(Boolean))];
-  const [companies, invoices, orders, settings] = await Promise.all([
+  const [companies, invoices, orders, settings, cards] = await Promise.all([
     companyIds.length ? sql`SELECT id, name FROM companies WHERE id = ANY(${companyIds})` : [],
     invoiceRows(ids),
     orderRows(ids),
     settingsFor(ids),
+    cardRowsFor(ids),
   ]);
   const byCompany = new Map(companies.map((c) => [c.id, c]));
   return academies.map((a) => {
     const rows = invoices.get(a.id) || [];
     const mine = (orders.get(a.id) || []).map(serialiseOrder);
-    const due = billingDue(a, rows.map((r) => ({ kind: r.kind, periodKey: r.period_key })), now, mine);
+    const card = cards.get(a.id) || null;
+    const due = billingDue(a, rows.map((r) => ({ kind: r.kind, periodKey: r.period_key })), now, mine, { card });
     const company = a.crmCompanyId
       ? (byCompany.has(a.crmCompanyId)
         ? { id: a.crmCompanyId, name: byCompany.get(a.crmCompanyId).name }
@@ -256,11 +197,13 @@ async function composeAcademies(academies, now = new Date()) {
       company,
       billed: isBilled(a),
       due,
-      dueTotal: round2(due.reduce((sum, l) => sum + l.amount, 0)),
-      flags: academyFlags(a, due, now),
+      // What waits on an invoice; what goes on the card is charged by the daily job.
+      dueTotal: round2(due.filter((l) => !l.viaCard).reduce((sum, l) => sum + l.amount, 0)),
+      flags: academyFlags({ ...a, card }, due, now),
       invoices: rows.map(serialiseInvoiceRow),
       orders: mine,
       autoInvoice: settings.get(a.id)?.autoInvoice === true,
+      card,
     };
   });
 }
@@ -368,7 +311,8 @@ async function raiseInvoiceRoute(req, res, id, user) {
   const lines = [];
   for (const wanted of Array.isArray(req.body?.lines) ? req.body.lines : []) {
     if (['plan', 'extras', 'setup'].includes(wanted?.kind)) {
-      const line = academy.due.find((l) => l.kind === wanted.kind && l.periodKey === wanted.periodKey);
+      // Never what goes on the card: that is charged there.
+      const line = academy.due.find((l) => l.kind === wanted.kind && l.periodKey === wanted.periodKey && !l.viaCard);
       if (!line) return res.status(409).json({ error: 'Part of that has already been invoiced, or is no longer due. Refresh and try again.' });
       lines.push(line);
     } else if (wanted?.kind === 'custom') {
@@ -608,10 +552,12 @@ export async function academiesRoute(req, res, id, action, user) {
       return res.status(403).json({ error: 'You do not have permission to manage invoices.' });
     }
     // Only a row with no invoice behind it: an invoice raised in Xero is voided
-    // there, not forgotten here.
+    // there, not forgotten here. Never a card charge: Stripe has it, and
+    // forgetting it here would charge the card a second time.
     await sql`
       DELETE FROM academy_invoices
-       WHERE id = ${trimOrNull(req.body?.rowId)} AND tenant_id = ${id} AND manual_invoice_id IS NULL`;
+       WHERE id = ${trimOrNull(req.body?.rowId)} AND tenant_id = ${id} AND manual_invoice_id IS NULL
+         AND source <> 'card'`;
     try { return res.status(200).json({ academy: await composeOne(id) }); } catch (err) { return lmsError(res, err); }
   }
 
@@ -625,6 +571,18 @@ export async function academiesRoute(req, res, id, action, user) {
       VALUES (${id}, ${autoInvoice}, ${user?.email || null}, NOW())
       ON CONFLICT (tenant_id) DO UPDATE SET auto_invoice = EXCLUDED.auto_invoice,
         updated_by = EXCLUDED.updated_by, updated_at = NOW()`;
+    try { return res.status(200).json({ academy: await composeOne(id) }); } catch (err) { return lmsError(res, err); }
+  }
+
+  if (action === 'card-stop' && req.method === 'POST') {
+    if (!(await can(user, INVOICE_PERMS))) {
+      return res.status(403).json({ error: 'You do not have permission to manage card payments.' });
+    }
+    try {
+      await stopAcademyCard(stripeClient(), id);
+    } catch (err) {
+      return res.status(err?.status || 502).json({ error: err?.status ? err.message : 'Stripe did not accept that. Try again, or stop it in Stripe.' });
+    }
     try { return res.status(200).json({ academy: await composeOne(id) }); } catch (err) { return lmsError(res, err); }
   }
 
@@ -782,6 +740,8 @@ export async function cronAcademyAlerts(res) {
   const composed = await composeAcademies(academies.filter((a) => !a.demo), now);
   let sent = 0;
   let invoiced = 0;
+  // Card academies first: extra people onto the card, card payments into Xero.
+  const cards = await runCardJobs(composed);
 
   for (const a of composed) {
     for (const alert of alertsFor(a, now)) {
@@ -811,13 +771,14 @@ export async function cronAcademyAlerts(res) {
 
     // Invoices that raise themselves: everything due, on one invoice, sent by
     // Xero. The same claims as the button, so the two can never both bill it.
-    if (a.autoInvoice && a.due.length && a.company && !a.company.missing) {
+    const toInvoice = a.due.filter((l) => !l.viaCard);
+    if (a.autoInvoice && toInvoice.length && a.company && !a.company.missing) {
       try {
-        const invoice = await raiseAcademyInvoice(a, a.company, a.due, { email: true });
+        const invoice = await raiseAcademyInvoice(a, a.company, toInvoice, { email: true });
         invoiced += 1;
-        const total = round2(a.due.reduce((sum, l) => sum + l.amount, 0));
+        const total = round2(toInvoice.reduce((sum, l) => sum + l.amount, 0));
         const subject = `Academy invoice raised: ${a.company.name}, ${gbp(total)} + VAT`;
-        const body = `${invoice.invoiceNumber || 'An invoice'} for ${a.name}: ${a.due.map((l) => l.label).join('; ')}. `
+        const body = `${invoice.invoiceNumber || 'An invoice'} for ${a.name}: ${toInvoice.map((l) => l.label).join('; ')}. `
           + (invoice.emailed ? 'Xero has emailed it to the client.' : 'Xero could not email it: send it from Xero.');
         await sendNotification('academy.invoice_raised', {
           subject,
@@ -830,5 +791,5 @@ export async function cronAcademyAlerts(res) {
       }
     }
   }
-  return res.status(200).json({ ok: true, sent, invoiced });
+  return res.status(200).json({ ok: true, sent, invoiced, cards });
 }
