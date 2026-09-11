@@ -21,6 +21,7 @@ const SALE_TONE_COLOR = { green: 'green', amber: 'orange', teal: 'blue', grey: '
 import { Avatar, AvatarGroup } from '../Avatar.jsx';
 import { PIPELINE_STAGES, NewDealModal } from './PipelineView.jsx';
 import { TaskFormModal, AssigneePicker } from './TaskFormModal.jsx';
+import { GoodToGoModal, ProjectManagerSelect, kickoffInviteMessage } from './ProjectManagerSelect.jsx';
 import { DealSearchPicker } from './DealSearchPicker.jsx';
 import { ContactSearchPicker } from './ContactSearchPicker.jsx';
 import { CompanySearchPicker } from './CompanySearchPicker.jsx';
@@ -252,6 +253,7 @@ function DealDetailBody({ dealId, onBack, backLabel, onOpenProposal, onCreatePro
   };
   const [openEmailId, setOpenEmailId] = useState(null);
   const [askLost, setAskLost] = useState(false);
+  const [goodToGoOpen, setGoodToGoOpen] = useState(false);
   const [prefillTitle, setPrefillTitle] = useState('');
   const [replyingTo, setReplyingTo] = useState(null);
   const [editingCommentId, setEditingCommentId] = useState(null);
@@ -353,9 +355,9 @@ function DealDetailBody({ dealId, onBack, backLabel, onOpenProposal, onCreatePro
   // But the kick-off task offers the assigned team's availability, so there must
   // be a team first — otherwise the client lands on a dead "no availability"
   // screen. Block the intro email until someone's assigned (server enforces too).
-  const hasTeam = Array.isArray(deal.producerEmails)
+  const hasTeam = (Array.isArray(deal.producerEmails)
     ? deal.producerEmails.length > 0
-    : !!deal.producerEmail;
+    : !!deal.producerEmail) || !!deal.projectManagerEmail;
   const events = detail?.events || [];
   const tasks = detail?.tasks || [];
   const emails = detail?.emails || [];
@@ -434,12 +436,18 @@ function DealDetailBody({ dealId, onBack, backLabel, onOpenProposal, onCreatePro
   };
 
   // "Good to go": move the deal into Projects/production and notify the project
-  // managers. One-way, so confirm first.
-  const handleGoodToGo = () => {
-    if (!window.confirm('Mark this deal “Good to go”?\n\nIt will move into Projects (production) and the project managers will be notified. This can’t be undone.')) return;
-    actions.markDealGoodToGo(dealId)
-      .then(() => showMsg('Good to go — moved to Projects, project managers notified'))
-      .catch((err) => showMsg(err?.message || 'Could not mark good to go'));
+  // managers. One-way, so it's confirmed in a dialog — which is also where the
+  // project manager is chosen (they're invited to the client's kick-off).
+  const handleGoodToGo = () => setGoodToGoOpen(true);
+
+  // Change the project manager after the fact. If the client has already booked
+  // their kick-off, the server adds the new PM to that invite.
+  const saveProjectManager = async (email) => {
+    const resp = await actions.saveDeal(dealId, { projectManagerEmail: email || null });
+    if (!resp) return; // saveDeal already rolled back + reported the failure
+    const name = email ? (state.users?.[email]?.name || email) : null;
+    const extra = kickoffInviteMessage(resp.kickoffInvite, name);
+    showMsg(email ? `Project manager: ${name}${extra ? `. ${extra}` : ''}` : 'Project manager removed');
   };
 
   // Project overview video (e.g. Loom): owner records a quick walkthrough for
@@ -705,6 +713,13 @@ function DealDetailBody({ dealId, onBack, backLabel, onOpenProposal, onCreatePro
             }}
             emptyLabel="No team members assigned"
           />
+          <div style={{ fontSize: 11, color: BRAND.muted, textTransform: 'uppercase', letterSpacing: 0.4, margin: '12px 0 6px' }}>Project manager</div>
+          <ProjectManagerSelect
+            value={deal.projectManagerEmail || ''}
+            onChange={saveProjectManager}
+            placeholder={isProject ? 'No project manager — choose one…' : 'Chosen when it’s marked Good to go'}
+          />
+          <div style={{ fontSize: 11, color: BRAND.muted, marginTop: 4 }}>Runs the project and is invited to the client’s kick-off call.</div>
         </div>
         {!productionOnly && (
           <SecondaryContactsRow
@@ -1218,6 +1233,13 @@ function DealDetailBody({ dealId, onBack, backLabel, onOpenProposal, onCreatePro
       )}
       {/* Composer lives at the App root now (see EmailComposerHost) so it
           stays open across CRM navigation. Opened via actions.openComposer. */}
+      {goodToGoOpen && (
+        <GoodToGoModal
+          deal={{ ...deal, id: dealId }}
+          onClose={() => setGoodToGoOpen(false)}
+          onDone={() => setGoodToGoOpen(false)}
+        />
+      )}
       {askLost && (
         <LostReasonModal
           onClose={() => setAskLost(false)}
@@ -3568,6 +3590,10 @@ function describeEvent(e) {
     case 'storyboard_reopened_for_client': return `Storyboard review reopened for the client: ${p.storyboard || 'storyboard'}${p.emailed ? ' (reviewers emailed)' : ''}`;
     case 'review_email_sent': return `Review email sent${p.item ? `: ${p.item}` : ''}${p.to?.length ? ` → ${p.to.join(', ')}` : ''}`;
     case 'demo_visit':    return `Opened the ${p.academy || 'demo'} demo${p.login ? ` as ${p.login}` : ''}${p.device ? `, on ${p.device}` : ''}`;
+    case 'project_manager_changed': return p.to ? `Project manager: ${p.to}` : 'Project manager removed';
+    case 'kickoff_call_booked':     return `Kick-off call booked${p.clientName ? ` by ${p.clientName}` : ''}`;
+    case 'intro_call_booked':       return `Intro call booked${p.clientName ? ` by ${p.clientName}` : ''}`;
+    case 'intro_call_attendee_added': return `Added to the call invite${p.email ? `: ${p.email}` : ''}`;
     default:              return e.eventType;
   }
 }

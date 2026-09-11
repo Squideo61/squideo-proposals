@@ -166,23 +166,47 @@ function londonParts(date) {
 
 // ── Attendees + availability ─────────────────────────────────────────────────
 
-// The production team for a deal: the producer/PM (deals.producer_email) plus
-// every deal_assignees row. Deduped, lowercased. The first element (producer,
-// else first assignee) is the organizer whose calendar holds the event.
+// Self-heal for db/migrations/20260911_deal_project_manager.sql — the one person
+// who manages a project, chosen when it's marked "Good to go". Lives here (not
+// deals.js) because this file is what invites them to the kick-off, and deals.js
+// can import it without a cycle. Never rejects: resolves false if it couldn't.
+let dealProjectManagerEnsured = null;
+export function ensureDealProjectManager() {
+  if (dealProjectManagerEnsured) return dealProjectManagerEnsured;
+  dealProjectManagerEnsured = sql`
+    ALTER TABLE deals ADD COLUMN IF NOT EXISTS project_manager_email TEXT
+  `.then(() => true).catch((err) => {
+    console.error('[deals] ensure project_manager_email failed', err?.message || err);
+    dealProjectManagerEnsured = null;
+    return false;
+  });
+  return dealProjectManagerEnsured;
+}
+
+// The production team for a deal: the producer (deals.producer_email), every
+// deal_assignees row, and the project's manager (deals.project_manager_email).
+// Deduped, lowercased. The first element (producer, else first assignee, else
+// the project manager) is the organizer whose calendar holds the event.
+//
+// The project manager is a REQUIRED attendee — offered slots must suit them —
+// because they run the kick-off. Without them on this list, a PM who wasn't
+// also on the deal's team never received the invite for their own project.
 export async function getDealAttendees(dealId) {
-  const rows = await sql`
-    SELECT producer_email, owner_email FROM deals WHERE id = ${dealId}
-  `;
+  const hasPmColumn = await ensureDealProjectManager();
+  const rows = hasPmColumn
+    ? await sql`SELECT producer_email, owner_email, project_manager_email FROM deals WHERE id = ${dealId}`
+    : await sql`SELECT producer_email, owner_email FROM deals WHERE id = ${dealId}`;
   if (!rows.length) return { organizer: null, attendees: [], optional: [] };
   const producer = rows[0].producer_email ? String(rows[0].producer_email).toLowerCase() : null;
   const owner = rows[0].owner_email ? String(rows[0].owner_email).toLowerCase() : null;
+  const manager = rows[0].project_manager_email ? String(rows[0].project_manager_email).toLowerCase() : null;
   let assignees = [];
   try {
     const arows = await sql`SELECT user_email FROM deal_assignees WHERE deal_id = ${dealId} ORDER BY assigned_at`;
     assignees = arows.map((r) => String(r.user_email).toLowerCase());
   } catch (_) { /* deal_assignees not yet migrated */ }
   const ordered = [];
-  for (const e of [producer, ...assignees]) {
+  for (const e of [producer, ...assignees, manager]) {
     if (e && !ordered.includes(e)) ordered.push(e);
   }
   // The deal's OWNER — the person who sold it — is invited but deliberately

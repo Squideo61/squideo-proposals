@@ -9,6 +9,8 @@ import { serialiseTask } from './tasks.js';
 import { serialiseComment, notifyCommentMentions } from './comments.js';
 import { serialiseContact } from './contacts.js';
 import { getFreshAccessToken } from './gmail.js';
+import { ensureDealProjectManager } from './introCallSlots.js';
+import { addEventAttendees } from '../googleCalendar.js';
 import { trackingForDealThreads, trackingForMessages, backfillDealTrackingIds } from './tracking.js';
 import { ensureDealFolder, findDealFolders, uploadToFolder, getDriveFileLink, deleteDriveFile, folderUsable, listFolderFiles, createResumableUploadSession, applyFolderTemplate, listSubfolderTree, isFolderWithin, listFolderContents, getDriveFile, folderTemplateIsSafeToApply } from '../googleDrive.js';
 import { getRole } from '../userRoles.js';
@@ -622,6 +624,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
   await ensureDealHot();
   await ensureDealVat();
   await ensureDealReference();
+  await ensureDealProjectManager(); // never rejects
   await ensureDealPipelineArchive();
   if (!id) {
     if (req.method === 'GET') {
@@ -804,11 +807,29 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
         error: 'This deal isn’t ready yet — a deal must be signed, paid, or on a purchase order before it can be marked good to go.',
       });
     }
+    // Every project has a manager, chosen here: they run it and are invited to
+    // the client's kick-off call. One already set on the deal will do.
+    let pmResult = null;
+    try {
+      const chosen = trimOrNull(req.body?.projectManagerEmail);
+      if (chosen) {
+        pmResult = await setProjectManager(id, chosen, user);
+      } else {
+        const [cur] = (await ensureDealProjectManager())
+          ? await sql`SELECT project_manager_email FROM deals WHERE id = ${id}`
+          : [{}];
+        if (!cur?.project_manager_email) {
+          return res.status(400).json({ error: 'Choose a project manager for this project.' });
+        }
+      }
+    } catch (err) {
+      return res.status(err.status || 500).json({ error: err.message });
+    }
     const result = await enterProduction(id, { source: 'good-to-go', actorEmail: user.email || null });
     // Alert the project managers that there's a new project to pick up. Best-
     // effort — a notification failure must never undo the production entry.
     if (result.entered) {
-      try { await notifyGoodToGo(d, user); }
+      try { await notifyGoodToGo({ ...d, projectManagerEmail: pmResult?.projectManagerEmail || null }, user); }
       catch (err) { console.error('[deals] good-to-go notify failed', err); }
       // Seed the producer calendar for the new project (best-effort).
       try { await syncDealSchedule(id); }
@@ -823,7 +844,7 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     }
     const rows = await sql`SELECT * FROM deals WHERE id = ${id}`;
     const [deal] = await annotateDeals(rows);
-    return res.status(200).json({ ok: true, deal });
+    return res.status(200).json({ ok: true, deal, kickoffInvite: pmResult?.kickoff || null });
   }
 
   if (action === 'comments') {
@@ -2054,6 +2075,13 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
       await setDealAssignees(id, producers);
       await sql`UPDATE deals SET producer_email = ${producers[0] || null} WHERE id = ${id}`;
     }
+    // The project manager (one person; blank clears). Also joins them to a
+    // kick-off the client has already booked.
+    let pmResult = null;
+    if ('projectManagerEmail' in body) {
+      try { pmResult = await setProjectManager(id, body.projectManagerEmail, user); }
+      catch (err) { return res.status(err.status || 500).json({ error: err.message }); }
+    }
     // Manual production start date (PM-set; nullable). Self-heal the column so the
     // edit works on a workspace that hasn't hit a production path yet.
     if ('productionStartDate' in body) {
@@ -2090,7 +2118,11 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
     const producerEmails = producerRows.length
       ? producerRows.map(r => r.user_email)
       : (rows[0].producer_email ? [rows[0].producer_email] : []);
-    return res.status(200).json({ ...serialiseDeal(rows[0]), producerEmails });
+    return res.status(200).json({
+      ...serialiseDeal(rows[0]),
+      producerEmails,
+      ...(pmResult ? { projectManagerEmail: pmResult.projectManagerEmail, kickoffInvite: pmResult.kickoff } : {}),
+    });
   }
 
   if (req.method === 'DELETE') {
@@ -2139,6 +2171,72 @@ export async function dealsRoute(req, res, id, action, user, subaction = null) {
   return res.status(405).end();
 }
 
+// Make `rawEmail` (or nobody, when blank) the project's manager. They must be a
+// CRM user. If the client has ALREADY booked their kick-off, the invite went out
+// before this person was on it — so they're added to that Google event now
+// (Google emails them the invite). Returns { projectManagerEmail, kickoff } where
+// kickoff is { added, error } or null when there was nothing to add them to.
+// Throws Error with .status for caller-facing problems.
+async function setProjectManager(dealId, rawEmail, actor) {
+  if (!(await ensureDealProjectManager())) {
+    const e = new Error('Could not save the project manager — try again'); e.status = 503; throw e;
+  }
+  const wanted = lowerOrNull(rawEmail);
+  let stored = null;
+  if (wanted) {
+    const [u] = await sql`SELECT email FROM users WHERE LOWER(email) = ${wanted} LIMIT 1`;
+    if (!u) { const e = new Error('That project manager isn’t a CRM user'); e.status = 400; throw e; }
+    stored = u.email;
+  }
+  const [cur] = await sql`SELECT project_manager_email FROM deals WHERE id = ${dealId}`;
+  if (!cur) { const e = new Error('Not found'); e.status = 404; throw e; }
+  await sql`UPDATE deals SET project_manager_email = ${stored}, updated_at = NOW() WHERE id = ${dealId}`;
+  const before = lowerOrNull(cur.project_manager_email);
+  if (before !== wanted) {
+    await sql`
+      INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
+      VALUES (${dealId}, 'project_manager_changed', ${JSON.stringify({ from: cur.project_manager_email || null, to: stored })}, ${actor?.email || null})
+    `.catch(() => {});
+  }
+  const kickoff = stored && before !== wanted ? await inviteToBookedKickoff(dealId, stored, actor) : null;
+  return { projectManagerEmail: stored, kickoff };
+}
+
+// Add `email` to the deal's upcoming, already-booked kick-off call(s). Best-
+// effort: returns { added: n, error } — a failure here never undoes the save,
+// but is reported so the person can add them by hand from the kick-off card.
+async function inviteToBookedKickoff(dealId, email, actor) {
+  const target = String(email).toLowerCase();
+  const bookings = await sql`
+    SELECT id, organizer_email, google_event_id, attendee_emails
+      FROM intro_call_bookings
+     WHERE deal_id = ${dealId} AND kind = 'kickoff' AND status = 'confirmed' AND ends_at > NOW()
+  `.catch(() => []);
+  let added = 0;
+  let error = null;
+  for (const b of bookings) {
+    const on = (b.attendee_emails || []).map((e) => String(e).toLowerCase());
+    if (on.includes(target) || String(b.organizer_email || '').toLowerCase() === target) continue;
+    if (!b.google_event_id) { error = 'The booked kick-off has no calendar event to add them to.'; continue; }
+    try {
+      const tok = await getFreshAccessToken(b.organizer_email);
+      await addEventAttendees(tok, b.google_event_id, [target], { optional: false });
+      await sql`UPDATE intro_call_bookings SET attendee_emails = ${Array.from(new Set([...on, target]))}::text[] WHERE id = ${b.id}`;
+      await sql`
+        INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
+        VALUES (${dealId}, 'intro_call_attendee_added', ${JSON.stringify({ bookingId: b.id, email: target })}, ${actor?.email || null})
+      `.catch(() => {});
+      added += 1;
+    } catch (err) {
+      console.error('[deals] add PM to booked kick-off failed', dealId, err.message);
+      error = err.code === 'REAUTH_CALENDAR'
+        ? 'The kick-off organiser needs to reconnect Google Calendar before they can be added.'
+        : 'Could not add them to the booked kick-off invite — add them from the kick-off card.';
+    }
+  }
+  return bookings.length ? { added, error } : null;
+}
+
 // Alert the project managers (and admins/directors, per their prefs) that a
 // deal has been marked "Good to go" and is now a production project. Broadcast
 // on the general (Updates) bell + email; the person who clicked is excluded —
@@ -2147,15 +2245,22 @@ async function notifyGoodToGo(deal, user) {
   const title = deal.title || deal.id;
   const link = `${APP_URL}/#/deal/${deal.id}`;
   const actor = user?.name || user?.email || 'Someone';
+  let pmName = null;
+  if (deal.projectManagerEmail) {
+    const [u] = await sql`SELECT name FROM users WHERE LOWER(email) = ${String(deal.projectManagerEmail).toLowerCase()} LIMIT 1`.catch(() => []);
+    pmName = u?.name || deal.projectManagerEmail;
+  }
+  const pmLine = pmName ? ` Project manager: ${pmName}.` : '';
   await sendNotification('project.good_to_go', {
     subject: `🟢 Good to go: ${title}`,
     html: `<p style="font-size:15px"><strong>${actor}</strong> marked <strong>${title}</strong> good to go — it’s now in production and ready to pick up.</p>`
+        + (pmName ? `<p style="font-size:15px">Project manager: <strong>${pmName}</strong></p>` : '')
         + `<p><a href="${link}">Open the project</a></p>`,
-    text: `${actor} marked “${title}” good to go — it’s now in production and ready to pick up. ${link}`,
+    text: `${actor} marked “${title}” good to go — it’s now in production and ready to pick up.${pmLine} ${link}`,
     excludeEmails: user?.email ? [user.email] : null,
     inApp: {
       title: `Good to go: ${title}`,
-      body: `${actor} moved this deal into production.`,
+      body: `${actor} moved this deal into production.${pmLine}`,
       link: `#/deal/${deal.id}`,
     },
   });
@@ -2257,6 +2362,8 @@ export function serialiseDeal(r) {
   // PO tracking fields — carried on SELECT * rows (deals list + detail). Omitted
   // on partial selects so a stage move / edit never blanks them in the cache.
   if ('po_number' in r) { out.poNumber = r.po_number || null; out.poReceivedAt = r.po_received_at || null; }
+  // The project's manager (chosen at "Good to go"); guarded like the rest.
+  if ('project_manager_email' in r) out.projectManagerEmail = r.project_manager_email || null;
   // Production fields are only carried on rows selected with them (the deals
   // list and detail use SELECT *). Partial selects — a sales-stage move, a
   // deal edit — omit these keys so they're never blanked out in the cached

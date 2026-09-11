@@ -2144,9 +2144,11 @@ export function StoreProvider({ children }) {
     // the project managers. One-way (no undo) — the server gates eligibility
     // (signed / paid / PO) and rejects a too-early click; the caller surfaces
     // the error. On success we reload the deal + board so the UI flips to the
-    // project (production progress bar) view.
-    markDealGoodToGo(dealId) {
-      return api.post('/api/crm/deals/' + encodeURIComponent(dealId) + '/good-to-go', {})
+    // project (production progress bar) view. `projectManagerEmail` is who runs
+    // the project — required unless the deal already has one — and who's invited
+    // to the client's kick-off call.
+    markDealGoodToGo(dealId, projectManagerEmail) {
+      return api.post('/api/crm/deals/' + encodeURIComponent(dealId) + '/good-to-go', { projectManagerEmail: projectManagerEmail || undefined })
         .then((resp) => {
           if (resp?.deal) setState(s => applyOne(s, { kind: 'deal', id: resp.deal.id, patch: resp.deal }));
           return Promise.all([actions.loadDealDetail(dealId), actions.loadProductionVideos()]).then(() => resp);

@@ -1,0 +1,13 @@
+-- Project manager per project.
+--
+-- One person manages each project. They're chosen when the deal is marked
+-- "Good to go" (and can be changed on the deal page afterwards), and they're a
+-- required attendee on the client's kick-off call — offered slots must suit
+-- them, and they get the Google invite. Setting one on a deal whose kick-off is
+-- already booked adds them to that invite.
+--
+-- Before this, the kick-off invite went only to the deal's team (producers),
+-- so a project manager who wasn't also on the team never received it.
+--
+-- Also self-healed by ensureDealProjectManager() in api/_lib/crm/introCallSlots.js.
+ALTER TABLE deals ADD COLUMN IF NOT EXISTS project_manager_email TEXT;

@@ -32,6 +32,7 @@ import {
   portalPresence, portalEngagement, portalActiveUsers,
 } from '../_lib/portal/activity.js';
 import { isFinalReleaseUnlocked } from '../_lib/crm/delivery.js';
+import { ensureDealProjectManager } from '../_lib/crm/introCallSlots.js';
 import { computePortalOffers } from '../_lib/portal/extrasOffers.js';
 import { ensureClientBriefs } from '../_lib/brief/db.js';
 import { briefProgress, renderBriefText } from '../_lib/brief/questions.js';
@@ -789,9 +790,13 @@ export default async function handler(req, res) {
       if (body.markIntro) {
         const [{ n }] = await sql`SELECT COUNT(*)::int AS n FROM deal_assignees WHERE deal_id = ${dealId}`
           .catch(() => [{ n: 0 }]);
-        const hasTeam = n > 0 || !!deal.producer_email;
+        // The project manager hosts the kick-off too, so they count as a team.
+        const [pm] = (await ensureDealProjectManager())
+          ? await sql`SELECT project_manager_email FROM deals WHERE id = ${dealId}`
+          : [{}];
+        const hasTeam = n > 0 || !!deal.producer_email || !!pm?.project_manager_email;
         if (!hasTeam) {
-          return res.status(400).json({ error: 'Assign a team member to this deal before sending the intro email — they host the client’s kick-off call.' });
+          return res.status(400).json({ error: 'Assign a team member or project manager to this deal before sending the intro email — they host the client’s kick-off call.' });
         }
       }
 

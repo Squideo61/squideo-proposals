@@ -425,6 +425,12 @@ function ProjectOverview({ detail }) {
           })}
         </div>
       )}
+      {detail.projectManagerEmail && (
+        <Row>
+          <DealMetaKey>Project manager</DealMetaKey>
+          <AvatarGroup emails={[detail.projectManagerEmail]} max={1} size={20} />
+        </Row>
+      )}
       {producerEmails.length > 0 && (
         <Row>
           <DealMetaKey>Producer</DealMetaKey>
