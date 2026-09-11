@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, BarChart3, Bell, CalendarDays, ChevronDown, Clapperboard, CheckSquare, Coins, FileText, Gauge, Globe, GraduationCap, Images, KanbanSquare, LayoutDashboard, LayoutGrid, Mail, MailQuestion, Megaphone, Menu, PoundSterling, Search, Send, Settings, Square, Undo2, Redo2, UserCog, X } from 'lucide-react';
+import { Activity, BarChart3, Bell, CalendarDays, ChevronDown, Clapperboard, CheckSquare, Coins, FileText, Gauge, Globe, GraduationCap, Images, KanbanSquare, LayoutDashboard, LayoutGrid, Mail, MailQuestion, Megaphone, Menu, MonitorPlay, PoundSterling, Search, Send, Settings, Square, Undo2, Redo2, UserCog, X } from 'lucide-react';
 import { BRAND, APP_MAX_WIDTH } from '../../theme.js';
 import { useStore } from '../../store.jsx';
 import { useIsMobile, formatTaskDue } from '../../utils.js';
@@ -79,7 +79,7 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
   // Requests = quote_requests.manage, Projects/board = production.access, etc.).
   const {
     canRevisions, canProduction, canSchedule, canQuoteRequests,
-    canAdmin, canPendingPayments, canMarketing, canPortalPreview, canAcademies,
+    canAdmin, canPendingPayments, canMarketing, canPortalPreview, canAcademies, canDemos,
   } = navFlags(perms);
   // The £ (sales & finance) notifications bell — Admin, Directors, Project Managers.
   const canFinanceBell = permissionsInclude(perms, 'finance.notifications');
@@ -119,12 +119,13 @@ export function CrmTopBar({ view, fullWidth, navigate, onManageAccount, onOpenLi
     {
       key: 'sales',
       label: 'Sales',
-      views: ['list', 'pipeline', 'deal', 'quote-requests', 'templates', 'sales-insights'],
+      views: ['list', 'pipeline', 'deal', 'quote-requests', 'templates', 'sales-insights', 'demos'],
       items: [
         ...(canQuoteRequests ? [{ label: 'Quote Requests', icon: MailQuestion, ...to('quote-requests'), count: newQuoteRequestsCount }] : []),
         { label: 'Proposals', icon: FileText, ...to('list') },
         { label: 'Sales Pipeline', icon: KanbanSquare, ...to('pipeline') },
         { label: 'Sales Insights', icon: Gauge, ...to('sales-insights') },
+        ...(canDemos ? [{ label: 'Demos', icon: MonitorPlay, ...to('demos') }] : []),
       ],
     },
     {

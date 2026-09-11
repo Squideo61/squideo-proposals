@@ -249,6 +249,16 @@ export const NOTIFICATIONS = [
     channel: 'tracking',
   },
   {
+    key: 'demo.opened',
+    label: 'Demo academy opened',
+    description: 'A prospect signs in to the demo academy made for them (once per sitting): who, on what device, and a link to what they did.',
+    audience: 'broadcast',
+    group: 'Tracking',
+    channel: 'tracking',
+    // Only people who can open Sales → Demos, where the link goes.
+    requiresPermission: 'demos.view',
+  },
+  {
     key: 'comment.mention',
     label: 'Mentioned in a comment',
     description: 'A teammate @-mentions you in a comment on a deal or project.',

@@ -507,6 +507,23 @@ export async function ensureAcademyNotificationDefaults() {
   }
 }
 
+// "A prospect opened their demo" goes to whoever hears about new quote requests
+// — it is a sales signal — on the bell and by email (the platform used to email
+// it directly, and the email is what people are used to acting on).
+let demoDefaultsReady = false;
+export async function ensureDemoNotificationDefaults() {
+  if (demoDefaultsReady) return;
+  try {
+    await sql`UPDATE roles SET notification_defaults = jsonb_set(
+      notification_defaults, '{demo.opened}',
+      COALESCE(notification_defaults->'quote_request.new', 'false'::jsonb), true)
+      WHERE NOT (notification_defaults ? 'demo.opened')`;
+    demoDefaultsReady = true;
+  } catch (err) {
+    console.warn('[notifications] ensureDemoNotificationDefaults failed', err.message);
+  }
+}
+
 export async function ensurePortalNotificationDefaults() {
   if (portalDefaultsReady) return;
   try {

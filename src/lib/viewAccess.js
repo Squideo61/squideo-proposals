@@ -38,6 +38,8 @@ export function navFlags(perms) {
     canAcademies: canBusiness
       || permissionsInclude(perms, 'finance.pending_payments')
       || permissionsInclude(perms, 'invoices.manage'),
+    // Sales → Demos: the demo academies built for prospects.
+    canDemos: permissionsInclude(perms, 'demos.view') || permissionsInclude(perms, 'demos.manage'),
     // Same permission that opens a client's portal read-only — the activity feed
     // shows what you'd see by looking, so it's gated the same way.
     canPortalPreview: permissionsInclude(perms, 'portal.preview')
@@ -66,6 +68,7 @@ const VIEW_GUARDS = {
   admin:            (f) => f.canAdmin,
   'portal-activity': (f) => f.canPortalPreview,
   academies:        (f) => f.canAcademies,
+  demos:            (f) => f.canDemos,
 };
 
 // Can this permission set reach this view? Unknown/unguarded views are allowed.

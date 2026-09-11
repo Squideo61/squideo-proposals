@@ -3567,6 +3567,7 @@ function describeEvent(e) {
     case 'revision_reopened_for_client':  return `Video review reopened for the client: ${p.video || 'video'}${p.emailed ? ' (reviewers emailed)' : ''}`;
     case 'storyboard_reopened_for_client': return `Storyboard review reopened for the client: ${p.storyboard || 'storyboard'}${p.emailed ? ' (reviewers emailed)' : ''}`;
     case 'review_email_sent': return `Review email sent${p.item ? `: ${p.item}` : ''}${p.to?.length ? ` → ${p.to.join(', ')}` : ''}`;
+    case 'demo_visit':    return `Opened the ${p.academy || 'demo'} demo${p.login ? ` as ${p.login}` : ''}${p.device ? `, on ${p.device}` : ''}`;
     default:              return e.eventType;
   }
 }

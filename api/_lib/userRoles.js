@@ -115,6 +115,15 @@ export function ensureSystemRoles() {
       `;
       if ((ppUpd.count || ppUpd.rowCount || 0) > 0) invalidateRoleCache('member');
 
+      // Sales → Demos (the demo academies built for prospects) for Directors and
+      // Project Managers, the people who sell and follow up. Admin has '*'.
+      const demoUpd = await sql`
+        UPDATE roles
+           SET permissions = permissions || '["demos.view", "demos.manage"]'::jsonb, updated_at = NOW()
+         WHERE id IN ('director', 'member') AND NOT (permissions @> '["demos.view"]'::jsonb)
+      `;
+      if ((demoUpd.count || demoUpd.rowCount || 0) > 0) invalidateRoleCache();
+
       // The "pending payment marked paid" alert is a new broadcast key — default
       // it ON for Admin / Director / Project Manager so they actually receive it
       // (a key absent from notification_defaults resolves to OFF).

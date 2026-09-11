@@ -70,7 +70,7 @@ const NOUNS = {
   production: 'production record', schedule: 'schedule', commission: 'commission setting',
   voiceovers: 'voiceover artist', 'intro-calls': 'intro call', restore: 'deleted record',
   threads: 'email thread', emails: 'email', triage: 'inbox item',
-  'xero-contacts': 'Xero contact', gmail: 'email',
+  'xero-contacts': 'Xero contact', gmail: 'email', 'demo-academies': 'demo academy',
 };
 
 const VERBS = { POST: 'created', PUT: 'updated', PATCH: 'updated', DELETE: 'deleted' };

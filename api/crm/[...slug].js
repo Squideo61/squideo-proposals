@@ -40,6 +40,7 @@ import { portalAnalyticsRoute } from '../_lib/crm/portalAnalytics.js';
 import { tagsRoute } from '../_lib/crm/tags.js';
 import { campaignsRoute } from '../_lib/crm/campaigns.js';
 import { academiesRoute } from '../_lib/crm/academies.js';
+import { demoAcademiesRoute } from '../_lib/crm/demoAcademies.js';
 import { staffActivityRoute, beginWrite, finishWrite } from '../_lib/crm/staffActivity.js';
 import { getRole } from '../_lib/userRoles.js';
 import { hasPermission } from '../_lib/permissions.js';
@@ -169,6 +170,7 @@ export default async function handler(req, res) {
       case 'tags':      return await tagsRoute(req, res, id, action, user);
       case 'campaigns': return await campaignsRoute(req, res, id, action, user);
       case 'academies': return await academiesRoute(req, res, id, action, user);
+      case 'demo-academies': return await demoAcademiesRoute(req, res, id, action, user);
       default:           return res.status(404).json({ error: 'Unknown resource: ' + resource });
     }
   } catch (err) {

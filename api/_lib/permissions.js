@@ -32,6 +32,8 @@ export const PERMISSIONS = [
   { slug: 'invoices.manage',      group: 'CRM',        label: 'Manage CRM invoices + Xero sync' },
   { slug: 'quote_requests.manage',group: 'CRM',        label: 'View + qualify quote requests' },
   { slug: 'partner_credits.manage', group: 'CRM',      label: 'Manage partner credits' },
+  { slug: 'demos.view',           group: 'CRM',        label: 'See the demo academies (Sales → Demos) and who has opened them' },
+  { slug: 'demos.manage',         group: 'CRM',        label: 'Link demo academies to deals, change their alerts, reset their visits' },
 
   { slug: 'portal.preview',       group: 'CRM',        label: 'View a client’s portal as they see it (read-only)' },
   { slug: 'portal.manage',        group: 'CRM',        label: 'Manage client portals — the portal cards, invite people, portal offers' },

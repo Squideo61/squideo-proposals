@@ -96,6 +96,34 @@ export async function patchAcademy(id, body) {
   return (await lmsFetch(`academies/${encodeURIComponent(id)}`, { method: 'PATCH', body })).academy || null;
 }
 
+// ── Demo academies ──────────────────────────────────────────────────────────
+// The academies built for a prospect to try. The platform owns them and their
+// visit history (crm/demos there); the CRM shows them on Sales → Demos.
+
+/** Every demo academy: its type, logins, linked deal and last visit. */
+export async function listDemoAcademies() {
+  return (await lmsFetch('demos')).demos || [];
+}
+
+export async function getDemoAcademy(id) {
+  return (await lmsFetch(`demos/${encodeURIComponent(id)}`)).demo || null;
+}
+
+/** Its visits, newest first: { start, end, minutes, device, logins, events }. */
+export async function demoAcademyVisits(id) {
+  return (await lmsFetch(`demos/${encodeURIComponent(id)}/visits`)).visits || [];
+}
+
+/** { demoType?, notifyOnSignIn?, crmDealId?, crmCompanyId? } */
+export async function patchDemoAcademy(id, body) {
+  return (await lmsFetch(`demos/${encodeURIComponent(id)}`, { method: 'PATCH', body })).demo || null;
+}
+
+/** Forget every visit by its demo logins. Returns { removed, demo }. */
+export async function resetDemoAcademyVisits(id) {
+  return lmsFetch(`demos/${encodeURIComponent(id)}/reset-visits`, { method: 'POST', body: {} });
+}
+
 /**
  * The other direction: the platform calling the CRM (api/academy-billing), to
  * take a card payment. It sends the same shared secret. Why a request is
