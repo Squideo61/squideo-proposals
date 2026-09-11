@@ -26,6 +26,7 @@ import Extras from './pages/Extras.jsx';
 import Voiceover from './pages/Voiceover.jsx';
 import Kickoff from './pages/Kickoff.jsx';
 import Script from './pages/Script.jsx';
+import PurchaseOrder from './pages/PurchaseOrder.jsx';
 import RequestVideo from './pages/RequestVideo.jsx';
 import Team from './pages/Team.jsx';
 import Settings from './pages/Settings.jsx';
@@ -474,7 +475,7 @@ function AuthedApp() {
     portalApi.post('track', {
       view: route.view,
       companyId,
-      dealId: ['project', 'extras', 'voiceover', 'kickoff', 'script'].includes(route.view) ? route.param : null,
+      dealId: ['project', 'extras', 'voiceover', 'kickoff', 'script', 'po'].includes(route.view) ? route.param : null,
     }).catch(() => {});
   }, [route.view, route.param, companyId, preview]);
 
@@ -492,6 +493,7 @@ function AuthedApp() {
     case 'voiceover': page = <Voiceover dealId={route.param} />; break;
     case 'kickoff': page = <Kickoff dealId={route.param} />; break;
     case 'script': page = <Script dealId={route.param} />; break;
+    case 'po': page = <PurchaseOrder dealId={route.param} />; break;
     case 'request': page = <RequestVideo />; break;
     case 'video-credit': page = <VideoCredit />; break;
     case 'partner': page = <Partner />; break;

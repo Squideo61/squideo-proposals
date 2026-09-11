@@ -155,8 +155,9 @@ function reviewQuery(href) {
 
 export function runCta(cta, dealId) {
   if (!cta) return;
+  // Legacy shape — the PO step now carries its own #/po/ link.
   if (cta.action === 'po-number') {
-    window.location.hash = `#/project/${dealId}`;
+    window.location.hash = dealId ? `#/po/${dealId}` : '#/';
     return;
   }
   if (cta.href?.startsWith('#/')) {

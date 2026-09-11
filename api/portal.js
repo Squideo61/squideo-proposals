@@ -23,6 +23,7 @@
 //   extras-accept   — server-priced accept → deal_extras row
 //   request-video   — prefilled quote request with the 10% portal discount
 //   po-number       — submit a purchase-order number
+//   po              — the PO step's page: number + PO documents (GET), upload one (POST)
 //   team            — members + invites + not-yet-invited contacts (GET/POST),
 //                     revoke via team-revoke-invite
 //   team-contact    — search the CRM contact book / attach someone to this
@@ -54,6 +55,7 @@ import { getRoleForUser } from './_lib/userRoles.js';
 import { hasPermission } from './_lib/permissions.js';
 import { makeId, trimOrNull, lowerOrNull, ensureContactCompanies } from './_lib/crm/shared.js';
 import { ensureDealExtrasTable } from './_lib/crm/extras.js';
+import { ensureDealPo } from './_lib/crm/deals.js';
 import { dealCreditProjects } from './_lib/crm/retainers.js';
 import { buildNotificationEmail } from './quote-requests.js';
 import { ensurePortalTables } from './_lib/portal/db.js';
@@ -672,6 +674,7 @@ export default async function handler(req, res) {
       case 'video-credit-checkout': return videoCreditCheckoutRoute(req, res, user);
       case 'video-credit-invoice': return videoCreditInvoiceRoute(req, res, user);
       case 'po-number': return poNumberRoute(req, res, user);
+      case 'po': return poRoute(req, res, user);
       case 'team': return teamRoutes(req, res, user);
       case 'team-contact': return teamContactRoute(req, res, user);
       case 'team-revoke-invite': return teamRevokeInviteRoute(req, res, user);
@@ -698,7 +701,7 @@ export default async function handler(req, res) {
 // been busy when all they'd done was reload.
 const TRACKED_VIEWS = new Set([
   'home', 'project', 'library', 'documents', 'extras', 'voiceover', 'kickoff',
-  'script', 'request', 'video-credit', 'partner', 'team', 'settings', 'review', 'storyboard',
+  'script', 'po', 'request', 'video-credit', 'partner', 'team', 'settings', 'review', 'storyboard',
   'brief', 'demo',
 ]);
 
@@ -2241,6 +2244,21 @@ async function downloadRoute(req, res, user) {
     return streamPrivateBlob(res, f.blob_url, { filename: f.filename, mimeType: f.mime_type });
   }
 
+  // Purchase-order documents (deal_po_files) — same private store, org-checked
+  // through the deal they belong to.
+  if (scope === 'po') {
+    await ensureDealPo();
+    const rows = await sql`
+      SELECT f.blob_url, f.mime_type, f.filename, d.company_id
+        FROM deal_po_files f JOIN deals d ON d.id = f.deal_id
+       WHERE f.id = ${id}
+    `;
+    const f = rows[0];
+    if (!f || !f.blob_url || !user.companyIds.includes(f.company_id)) return res.status(404).json({ error: 'File not found' });
+    noteDownload(f.filename);
+    return streamPrivateBlob(res, f.blob_url, { filename: f.filename, mimeType: f.mime_type });
+  }
+
   // Delivered review cut — the approved final cut, streamed from the revision
   // blob store. Gate is the delivery itself: a video is only at 'delivered'
   // once the deal is paid in full (or a staff override is set), so we check the
@@ -2328,6 +2346,62 @@ async function filesUploadTokenRoute(req, res, user) {
   }
 }
 
+// Reads and validates one uploaded file, for every portal route that accepts
+// one. Returns { filename, mimeType, sizeBytes, buf, uploaded } — `uploaded` is
+// the verified blob when the browser sent it direct, `buf` the bytes when it
+// came the old in-request way — or null once it has already answered with an
+// error.
+async function receivePortalUpload(req, res) {
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    res.status(503).json({ error: 'File storage not configured' });
+    return null;
+  }
+
+  // Two ways in. A JSON body registers a blob the browser already uploaded
+  // direct (the normal path — see filesUploadTokenRoute for why); a raw body
+  // is the old in-request upload, kept as the fallback for anything that
+  // can't reach Blob storage from the browser.
+  const direct = String(req.headers['content-type'] || '').includes('application/json');
+  let filename, mimeType, buf = null, uploaded = null, sizeBytes;
+
+  if (direct) {
+    const body = await readJsonBody(req);
+    filename = trimOrNull(body.filename) || 'upload';
+    mimeType = trimOrNull(body.mimeType) || 'application/octet-stream';
+    const blobUrl = trimOrNull(body.blobUrl);
+    if (!blobUrl) { res.status(400).json({ error: 'No file was uploaded' }); return null; }
+    // head() with OUR token is the ownership check: a URL that isn't in our
+    // store throws, so a forged one can't be registered against a company.
+    // It's also the only trustworthy size — the browser's number is a claim.
+    try {
+      uploaded = await head(blobUrl, { token: process.env.BLOB_READ_WRITE_TOKEN });
+    } catch {
+      res.status(400).json({ error: 'That upload could not be verified — try again.' });
+      return null;
+    }
+    sizeBytes = Number(uploaded.size) || 0;
+  } else {
+    filename = decodeURIComponent(req.headers['x-filename'] || 'upload');
+    mimeType = req.headers['content-type'] || 'application/octet-stream';
+    buf = await readRawBody(req);
+    if (!buf.length) { res.status(400).json({ error: 'No file data received' }); return null; }
+    sizeBytes = buf.length;
+  }
+
+  const ext = (filename.split('.').pop() || '').toLowerCase();
+  if (!UPLOAD_EXTENSIONS.has(ext)) {
+    if (uploaded) await del(uploaded.url, { token: process.env.BLOB_READ_WRITE_TOKEN }).catch(() => {});
+    res.status(400).json({ error: `That file type isn't supported (.${ext}). Try a PDF, doc, image or zip.` });
+    return null;
+  }
+  if (sizeBytes > MAX_FILE_SIZE) {
+    if (uploaded) await del(uploaded.url, { token: process.env.BLOB_READ_WRITE_TOKEN }).catch(() => {});
+    res.status(413).json({ error: 'File too large (max 20 MB)' });
+    return null;
+  }
+  return { filename, mimeType, sizeBytes, buf, uploaded };
+}
+
 async function filesRoutes(req, res, user) {
   const scope = req.query.scope ? String(req.query.scope) : 'brand';
 
@@ -2362,47 +2436,9 @@ async function filesRoutes(req, res, user) {
   }
 
   if (req.method === 'POST') {
-    if (!process.env.BLOB_READ_WRITE_TOKEN) return res.status(503).json({ error: 'File storage not configured' });
-
-    // Two ways in. A JSON body registers a blob the browser already uploaded
-    // direct (the normal path — see filesUploadTokenRoute for why); a raw body
-    // is the old in-request upload, kept as the fallback for anything that
-    // can't reach Blob storage from the browser.
-    const direct = String(req.headers['content-type'] || '').includes('application/json');
-    let filename, mimeType, buf = null, uploaded = null, sizeBytes;
-
-    if (direct) {
-      const body = await readJsonBody(req);
-      filename = trimOrNull(body.filename) || 'upload';
-      mimeType = trimOrNull(body.mimeType) || 'application/octet-stream';
-      const blobUrl = trimOrNull(body.blobUrl);
-      if (!blobUrl) return res.status(400).json({ error: 'No file was uploaded' });
-      // head() with OUR token is the ownership check: a URL that isn't in our
-      // store throws, so a forged one can't be registered against a company.
-      // It's also the only trustworthy size — the browser's number is a claim.
-      try {
-        uploaded = await head(blobUrl, { token: process.env.BLOB_READ_WRITE_TOKEN });
-      } catch {
-        return res.status(400).json({ error: 'That upload could not be verified — try again.' });
-      }
-      sizeBytes = Number(uploaded.size) || 0;
-    } else {
-      filename = decodeURIComponent(req.headers['x-filename'] || 'upload');
-      mimeType = req.headers['content-type'] || 'application/octet-stream';
-      buf = await readRawBody(req);
-      if (!buf.length) return res.status(400).json({ error: 'No file data received' });
-      sizeBytes = buf.length;
-    }
-
-    const ext = (filename.split('.').pop() || '').toLowerCase();
-    if (!UPLOAD_EXTENSIONS.has(ext)) {
-      if (uploaded) await del(uploaded.url, { token: process.env.BLOB_READ_WRITE_TOKEN }).catch(() => {});
-      return res.status(400).json({ error: `That file type isn't supported (.${ext}). Try a PDF, doc, image or zip.` });
-    }
-    if (sizeBytes > MAX_FILE_SIZE) {
-      if (uploaded) await del(uploaded.url, { token: process.env.BLOB_READ_WRITE_TOKEN }).catch(() => {});
-      return res.status(413).json({ error: 'File too large (max 20 MB)' });
-    }
+    const incoming = await receivePortalUpload(req, res);
+    if (!incoming) return;
+    const { filename, mimeType, buf, uploaded, sizeBytes } = incoming;
 
     // Deal-scoped documents land on deal_files (source='portal') so they show
     // in the CRM Files card automatically; brand/org docs live on their own table.
@@ -4310,6 +4346,79 @@ async function poNumberRoute(req, res, user) {
     console.warn('[portal] po_provided notify failed', err.message);
   }
   return res.status(200).json({ ok: true });
+}
+
+// ═════════════════════════ po ═════════════════════════
+// The purchase-order step's own page: the number we hold and the PO documents
+// on file (GET), plus uploading one (POST). The documents are the SAME rows as
+// the CRM deal's Purchase order card (deal_po_files), so a PO the team filed
+// from an email shows here, and one the client uploads here lands on that card.
+// Submitting the number itself stays on po-number.
+function serialisePortalPoFile(f) {
+  return {
+    id: f.id,
+    filename: f.filename,
+    mimeType: f.mime_type || null,
+    sizeBytes: f.size_bytes == null ? null : Number(f.size_bytes),
+    createdAt: f.created_at,
+  };
+}
+
+async function poRoute(req, res, user) {
+  const deal = await requireDealInOrg(res, trimOrNull(req.query.dealId), user.companyIds);
+  if (!deal) return;
+  await ensureDealPo();
+
+  if (req.method === 'GET') {
+    const files = await sql`
+      SELECT id, filename, mime_type, size_bytes, created_at
+        FROM deal_po_files WHERE deal_id = ${deal.id} ORDER BY created_at DESC
+    `;
+    return res.status(200).json({
+      dealId: deal.id,
+      dealTitle: deal.title || null,
+      poNumber: deal.po_number || null,
+      files: files.map(serialisePortalPoFile),
+    });
+  }
+
+  if (req.method === 'POST') {
+    const incoming = await receivePortalUpload(req, res);
+    if (!incoming) return;
+    const { filename, mimeType, buf, uploaded, sizeBytes } = incoming;
+    const fileId = crypto.randomUUID();
+    const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const blob = uploaded || await put(`deal-po-files/${deal.id}/${fileId}/${safeName}`, buf, { access: 'private', contentType: mimeType });
+    // A staff manage-mode upload is credited to the staff member, like the CRM
+    // card's own uploads; a client's to their email.
+    const uploadedBy = user.isPreview ? (user.previewBy || null) : (user.email || null);
+    const [row] = await sql`
+      INSERT INTO deal_po_files (id, deal_id, filename, mime_type, size_bytes, blob_url, blob_pathname, uploaded_by)
+      VALUES (${fileId}, ${deal.id}, ${filename}, ${mimeType}, ${sizeBytes}, ${blob.url}, ${blob.pathname}, ${uploadedBy})
+      RETURNING id, filename, mime_type, size_bytes, created_at
+    `;
+
+    if (!user.isPreview) {
+      try {
+        await ensurePortalNotificationDefaults();
+        const who = user.name || user.email;
+        await sendNotification('portal.po_provided', {
+          subject: `📋 PO document received — ${deal.title}`,
+          text: `${who} uploaded a purchase order (${filename}) for ${deal.title} via the client portal.`,
+          inApp: {
+            title: `PO document received: ${filename}`,
+            body: `${who} · ${deal.title}`,
+            link: `#/deal/${deal.id}`,
+          },
+        });
+      } catch (err) {
+        console.warn('[portal] po document notify failed', err.message);
+      }
+    }
+    return res.status(201).json({ file: serialisePortalPoFile(row) });
+  }
+
+  return res.status(405).json({ error: 'Method not allowed' });
 }
 
 // ═════════════════════════ team ═════════════════════════

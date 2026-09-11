@@ -59,7 +59,7 @@ export function deriveNextStep({
       court: 'you',
       headline: 'Send us your purchase order number',
       detail: 'Once we have your PO number we can raise the invoice and keep everything moving with your finance team.',
-      cta: { label: 'Submit PO number', action: 'po-number' },
+      cta: { label: 'Submit PO number', href: `#/po/${deal.id}` },
     };
   }
 

@@ -1,6 +1,6 @@
-// Single-project view: phase timeline, ball-in-court next step (with the
-// in-page PO-number form), videos, review/storyboard deep-links, documents
-// and the extras teaser.
+// Single-project view: phase timeline, ball-in-court next step, videos,
+// review/storyboard deep-links, documents and the extras teaser. (The PO
+// number form lives on the PO step's own page, #/po/<dealId>.)
 import React, { useEffect, useState } from 'react';
 import { BRAND } from '../../theme.js';
 import { portalApi, mediaUrl } from '../api.js';
@@ -69,8 +69,6 @@ export default function ProjectDetail({ dealId }) {
   const { showToast } = usePortal();
   const [project, setProject] = useState(null);
   const [error, setError] = useState(null);
-  const [poNumber, setPoNumber] = useState('');
-  const [poBusy, setPoBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
 
   const load = async () => {
@@ -82,21 +80,6 @@ export default function ProjectDetail({ dealId }) {
     }
   };
   useEffect(() => { load(); }, [dealId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const submitPo = async (e) => {
-    e.preventDefault();
-    setPoBusy(true);
-    try {
-      await portalApi.post('po-number', { dealId, poNumber });
-      showToast('PO number sent ✓');
-      setPoNumber('');
-      await load();
-    } catch (err) {
-      showToast(err.message);
-    } finally {
-      setPoBusy(false);
-    }
-  };
 
   const uploadDoc = async (file) => {
     if (!file) return;
@@ -124,7 +107,6 @@ export default function ProjectDetail({ dealId }) {
     return <div style={{ color: BRAND.muted, fontSize: 13, padding: 30, textAlign: 'center' }}>Loading project…</div>;
   }
 
-  const showPoForm = project.nextStep?.cta?.action === 'po-number';
   const scheduledVideos = (project.videos || []).filter((v) => v.schedule?.milestones?.length);
 
   return (
@@ -153,24 +135,6 @@ export default function ProjectDetail({ dealId }) {
       )}
 
       {project.tasks?.length > 0 && <TasksCard tasks={project.tasks} dealId={project.id} />}
-
-      {showPoForm && (
-        <Card>
-          <SectionHeading>Send us your PO number</SectionHeading>
-          <form onSubmit={submitPo} style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            <input
-              className="input"
-              required
-              maxLength={60}
-              placeholder="e.g. PO-2026-0042"
-              value={poNumber}
-              onChange={(e) => setPoNumber(e.target.value)}
-              style={{ flex: 1, minWidth: 200 }}
-            />
-            <button className="btn" type="submit" disabled={poBusy}>{poBusy ? 'Sending…' : 'Submit PO number'}</button>
-          </form>
-        </Card>
-      )}
 
       {/* The schedule the team planned this against. Per video, because a
           multi-video project runs them on separate timelines and one merged

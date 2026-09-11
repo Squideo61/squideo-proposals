@@ -32,7 +32,7 @@ describe('deriveProjectTasks — PO task', () => {
     const tasks = deriveProjectTasks({ deal, videos: [{ id: 'v1' }], hasVoiceover: true });
     expect(tasks[0].key).toBe('po');
     expect(tasks[0].status).toBe('todo');
-    expect(tasks[0].cta.action).toBe('po-number');
+    expect(tasks[0].cta.href).toBe('#/po/d1');
     expect(tasks.map((t) => t.key)).toEqual(['po', 'brand', 'script', 'voiceover', 'kickoff']);
   });
 
@@ -47,6 +47,13 @@ describe('deriveProjectTasks — PO task', () => {
     const tasks = deriveProjectTasks({ deal, videos: [], hasVoiceover: false });
     expect(tasks[0].status).toBe('done');
     expect(tasks[0].detail).toContain('PO-1234');
+  });
+
+  it('keeps a working link once done, so "View" opens the PO', () => {
+    const deal = { ...launched, payment_terms: 'po', po_number: 'PO-1234' };
+    const tasks = deriveProjectTasks({ deal, videos: [], hasVoiceover: false });
+    expect(tasks[0].cta.label).toBe('View');
+    expect(tasks[0].cta.href).toBe('#/po/d1');
   });
 
   it('is absent for a non-PO deal', () => {

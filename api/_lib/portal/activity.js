@@ -242,6 +242,7 @@ const VIEW_LABELS = {
   voiceover: 'Opened the voiceover picker',
   kickoff: 'Opened the kick-off booking',
   script: 'Opened script & visual direction',
+  po: 'Opened their purchase order',
   request: 'Opened the new-video request',
   course: 'Watched the video guide',
   brief: 'Worked on their video brief',

@@ -21,7 +21,9 @@ function formatKickoffWhen(iso, timezone) {
 
 const TASK_PRODUCERS = [
   // Send us your purchase order. PO-route deals only, first in the list, until
-  // the PO number lands. (Mirrors the PO rule in nextStep.js.)
+  // the PO number lands. (Mirrors the PO rule in nextStep.js.) Its page shows
+  // the number and the PO documents on file either way, so "View" once it's
+  // done opens the PO rather than going nowhere.
   ({ deal, sigPaymentOption }) => {
     const isPo = sigPaymentOption === 'po' || deal.payment_terms === 'po';
     if (!isPo) return null;
@@ -33,7 +35,7 @@ const TASK_PRODUCERS = [
         ? `PO ${deal.po_number} received — thank you.`
         : 'Share your PO number (and upload the PO document if you have one) so we can raise the invoice.',
       status: done ? 'done' : 'todo',
-      cta: { label: done ? 'View' : 'Submit PO', action: 'po-number' },
+      cta: { label: done ? 'View' : 'Submit PO', href: `#/po/${deal.id}` },
     };
   },
   // Send us your logo + brand guidelines. Part of onboarding every project.
@@ -183,8 +185,8 @@ export function bellTaskRows(entries = []) {
         dealId: deal.id,
         dealTitle: deal.title || null,
         // The bell can only navigate. A task whose CTA is an in-page action
-        // (the PO number form) has no href of its own, so it points at the
-        // project page that hosts the form rather than nowhere.
+        // has no href of its own, so it points at the project page rather
+        // than nowhere.
         link: t.cta?.href || `#/project/${deal.id}`,
       });
     }
