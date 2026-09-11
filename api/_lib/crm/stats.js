@@ -6,7 +6,7 @@ import { hasPermission } from '../permissions.js';
 import { makeId, trimOrNull, numberOrNull } from './shared.js';
 import { allCompanyBalances } from './companies.js';
 import { outstandingExtrasByDeal, ensureDealExtrasTable } from './extras.js';
-import { reconcileProposalBillingPaid, ensureInvoiceExcludeColumn } from './invoices.js';
+import { reconcileProposalBillingPaid, ensureInvoiceExcludeColumn, ensureInvoiceProRataColumn } from './invoices.js';
 import { archiveRecord } from './recycleBin.js';
 import { sendNotification } from '../notifications.js';
 import { ensureDealPo } from './deals.js';
@@ -1472,6 +1472,29 @@ async function pendingPaymentsReport() {
     }
   }
 
+  // Part payments split off each deal's final balance (pro-rata invoices), so
+  // the row still showing the rest can say where the other part went — invoiced
+  // and awaiting payment, or already paid.
+  const partPayments = new Map();
+  if (await ensureInvoiceProRataColumn()) {
+    const rows = await sql`
+      SELECT deal_id AS did, invoice_number, subtotal_ex_vat, amount, tax_amount, status, paid_at
+        FROM manual_invoices
+       WHERE pro_rata_of = 'final' AND status <> 'void' AND deal_id IS NOT NULL
+       ORDER BY issued_at ASC NULLS LAST, created_at ASC
+    `.catch(() => []);
+    for (const r of rows) {
+      const list = partPayments.get(r.did) || [];
+      list.push({
+        number: r.invoice_number || null,
+        net: round2(r.subtotal_ex_vat != null ? Number(r.subtotal_ex_vat) : (Number(r.amount) || 0) - (Number(r.tax_amount) || 0)),
+        status: r.status,
+        paidAt: r.paid_at || null,
+      });
+      partPayments.set(r.did, list);
+    }
+  }
+
   // Inc-VAT raised-and-unpaid total per deal (the new basis for "pending").
   const invoicedDue = new Map();
   for (const rows of [miIssuedRows, pbInvoicedRows]) {
@@ -1627,6 +1650,7 @@ async function pendingPaymentsReport() {
       // Raised-and-unpaid invoices on this deal — "mark paid" on an invoiced
       // row goes through these rather than recording a loose payment.
       openInvoices: openInvoices.get(did) || [],
+      partPayments: partPayments.get(did) || [],
     };
     (isPo ? po : normal).push(item);
   }

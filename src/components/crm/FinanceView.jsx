@@ -3114,6 +3114,8 @@ function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoRece
     d.dealId && predictDateMenuItem(predict, { key: predictKeyForDeal(d.dealId) }, () => setPredictingDate(true)),
   ];
   const isPredicted = !!(d.dealId && predict?.keys.has(predictKeyForDeal(d.dealId)));
+  // Part payments split off the final — shown on the row carrying the remainder.
+  const partPayments = lines.some((l) => l.type === 'final' && l.invoiced === false) ? (d.partPayments || []) : [];
   return (
     <>
     <div
@@ -3199,6 +3201,23 @@ function PendingRow({ d, onOpenDeal, onCreateInvoice, isPo = false, onMarkPoRece
               </span>
               <span style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
                 <span style={{ fontSize: 12, fontWeight: 600, color: BRAND.ink }}>{formatGBP(l.amount)}</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      {/* The rest of a split final: say where the part already billed went, so
+          the smaller balance doesn't read as money gone missing. */}
+      {partPayments.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 4 }}>
+          {partPayments.map((p, i) => (
+            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11.5, color: BRAND.muted, minWidth: 0 }}>
+              <Scissors size={11} style={{ flexShrink: 0 }} />
+              <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                Part payment {p.number || 'invoice'} · {formatGBP(p.net)} ·{' '}
+                {p.status === 'paid'
+                  ? <span style={{ color: '#15803D', fontWeight: 600 }}>paid{p.paidAt ? ` ${new Date(p.paidAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}` : ''}</span>
+                  : <span style={{ color: BRAND.blue, fontWeight: 600 }}>invoiced, awaiting payment</span>}
               </span>
             </div>
           ))}
