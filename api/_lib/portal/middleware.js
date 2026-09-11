@@ -194,7 +194,7 @@ export async function requireDealInOrg(res, dealId, companyIds) {
   const rows = await sql`
     SELECT d.id, d.title, d.company_id, d.stage, d.value, d.vat_rate, d.payment_terms,
            d.production_phase, d.production_stage, d.production_entered_at,
-           d.po_number, d.drive_folder_id, d.revision_project_id, d.reference,
+           d.po_number, d.po_received_at, d.drive_folder_id, d.revision_project_id, d.reference,
            d.client_tasks_launched_at, d.script_status, d.script_status_at,
            d.portal_extras_discount, d.delivery_deadline, d.created_at,
            -- The project-wide schedule. Videos carry their own; this is what a

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { deriveProjectTasks, countOpenTasks, bellTaskRows } from '../api/_lib/portal/tasks.js';
+import { deriveNextStep } from '../api/_lib/portal/nextStep.js';
 
 // The portal "Your tasks" checklist. Tasks unlock only once the PM has launched
 // them (sent the intro email → deal.client_tasks_launched_at) or the project is
@@ -42,16 +43,31 @@ describe('deriveProjectTasks — PO task', () => {
     expect(tasks[0].key).toBe('po');
   });
 
-  it('marks the PO task done once the number lands', () => {
+  it('marks the PO task done once the number AND the document are in', () => {
     const deal = { ...launched, payment_terms: 'po', po_number: 'PO-1234' };
-    const tasks = deriveProjectTasks({ deal, videos: [], hasVoiceover: false });
+    const tasks = deriveProjectTasks({ deal, videos: [], hasVoiceover: false, poFileCount: 1 });
     expect(tasks[0].status).toBe('done');
     expect(tasks[0].detail).toContain('PO-1234');
   });
 
+  // Finance needs the PO itself, not just its number.
+  it('stays todo on a number alone, and asks for the document', () => {
+    const deal = { ...launched, payment_terms: 'po', po_number: 'PO-1234' };
+    const tasks = deriveProjectTasks({ deal, videos: [], hasVoiceover: false, poFileCount: 0 });
+    expect(tasks[0].status).toBe('todo');
+    expect(tasks[0].detail).toContain('PO-1234');
+    expect(tasks[0].detail).toContain('document');
+  });
+
+  it('is done when the team has marked the PO received, document or not', () => {
+    const deal = { ...launched, payment_terms: 'po', po_number: 'PO-1234', po_received_at: '2026-09-01T10:00:00Z' };
+    const tasks = deriveProjectTasks({ deal, videos: [], hasVoiceover: false, poFileCount: 0 });
+    expect(tasks[0].status).toBe('done');
+  });
+
   it('keeps a working link once done, so "View" opens the PO', () => {
     const deal = { ...launched, payment_terms: 'po', po_number: 'PO-1234' };
-    const tasks = deriveProjectTasks({ deal, videos: [], hasVoiceover: false });
+    const tasks = deriveProjectTasks({ deal, videos: [], hasVoiceover: false, poFileCount: 1 });
     expect(tasks[0].cta.label).toBe('View');
     expect(tasks[0].cta.href).toBe('#/po/d1');
   });
@@ -60,6 +76,27 @@ describe('deriveProjectTasks — PO task', () => {
     const deal = { ...launched, payment_terms: 'full' };
     const tasks = deriveProjectTasks({ deal, videos: [{ id: 'v1' }], hasVoiceover: true });
     expect(tasks.map((t) => t.key)).not.toContain('po');
+  });
+});
+
+describe('deriveNextStep — PO banner', () => {
+  const signedPo = { id: 'd1', stage: 'signed', payment_terms: 'po' };
+
+  it('asks for the PO while nothing is in', () => {
+    const step = deriveNextStep({ deal: { ...signedPo, po_number: null } });
+    expect(step.court).toBe('you');
+    expect(step.cta.href).toBe('#/po/d1');
+  });
+
+  it('keeps asking for the document when only the number came in', () => {
+    const step = deriveNextStep({ deal: { ...signedPo, po_number: '6575' }, poFileCount: 0 });
+    expect(step.court).toBe('you');
+    expect(step.headline).toContain('6575');
+  });
+
+  it('moves on once the number and document are both in', () => {
+    const step = deriveNextStep({ deal: { ...signedPo, po_number: '6575' }, poFileCount: 1 });
+    expect(step?.headline || '').not.toContain('6575');
   });
 });
 

@@ -2603,6 +2603,13 @@ function PurchaseOrderCard({ dealId, po, isMobile }) {
               {received ? 'Received' : 'Awaiting PO'}
             </span>
             {received && <span style={{ fontSize: 14, fontWeight: 700, color: BRAND.ink }}>PO {po.number}</span>}
+            {/* A number the client gave in the portal without its document —
+                the portal keeps asking them for the document until one lands. */}
+            {!received && po.number && (
+              <span style={{ fontSize: 13, color: BRAND.muted }}>
+                Client gave <strong style={{ color: BRAND.ink }}>PO {po.number}</strong> · awaiting the document
+              </span>
+            )}
             <span style={{ flex: 1 }} />
             <button onClick={() => setEditing(true)} className="btn-ghost" style={{ fontSize: 12 }}>
               <Edit2 size={12} /> {received ? 'Edit number' : 'Mark received'}

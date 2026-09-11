@@ -19,23 +19,36 @@ function formatKickoffWhen(iso, timezone) {
   } catch { return null; }
 }
 
+// Is the purchase order in? A number on its own isn't enough — finance needs
+// the document itself (billing address, line items, terms), so the client's
+// step only settles with a PO document on file. po_received_at is the team's
+// "received" mark (the CRM Purchase order card, or the portal once a number
+// AND a document are both in), and it counts whatever shape the PO came in —
+// the team may have it from an email without filing the document here.
+export function poSettled(deal, poFileCount = 0) {
+  if (!deal) return false;
+  return !!deal.po_received_at || (!!deal.po_number && poFileCount > 0);
+}
+
 const TASK_PRODUCERS = [
   // Send us your purchase order. PO-route deals only, first in the list, until
-  // the PO number lands. (Mirrors the PO rule in nextStep.js.) Its page shows
-  // the number and the PO documents on file either way, so "View" once it's
-  // done opens the PO rather than going nowhere.
-  ({ deal, sigPaymentOption }) => {
+  // the PO is in. (Mirrors the PO rule in nextStep.js.) Its page shows the
+  // number and the PO documents on file either way, so "View" once it's done
+  // opens the PO rather than going nowhere.
+  ({ deal, sigPaymentOption, poFileCount = 0 }) => {
     const isPo = sigPaymentOption === 'po' || deal.payment_terms === 'po';
     if (!isPo) return null;
-    const done = !!deal.po_number;
+    const done = poSettled(deal, poFileCount);
     return {
       key: 'po',
       title: 'Send us your purchase order',
       detail: done
-        ? `PO ${deal.po_number} received — thank you.`
-        : 'Share your PO number (and upload the PO document if you have one) so we can raise the invoice.',
+        ? (deal.po_number ? `PO ${deal.po_number} received — thank you.` : 'Purchase order received — thank you.')
+        : deal.po_number
+          ? `We have PO ${deal.po_number} — please upload the PO document itself so we have the full details.`
+          : 'Upload your purchase order document so we can raise the invoice.',
       status: done ? 'done' : 'todo',
-      cta: { label: done ? 'View' : 'Submit PO', href: `#/po/${deal.id}` },
+      cta: { label: done ? 'View' : 'Upload PO', href: `#/po/${deal.id}` },
     };
   },
   // Send us your logo + brand guidelines. Part of onboarding every project.

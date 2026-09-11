@@ -92,7 +92,7 @@ import {
 import { deriveNextStep } from './_lib/portal/nextStep.js';
 import { serialisePortalNotification } from './_lib/portal/notificationShape.js';
 import { notifyPortalUser, resolvePortalRecipients } from './_lib/portal/notifications.js';
-import { deriveProjectTasks, countOpenTasks, bellTaskRows } from './_lib/portal/tasks.js';
+import { deriveProjectTasks, countOpenTasks, bellTaskRows, poSettled } from './_lib/portal/tasks.js';
 import { voiceoverProposalContext } from './_lib/proposalPricing.js';
 import {
   computePortalOffers,
@@ -345,13 +345,13 @@ function publicPortalUser(user, memberships = null) {
 // ── Ball-in-court state gathering (shared by overview + project detail) ──────
 // One query per concern across ALL the org's deals, then derived per deal.
 async function gatherDealStates(dealIds) {
-  const empty = { proposals: new Map(), videos: new Map(), revPending: new Map(), sbPending: new Map(), revLinks: new Map(), sbLinks: new Map(), kickoffDeals: new Set(), kickoffBookings: new Map(), brandCompanies: new Set(), scriptFiles: new Map() };
+  const empty = { proposals: new Map(), videos: new Map(), revPending: new Map(), sbPending: new Map(), revLinks: new Map(), sbLinks: new Map(), kickoffDeals: new Set(), kickoffBookings: new Map(), brandCompanies: new Set(), scriptFiles: new Map(), poFiles: new Map() };
   if (!dealIds.length) return empty;
 
   // Self-heal the voiceover columns/table before the video query joins them.
   await ensureVoiceoverCatalogue();
 
-  const [proposalRows, videoRows, revRows, sbRows, kickoffRows, brandRows, scriptRows] = await Promise.all([
+  const [proposalRows, videoRows, revRows, sbRows, kickoffRows, brandRows, scriptRows, poRows] = await Promise.all([
     sql`
       SELECT p.id, p.deal_id, p.created_at, p.data AS proposal_data, s.data AS signature_data, s.signed_at
         FROM proposals p
@@ -441,6 +441,13 @@ async function gatherDealStates(dealIds) {
     sql`
       SELECT deal_id, COUNT(*)::int AS n FROM deal_files
        WHERE deal_id = ANY(${dealIds}) AND category IN ('script', 'visual_direction')
+       GROUP BY deal_id
+    `.catch(() => []),
+    // PO documents on file per deal — the PO step needs the document, not
+    // just a number (see poSettled).
+    sql`
+      SELECT deal_id, COUNT(*)::int AS n FROM deal_po_files
+       WHERE deal_id = ANY(${dealIds})
        GROUP BY deal_id
     `.catch(() => []),
   ]);
@@ -534,8 +541,9 @@ async function gatherDealStates(dealIds) {
   }]));
   const brandCompanies = new Set(brandRows.map((r) => r.company_id));
   const scriptFiles = new Map(scriptRows.map((r) => [r.deal_id, r.n]));
+  const poFiles = new Map(poRows.map((r) => [r.deal_id, r.n]));
 
-  return { proposals, videos, revPending, sbPending, revLinks, sbLinks, kickoffDeals, kickoffBookings, brandCompanies, scriptFiles };
+  return { proposals, videos, revPending, sbPending, revLinks, sbLinks, kickoffDeals, kickoffBookings, brandCompanies, scriptFiles, poFiles };
 }
 
 function nextStepFor(deal, states) {
@@ -557,6 +565,7 @@ function nextStepFor(deal, states) {
     storyboardPending: states.sbPending.get(deal.id) || null,
     videos: states.videos.get(deal.id) || [],
     tasks: tasksFor(deal, states),
+    poFileCount: states.poFiles.get(deal.id) || 0,
   });
 }
 
@@ -572,6 +581,7 @@ function tasksFor(deal, states) {
     hasBrandAssets: states.brandCompanies.has(deal.company_id),
     scriptStatus: deal.script_status || null,
     scriptFileCount: states.scriptFiles.get(deal.id) || 0,
+    poFileCount: states.poFiles.get(deal.id) || 0,
     sigPaymentOption: prop?.signature?.data?.paymentOption || null,
   });
 }
@@ -1519,7 +1529,7 @@ async function overviewRoute(req, res, user) {
   if (!companyId) return;
 
   const deals = await sql`
-    SELECT d.id, d.title, d.company_id, d.stage, d.payment_terms, d.po_number,
+    SELECT d.id, d.title, d.company_id, d.stage, d.payment_terms, d.po_number, d.po_received_at,
            d.production_phase, d.production_stage, d.delivery_deadline,
            d.client_tasks_launched_at, d.script_status,
            d.portal_extras_discount, d.created_at, c.name AS company_name
@@ -4319,33 +4329,72 @@ async function videoCreditInvoiceRoute(req, res, user) {
 }
 
 // ═════════════════════════ po-number ═════════════════════════
+// The number on its own. Kept for anything still calling it, but a number is
+// only accepted once a PO document is on file — finance needs the document —
+// so the portal sends the two together through `po` instead.
 async function poNumberRoute(req, res, user) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   const body = await readJsonBody(req);
   const deal = await requireDealInOrg(res, trimOrNull(body.dealId), user.companyIds);
   if (!deal) return;
   const poNumber = trimOrNull(body.poNumber);
-  if (!poNumber) return res.status(400).json({ error: 'PO number required' });
-  if (poNumber.length > 60) return res.status(400).json({ error: 'PO number looks too long' });
-  if (deal.po_number) return res.status(409).json({ error: 'A PO number is already on file for this project — contact your producer to change it.' });
+  const invalid = poNumberProblem(poNumber, deal);
+  if (invalid) return res.status(invalid.status).json({ error: invalid.error });
+  await ensureDealPo();
+  const [docs] = await sql`SELECT COUNT(*)::int AS n FROM deal_po_files WHERE deal_id = ${deal.id}`;
+  if (!(docs?.n > 0)) {
+    return res.status(400).json({ error: 'Please upload your PO document along with the number — we need the full details from it.' });
+  }
+  await markPortalPoReceived(deal, poNumber, user, null);
+  return res.status(200).json({ ok: true });
+}
 
-  await sql`UPDATE deals SET po_number = ${poNumber}, updated_at = NOW() WHERE id = ${deal.id}`;
+// Why a client-supplied PO number can't be taken, or null if it can.
+function poNumberProblem(poNumber, deal) {
+  if (!poNumber) return { status: 400, error: 'PO number required' };
+  if (poNumber.length > 60) return { status: 400, error: 'PO number looks too long' };
+  if (deal.po_number) return { status: 409, error: 'A PO number is already on file for this project — contact your producer to change it.' };
+  return null;
+}
 
+// The PO is in: number + document. Stamps po_received_at — the same "received"
+// mark the CRM Purchase order card sets, which is what clears the deal's
+// "Pending PO" pill — and tells the team it's ready to invoice against.
+// `poNumber` is null when the number was already on file and this upload is
+// the document that completes it.
+async function markPortalPoReceived(deal, poNumber, user, filename) {
+  const number = poNumber || deal.po_number;
+  await sql`
+    UPDATE deals
+       SET po_number = COALESCE(${poNumber}, po_number),
+           po_received_at = COALESCE(po_received_at, NOW()),
+           updated_at = NOW()
+     WHERE id = ${deal.id}
+  `;
+  try {
+    await sql`
+      INSERT INTO deal_events (deal_id, event_type, payload, actor_email)
+      VALUES (${deal.id}, 'po_received', ${JSON.stringify({ poNumber: number, via: 'portal', by: user.email || null })}, NULL)
+    `;
+  } catch (err) {
+    console.warn('[portal] po_received event failed', err.message);
+  }
+  if (user.isPreview) return;
   try {
     await ensurePortalNotificationDefaults();
+    const who = user.name || user.email;
     await sendNotification('portal.po_provided', {
-      subject: `📋 PO number received — ${deal.title}`,
-      text: `${user.name || user.email} submitted PO number ${poNumber} for ${deal.title} via the client portal.`,
+      subject: `📋 PO ${number} received — ${deal.title}`,
+      text: `${who} sent purchase order ${number}${filename ? ` (${filename})` : ''} for ${deal.title} via the client portal. It's ready to invoice against.`,
       inApp: {
-        title: `PO number received: ${poNumber}`,
-        body: `${user.name || user.email} · ${deal.title}`,
+        title: `PO ${number} received`,
+        body: `${who} · ${deal.title}${filename ? ` · ${filename}` : ''}`,
         link: `#/deal/${deal.id}`,
       },
     });
   } catch (err) {
     console.warn('[portal] po_provided notify failed', err.message);
   }
-  return res.status(200).json({ ok: true });
 }
 
 // ═════════════════════════ po ═════════════════════════
@@ -4353,7 +4402,9 @@ async function poNumberRoute(req, res, user) {
 // on file (GET), plus uploading one (POST). The documents are the SAME rows as
 // the CRM deal's Purchase order card (deal_po_files), so a PO the team filed
 // from an email shows here, and one the client uploads here lands on that card.
-// Submitting the number itself stays on po-number.
+//
+// The client submits the number WITH the document (?poNumber= on the upload),
+// never on its own. The upload that completes the pair marks the PO received.
 function serialisePortalPoFile(f) {
   return {
     id: f.id,
@@ -4378,6 +4429,7 @@ async function poRoute(req, res, user) {
       dealId: deal.id,
       dealTitle: deal.title || null,
       poNumber: deal.po_number || null,
+      received: poSettled(deal, files.length),
       files: files.map(serialisePortalPoFile),
     });
   }
@@ -4386,6 +4438,21 @@ async function poRoute(req, res, user) {
     const incoming = await receivePortalUpload(req, res);
     if (!incoming) return;
     const { filename, mimeType, buf, uploaded, sizeBytes } = incoming;
+
+    // The first document has to arrive with a number, unless we already hold
+    // one. Checked after the body is read so a direct upload that's refused
+    // can be removed from the store rather than orphaned there.
+    const suppliedNumber = deal.po_number ? null : trimOrNull(req.query.poNumber);
+    if (!deal.po_number) {
+      const invalid = suppliedNumber
+        ? poNumberProblem(suppliedNumber, deal)
+        : { status: 400, error: 'Add your PO number too — it goes on your invoice.' };
+      if (invalid) {
+        if (uploaded) await del(uploaded.url, { token: process.env.BLOB_READ_WRITE_TOKEN }).catch(() => {});
+        return res.status(invalid.status).json({ error: invalid.error });
+      }
+    }
+
     const fileId = crypto.randomUUID();
     const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
     const blob = uploaded || await put(`deal-po-files/${deal.id}/${fileId}/${safeName}`, buf, { access: 'private', contentType: mimeType });
@@ -4398,15 +4465,21 @@ async function poRoute(req, res, user) {
       RETURNING id, filename, mime_type, size_bytes, created_at
     `;
 
-    if (!user.isPreview) {
+    if (!deal.po_received_at) {
+      // This upload completes the PO — with the number it brought, or the one
+      // they gave us earlier without a document.
+      await markPortalPoReceived(deal, suppliedNumber, user, filename);
+    } else if (!user.isPreview) {
+      // Already received; an extra document (a revised PO, a second one) is
+      // still worth a heads-up, but not a second "ready to invoice".
       try {
         await ensurePortalNotificationDefaults();
         const who = user.name || user.email;
         await sendNotification('portal.po_provided', {
-          subject: `📋 PO document received — ${deal.title}`,
-          text: `${who} uploaded a purchase order (${filename}) for ${deal.title} via the client portal.`,
+          subject: `📋 Another PO document — ${deal.title}`,
+          text: `${who} uploaded another purchase order document (${filename}) for ${deal.title} via the client portal.`,
           inApp: {
-            title: `PO document received: ${filename}`,
+            title: `PO document added: ${filename}`,
             body: `${who} · ${deal.title}`,
             link: `#/deal/${deal.id}`,
           },

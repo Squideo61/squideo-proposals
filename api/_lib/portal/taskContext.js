@@ -18,7 +18,7 @@ export async function computeDealTasks(dealId) {
   // portal columns (deals.script_status, deal_files.category) first.
   await ensurePortalTables();
   const [deal] = await sql`
-    SELECT id, company_id, title, po_number, payment_terms,
+    SELECT id, company_id, title, po_number, po_received_at, payment_terms,
            client_tasks_launched_at, production_phase, script_status
       FROM deals WHERE id = ${dealId}
   `;
@@ -28,7 +28,7 @@ export async function computeDealTasks(dealId) {
   // (mirrors gatherDealStates in api/portal.js).
   await ensureVoiceoverCatalogue();
 
-  const [propRows, videoRows, kickoffRows, brandRows, scriptRows] = await Promise.all([
+  const [propRows, videoRows, kickoffRows, brandRows, scriptRows, poRows] = await Promise.all([
     sql`
       SELECT p.data AS proposal_data, s.data AS signature_data, s.signed_at
         FROM proposals p
@@ -58,6 +58,9 @@ export async function computeDealTasks(dealId) {
       SELECT COUNT(*)::int AS n FROM deal_files
        WHERE deal_id = ${dealId} AND category IN ('script', 'visual_direction')
     `.catch(() => [{ n: 0 }]),
+    sql`
+      SELECT COUNT(*)::int AS n FROM deal_po_files WHERE deal_id = ${dealId}
+    `.catch(() => [{ n: 0 }]),
   ]);
 
   const prop = propRows[0] || null;
@@ -80,6 +83,7 @@ export async function computeDealTasks(dealId) {
     hasBrandAssets: brandRows[0]?.has_brand_assets ?? false,
     scriptStatus: deal.script_status || null,
     scriptFileCount: scriptRows[0]?.n ?? 0,
+    poFileCount: poRows[0]?.n ?? 0,
     sigPaymentOption: prop?.signature_data?.paymentOption || null,
   });
   return { deal, tasks, openCount: countOpenTasks(tasks) };

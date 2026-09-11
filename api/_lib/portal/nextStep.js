@@ -10,6 +10,7 @@
 // module free of DB access so it stays trivially testable.
 
 import { PHASE_BY_ID } from '../productionStages.js';
+import { poSettled } from './tasks.js';
 
 function stageLabel(phaseId, stageId) {
   const phase = PHASE_BY_ID[phaseId];
@@ -25,6 +26,7 @@ export function deriveNextStep({
   storyboardPending = null, // { shareToken, storyboardTitle } when a storyboard awaits feedback
   videos = [],          // project_videos rows
   tasks = [],           // deriveProjectTasks() output (voiceover, kick-off, …)
+  poFileCount = 0,      // PO documents on file (deal_po_files) — see poSettled
 } = {}) {
   const stage = deal?.stage || null;
   const phase = deal?.production_phase || null;
@@ -52,14 +54,17 @@ export function deriveNextStep({
     };
   }
 
-  // 3. PO route with no PO number yet.
+  // 3. PO route and the PO isn't in yet — a number alone doesn't count, we
+  // need the document.
   const isPo = sigData?.paymentOption === 'po' || deal?.payment_terms === 'po';
-  if (stage === 'signed' && isPo && !deal?.po_number) {
+  if (stage === 'signed' && isPo && !poSettled(deal, poFileCount)) {
     return {
       court: 'you',
-      headline: 'Send us your purchase order number',
-      detail: 'Once we have your PO number we can raise the invoice and keep everything moving with your finance team.',
-      cta: { label: 'Submit PO number', href: `#/po/${deal.id}` },
+      headline: deal?.po_number
+        ? `Upload the document for PO ${deal.po_number}`
+        : 'Send us your purchase order',
+      detail: 'Once we have your PO document we can raise the invoice and keep everything moving with your finance team.',
+      cta: { label: 'Upload PO', href: `#/po/${deal.id}` },
     };
   }
 
